@@ -1,0 +1,15 @@
+1- "glass door"
+2- "entrance glass door" - 2
+
+3- "glass door clearly visible"
+4- "glass door clearly visible for object detection annotation and training"
+
+5- "entrance glass door clearly visible"
+
+6- "glass door not occluded" - 4
+7- "entrnace glass door not occluded" - 3
+
+8- "glass door for people to enter and exit" - 1
+
+9- "glass door for people to enter and exit clearly visible"
+10- "glass door for people to enter and exit not occluded and clearly visible"

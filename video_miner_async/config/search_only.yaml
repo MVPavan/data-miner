@@ -1,0 +1,30 @@
+# =============================================================================
+# Video Miner v3 - Search-Only Config Example
+# =============================================================================
+# This config demonstrates search-only mode - no pipeline stages
+# Run with: video-miner run-config search_only.yaml
+# =============================================================================
+
+project:
+  name: "glass_door_search"
+  output_dir: "./output/${project.name}"
+
+# Target classes (for future pipeline runs)
+classes:
+  - "glass door"
+  - "sliding door"
+  - "automatic door"
+
+# Enable search
+search:
+  enabled: true
+  keywords:
+    - query: "shopping mall 4k walking tour"
+      max_results: 20
+    - query: "airport terminal walkthrough 4k"
+      max_results: 20
+    - query: "automatic sliding doors"
+      max_results: 30
+
+# Empty stages = search only (no pipeline)
+stages: []

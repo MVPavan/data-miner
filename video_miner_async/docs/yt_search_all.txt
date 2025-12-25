@@ -1,0 +1,170 @@
+
+TODO:
+1. direct_doors
+glass door cleaning
+glass door repair replacement
+glass door installation
+storefront glass door installation
+office glass door
+sliding door
+sliding door installation
+sliding door repair replacement
+storefront sliding door installation
+Aluminium swing door
+Aluminium swing door installation
+Aluminium swing door repair replacement
+patio door
+patio door repair replacement
+french door
+french door repair replacement
+tempered glass door
+tempered glass door repair replacement
+walking through automatic sliding doors
+automatic sensor doors
+automatic glass doors
+airport automatic glass doors
+hospital automatic glass doors
+automatic sliding doors
+entering automatic glass door
+shopping mall entrance automatic door
+double glass door entryway
+retail store entrance
+retail store entrance automatic door
+supermarket entrance 
+supermarket entrance automatic door
+elevator glass door opening
+revolving door entrance walkthrough
+sliding door fail compilation
+glass door fail compilation
+people walking into glass doors compilation
+automatic door sensor test
+handicap door opener button usage
+
+2. office_tours
+office for sale
+office space for rent
+office for lease
+office tour
+office building/ showroom for sale
+corporate office tour
+
+4. delivery
+food delivery pov ebike
+doordash pov ebike
+ubereats pov ebike
+doordash pov ebike city
+delivery pov gopro
+
+5. govt_audit
+1st amendment audit public lobby
+post office audit filming
+
+6. building_tours
+dead mall exploration
+tech park tour
+showroom tour
+4k city walking/street tour (top cities)
+university tour/vlog
+campus tour/vlog
+
+
+# === PRIORITY 1: CONTINUOUS WALKING TOURS (HIGH VOLUME / CLEAN DATA) ===
+shopping mall 4k walking tour
+shopping mall entrance automatic door
+department store entrance 4k
+airport terminal walkthrough 4k
+airport arrival automatic doors
+luxury hotel lobby walkthrough
+las vegas casino walking tour 4k
+apple store walking tour 4k
+modern office tour glass partitions
+corporate headquarters tour
+retail store glass storefront walk
+university campus tour 4k
+dead mall exploration 4k
+subway station glass gates
+mrt station glass door
+train station automatic doors
+
+# === PRIORITY 2: POV & ACTION (REAL WORLD INTERACTION) ===
+food delivery driver pov gopro
+doordash driver ride along
+courier pov office delivery
+walking through automatic sliding doors
+entering automatic glass door
+revolving door entrance walkthrough
+elevator glass door opening
+people walking into glass doors compilation
+glass door fails compilation
+1st amendment audit public lobby
+post office audit filming
+automatic door sensor test
+handicap door opener button usage
+glass turnstile gate opening
+gym entrance turnstile glass
+
+# === PRIORITY 3: TECHNICAL & INSTALLATION (DOOR MECHANISMS) ===
+automatic glass door opening closing
+sliding glass door operation
+motion sensor sliding door
+automatic telescopic sliding door
+double sliding glass door entrance
+sensor door opening mechanism
+automatic swing door operator
+revolving door mechanism
+glass revolving door spinning
+frameless glass door entrance
+commercial glass door hinge
+broken glass door replacement
+installing automatic glass door
+fire door with glass vision panel
+emergency exit glass door
+
+# === PRIORITY 4: REAL ESTATE & ARCHITECTURE (HIGH QUALITY/STATIC) ===
+office building lobby tour 4k
+luxury penthouse tour nyc
+modern home tour sliding glass doors
+patio sliding glass door operation
+glass conference room door
+glass elevator tour
+car showroom glass entrance
+stacking glass doors restaurant
+luxury apartment balcony glass door
+modern bathroom glass shower door
+frameless glass shower door
+glass bi-fold doors opening
+bank entrance security door
+data center security mantrap
+supermarket automatic entrance door
+pharmacy automatic door entrance
+convenience store glass door
+gas station entrance door
+glass vestibule entrance
+entrance glass door
+
+# === PRIORITY 5: HASHTAGS ===
+#automaticdoor
+#slidingdoor
+#revolvingdoor
+#glassdoor
+#autodoor
+#sensordoor
+#elevatordoors
+#glassgate
+#automaticgate
+#mechanisms
+#mallwalk
+#airportwalk
+#storefront
+#hoteltour
+#officetour
+#lobbytour
+#retaildesign
+#modernarchitecture
+#glassfacade
+#shopfront
+#glassdoorfail
+#cctv
+#securitycamera
+#failcompilation
+#invisibleglass

@@ -1,0 +1,381 @@
+# =============================================================================
+# Video Miner v3 - Default Configuration
+# =============================================================================
+# This file contains ALL available configuration options with defaults.
+# Create a `pipeline.yaml` in the project root to override specific values.
+#
+# Features:
+#   - Variable interpolation: ${section.key}
+#   - Environment variables: ${oc.env:VAR_NAME,default_value}
+#
+# All values here match constants.py and config.py
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Project Settings
+# -----------------------------------------------------------------------------
+project:
+  # Project name (used in output paths with interpolation)
+  name: "video_miner_project"
+  
+  # Base output directory (supports variable interpolation)
+  output_dir: "./output/${project.name}"
+  
+  # Video registry file path
+  registry_file: "${project.output_dir}/video_registry.yaml"
+
+# -----------------------------------------------------------------------------
+# Input Sources
+# -----------------------------------------------------------------------------
+input:
+  # Direct YouTube URLs (list)
+  urls: []
+  # Example:
+  #   - "https://youtube.com/watch?v=abc123"
+  #   - "https://youtube.com/watch?v=def456"
+  
+  # Path to file containing URLs (one per line)
+  url_file: null
+  
+  # Use pending videos from registry
+  from_registry: true
+
+# -----------------------------------------------------------------------------
+# YouTube Search Configuration
+# -----------------------------------------------------------------------------
+search:
+  # Enable search functionality
+  enabled: false
+  
+  # Keywords to search for (list of objects or simple strings)
+  keywords: []
+  # Example:
+  #   - query: "glass door installation"
+  #     max_results: 100
+  #   - query: "sliding door"
+  #     max_results: 50
+  #   - "simple keyword"  # Uses default_max_results
+  
+  # Path to file with keywords (one per line)
+  # Lines starting with # are ignored
+  keywords_file: null
+  # Example: keywords_file: "./docs/yt_search.txt"
+  
+  # Default max results per keyword
+  # Matches: DEFAULT_SEARCH_MAX_RESULTS = 50
+  default_max_results: 50
+  
+  # Maximum allowed results (hard limit)
+  # Matches: SEARCH_MAX_LIMIT = 500
+  max_limit: 500
+  
+  # Search timeout in seconds
+  # Matches: SEARCH_TIMEOUT_SECONDS = 120
+  timeout_seconds: 120
+
+# -----------------------------------------------------------------------------
+# Target Classes (for filtering and detection)
+# -----------------------------------------------------------------------------
+# List of class names/captions to filter and detect
+classes: []
+# Example:
+#   - "glass door"
+#   - "sliding door"
+#   - "transparent door"
+
+# -----------------------------------------------------------------------------
+# Pipeline Stages
+# -----------------------------------------------------------------------------
+# Stages to run (in order). Comment out or remove stages to skip.
+# Valid: download, extraction, filter, deduplication, detection
+stages: []
+  # - download
+  # - extraction
+  # - filter
+  # - deduplication
+  # - detection
+
+# Resume from previous run (skip completed stages)
+resume: true
+
+# -----------------------------------------------------------------------------
+# Download Configuration
+# -----------------------------------------------------------------------------
+download:
+  # Force rerun (ignore registry status)
+  force: false
+  
+  # Output directory for downloaded videos
+  output_dir: "${project.output_dir}/videos"
+  
+  # Video format preference
+  # Choices: best, 1080p, 720p, 480p, worst
+  format: "best"
+  
+  # Maximum video resolution (height in pixels)
+  max_resolution: 1080
+  
+  # Maximum concurrent downloads
+  # Matches: DEFAULT_MAX_CONCURRENT_DOWNLOADS = 3
+  max_concurrent: 3
+  
+  # Download timeout in seconds
+  # Matches: DEFAULT_DOWNLOAD_TIMEOUT = 300
+  timeout: 300
+  
+  # ---------------------------------------------------------------------------
+  # Rate Limiting (to avoid YouTube blocks for large-scale downloads)
+  # ---------------------------------------------------------------------------
+  # Minimum seconds to sleep between downloads (0 = disabled)
+  # Recommended: 20 for large batches
+  sleep_interval: 0
+  
+  # Maximum seconds to sleep (random between sleep_interval and max_sleep_interval)
+  # Recommended: 30 for large batches
+  max_sleep_interval: 0
+  
+  # Seconds to sleep between metadata/info requests
+  # Recommended: 1 for large batches
+  sleep_requests: 0
+
+# -----------------------------------------------------------------------------
+# Frame Extraction Configuration
+# -----------------------------------------------------------------------------
+extraction:
+  # Force rerun (ignore registry status)
+  force: false
+  
+  # Maximum concurrent video extractions
+  max_workers: 4
+  
+  # Input: directory with downloaded videos (default: download output)
+  input_dir: "${download.output_dir}"
+  
+  # Output directory for extracted frames
+  output_dir: "${project.output_dir}/frames_raw"
+  
+  # Sampling strategy
+  # Choices: interval, time, keyframe
+  strategy: "interval"
+  
+  # Frame interval (for 'interval' strategy)
+  # Extract every Nth frame
+  # Matches: DEFAULT_FRAME_INTERVAL = 30
+  interval_frames: 30
+  
+  # Time interval in seconds (for 'time' strategy)
+  time_interval: 1.0
+  
+  # Maximum frames per video (0 = unlimited)
+  # Matches: DEFAULT_MAX_FRAMES_PER_VIDEO = 1000
+  max_frames: 0
+  
+  # Output image format
+  # Choices: jpg, png, webp
+  image_format: "jpg"
+  
+  # JPEG/WebP quality (1-100)
+  # Matches: DEFAULT_IMAGE_QUALITY = 95
+  image_quality: 95
+
+# -----------------------------------------------------------------------------
+# Filtering Configuration (SigLIP2)
+# -----------------------------------------------------------------------------
+filter:
+  # Force rerun (ignore registry status)
+  force: false
+  
+  # Input: directory with frames (default: extraction output)
+  input_dir: "${extraction.output_dir}"
+  
+  # Output directory for filtered frames
+  output_dir: "${project.output_dir}/frames_filtered"
+  
+  # SigLIP2 model variant
+  # Choices:
+  #   - siglip2-so400m: google/siglip2-so400m-patch14-384 (~2GB VRAM)
+  #   - siglip2-giant:  google/siglip2-giant-opt-patch16-384 (~4GB VRAM)
+  # Matches: SIGLIP2_DEFAULT = "siglip2-so400m"
+  model: "siglip2-so400m"
+  
+  # Similarity threshold (0.0 - 1.0)
+  # Higher = stricter filtering, fewer frames pass
+  # Matches: DEFAULT_FILTER_THRESHOLD = 0.25
+  threshold: 0.25
+  
+  # Batch size for inference
+  # Matches: DEFAULT_BATCH_SIZE = 16
+  batch_size: 16
+  
+  # Keep frames above threshold (true) or below (false)
+  keep_above_threshold: true
+
+# -----------------------------------------------------------------------------
+# Deduplication Configuration
+# -----------------------------------------------------------------------------
+deduplication:
+  # Force rerun (ignore registry status)
+  force: false
+  
+  # Input: directory with filtered frames (default: filter output)
+  input_dir: "${filter.output_dir}"
+  
+  # Output directory for deduplicated frames
+  output_dir: "${project.output_dir}/frames_deduplicated"
+  
+  # Model to use for embeddings
+  # Choices:
+  #   - dinov3: Best quality, uses DINOv3/DINOv2 (extra ~2GB VRAM)
+  #   - siglip: Memory-efficient, reuses filter model
+  model: "dinov3"
+  
+  # DINO model variant (only when model=dinov3)
+  # Choices:
+  #   DINOv3 (if available):
+  #     - dinov3-small: facebook/dinov3-vits16-pretrain-lvd1689m (21.6M)
+  #     - dinov3-base:  facebook/dinov3-vitb16-pretrain-lvd1689m (85.7M)
+  #     - dinov3-large: facebook/dinov3-vitl16-pretrain-lvd1689m (304M)
+  #     - dinov3-huge:  facebook/dinov3-vith16plus-pretrain-lvd1689m (0.8B)
+  #     - dinov3-giant: facebook/dinov3-vit7b16-pretrain-lvd1689m (7B)
+  #   DINOv2 (fallback):
+  #     - dinov2-base:  facebook/dinov2-base (86M) [DEFAULT]
+  #     - dinov2-large: facebook/dinov2-large (300M)
+  # Matches: DINO_DEFAULT = "dinov2-base"
+  dino_variant: "dinov2-base"
+  
+  # Similarity threshold (0.0 - 1.0)
+  # Higher = more aggressive deduplication
+  # Matches: DEFAULT_DEDUP_THRESHOLD = 0.90
+  threshold: 0.90
+  
+  # Batch size for computing embeddings
+  # Matches: DEFAULT_DEDUP_BATCH_SIZE = 32
+  batch_size: 32
+  
+  # FAISS k-nearest neighbors to check per frame
+  # Higher = more accurate but slower (10-200)
+  # For large datasets (50k+), 50 is usually sufficient
+  k_neighbors: 50
+
+# -----------------------------------------------------------------------------
+# Object Detection Configuration
+# -----------------------------------------------------------------------------
+detection:
+  # Force rerun (ignore registry status)
+  force: false
+  
+  # Input: directory with deduplicated frames (default: deduplication output)
+  input_dir: "${deduplication.output_dir}"
+  
+  # Output directory for detections
+  output_dir: "${project.output_dir}/detections"
+  
+  # Detection model
+  # Choices:
+  #   - moondream3:     moondream/moondream3-preview (VQA + detection) [DEFAULT]
+  #   - florence2:      microsoft/Florence-2-large (multi-task)
+  #   - grounding-dino: IDEA-Research/grounding-dino-base (stable)
+  #   - dino-x:         IDEA-Research/grounding-dino-base (placeholder)
+  # Matches: DETECTOR_DEFAULT = "moondream3"
+  model: "moondream3"
+  
+  # Confidence threshold (0.0 - 1.0)
+  # Matches: DEFAULT_DETECTION_THRESHOLD = 0.3
+  threshold: 0.3
+  
+  # Batch size for detection
+  # Matches: DEFAULT_DETECTION_BATCH_SIZE = 8
+  batch_size: 8
+  
+  # Save visualization images with bounding boxes
+  save_visualizations: true
+  
+  # Save COCO-format annotations
+  save_coco_annotations: true
+
+# -----------------------------------------------------------------------------
+# Device Configuration
+# -----------------------------------------------------------------------------
+device:
+  # Device map for model loading
+  # Choices:
+  #   - auto: Use all available GPUs (device_map="auto" when >1 GPU)
+  #   - cuda: Use first CUDA device
+  #   - cuda:0, cuda:1: Use specific GPU
+  #   - cpu: Force CPU mode
+  device_map: "auto"
+  
+  # Mixed precision (float16) for faster inference and lower memory
+  use_fp16: false
+  
+  # Clear GPU cache between stages
+  clear_cache_between_stages: true
+
+# -----------------------------------------------------------------------------
+# Async Pipeline Configuration (--async flag)
+# -----------------------------------------------------------------------------
+# Settings for stage-level parallel processing.
+# Use: video-miner run-config pipeline.yaml --async
+async_pipeline:
+  # Number of concurrent download workers
+  # Recommended: 2-3 (network I/O bound)
+  download_workers: 2
+  
+  # Number of concurrent frame extraction workers
+  # Recommended: 2 (CPU decode bound)
+  extract_workers: 2
+  
+  # Number of filter workers (GPU bound)
+  # Recommended: 1 to avoid VRAM contention
+  filter_workers: 1
+  
+  # Maximum thread pool workers for blocking operations
+  max_thread_workers: 8
+  
+  # Queue sizes (for backpressure)
+  download_queue_size: 4
+  extract_queue_size: 4
+  filter_queue_size: 2
+  
+  # Cleanup intermediate files
+  cleanup_raw_frames: false   # Delete frames_raw after filtering
+  cleanup_videos: false       # Delete videos after extraction
+
+# -----------------------------------------------------------------------------
+# Logging Configuration
+# -----------------------------------------------------------------------------
+logging:
+  # Log level
+  # Choices: DEBUG, INFO, WARNING, ERROR
+  level: "INFO"
+  
+  # Save logs to file
+  save_to_file: true
+  log_file: "${project.output_dir}/pipeline.log"
+  
+  # Show progress bars
+  show_progress: true
+
+# -----------------------------------------------------------------------------
+# Model HuggingFace IDs Reference (read-only, for documentation)
+# -----------------------------------------------------------------------------
+# These are auto-resolved from constants.py, shown here for reference:
+#
+# SIGLIP2_MODELS:
+#   siglip2-so400m: google/siglip2-so400m-patch14-384
+#   siglip2-giant:  google/siglip2-giant-opt-patch16-384
+#
+# DINO_MODELS:
+#   dinov3-small:   facebook/dinov3-vits16-pretrain-lvd1689m
+#   dinov3-base:    facebook/dinov3-vitb16-pretrain-lvd1689m
+#   dinov3-large:   facebook/dinov3-vitl16-pretrain-lvd1689m
+#   dinov3-huge:    facebook/dinov3-vith16plus-pretrain-lvd1689m
+#   dinov3-giant:   facebook/dinov3-vit7b16-pretrain-lvd1689m
+#   dinov2-base:    facebook/dinov2-base
+#   dinov2-large:   facebook/dinov2-large
+#
+# DETECTOR_MODELS:
+#   moondream3:     moondream/moondream3-preview
+#   florence2:      microsoft/Florence-2-large
+#   grounding-dino: IDEA-Research/grounding-dino-base
+#   dino-x:         IDEA-Research/grounding-dino-base

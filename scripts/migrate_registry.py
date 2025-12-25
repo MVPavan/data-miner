@@ -2,7 +2,7 @@
 """
 Migration script: video_registry YAML → PostgreSQL
 
-Migrates VideoRegistry YAML files from video_miner_v3 output folders
+Migrates VideoRegistry YAML files from video_miner_async output folders
 to the new PostgreSQL database. Project name is derived from folder name.
 
 Usage:

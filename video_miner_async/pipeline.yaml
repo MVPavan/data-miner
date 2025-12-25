@@ -1,0 +1,104 @@
+# =============================================================================
+# Video Miner v3 - Pipeline Configuration
+# =============================================================================
+# This file overrides values from config/default.yaml
+# Only specify the values you want to change - all others use defaults.
+#
+# Usage:
+#   video-miner run-config pipeline.yaml
+#
+# Features:
+#   - Variable interpolation: ${section.key}
+#   - Environment variables: ${oc.env:VAR_NAME,default_value}
+# =============================================================================
+
+# Project settings
+project:
+  name: "glass_doors_v1"
+  # output_dir uses interpolation from default: ./output/${project.name}
+
+# Input sources - choose one or more
+input:
+# Option 1: Direct URLs
+  from_registry: true
+  
+# # Option 2: Search for videos
+search:
+  enabled: true
+  keywords: []
+  keywords_file: '/media/fast_data_1/pavan/codes/rf-detr-jci/repos/project_helpers/video_miner_async/docs/yt_search.txt'
+
+stages:
+  - download
+  - extract
+  - filter
+  - deduplicate
+  # - detect
+
+# download:
+#   max_concurrent: 5
+
+extraction:
+  input_dir: "${download.output_dir}"
+  output_dir: "${project.output_dir}/frames_raw"
+  
+  # Choices: interval, time, keyframe
+  strategy: "interval"
+  interval_frames: 30
+  time_interval: 1.0
+
+# # Target classes for filtering
+classes:
+  - "glass door"
+  - "sliding door"
+  - "transparent door"
+
+# -----------------------------------------------------------------------------
+# Filtering Configuration (SigLIP2)
+# -----------------------------------------------------------------------------
+filter:
+  input_dir: "${extraction.output_dir}"
+  output_dir: "${project.output_dir}/frames_filtered"
+  model: "siglip2-so400m"
+  threshold: 0.5
+  batch_size: 16
+
+
+# -----------------------------------------------------------------------------
+# Deduplication Configuration
+# -----------------------------------------------------------------------------
+deduplication:
+  input_dir: "${filter.output_dir}"
+  output_dir: "${project.output_dir}/frames_deduplicated"
+  model: "dinov3" # siglip or dinov3
+  dino_variant: "dinov3-large"
+  threshold: 0.90
+  batch_size: 16
+
+
+
+
+
+# -----------------------------------------------------------------------------
+# Model HuggingFace IDs Reference (read-only, for documentation)
+# -----------------------------------------------------------------------------
+# These are auto-resolved from constants.py, shown here for reference:
+#
+# SIGLIP2_MODELS:
+#   siglip2-so400m: google/siglip2-so400m-patch14-384
+#   siglip2-giant:  google/siglip2-giant-opt-patch16-384
+#
+# DINO_MODELS:
+#   dinov3-small:   facebook/dinov3-vits16-pretrain-lvd1689m
+#   dinov3-base:    facebook/dinov3-vitb16-pretrain-lvd1689m
+#   dinov3-large:   facebook/dinov3-vitl16-pretrain-lvd1689m
+#   dinov3-huge:    facebook/dinov3-vith16plus-pretrain-lvd1689m
+#   dinov3-giant:   facebook/dinov3-vit7b16-pretrain-lvd1689m
+#   dinov2-base:    facebook/dinov2-base
+#   dinov2-large:   facebook/dinov2-large
+#
+# DETECTOR_MODELS:
+#   moondream3:     moondream/moondream3-preview
+#   florence2:      microsoft/Florence-2-large
+#   grounding-dino: IDEA-Research/grounding-dino-base
+#   dino-x:         IDEA-Research/grounding-dino-base
