@@ -1,0 +1,206 @@
+# =============================================================================
+# Data Miner - Default Configuration
+# =============================================================================
+# Features:
+#   - Variable interpolation: ${section.key}
+#   - OmegaConf resolves nested references
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Project Settings
+# -----------------------------------------------------------------------------
+project_name: "my_project"
+
+# Base output directory (central videos + frames)
+output_dir: "./output"
+
+# Project-specific output directory (filter/dedup/detect stages)
+project_output_dir: "${output_dir}/projects/${project_name}"
+
+# Global device setting: auto, cuda, cuda:0, cuda:1, cpu
+# Stages inherit this by default but can override individually
+device: "auto"
+
+# -----------------------------------------------------------------------------
+# Input Sources (for populate command)
+# -----------------------------------------------------------------------------
+input:
+  # YouTube search queries
+  search_enabled: true  # Set to false to skip YouTube search
+  search_queries: []
+  #   - "glass door installation"
+  #   - "sliding glass door"
+  max_results_per_query: 50
+  
+  # Direct URLs
+  urls: []
+  #   - "https://www.youtube.com/watch?v=abc123"
+  
+  # URL file (one URL per line)
+  url_file: null  # e.g., "urls.txt"
+
+# Database
+database:
+  url: "postgresql://postgres:postgres@localhost:5432/data_miner"
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+logging:
+  level: "INFO"
+  loki_url: "http://localhost:3100/loki/api/v1/push"
+  log_dir: "output/logs"
+
+# -----------------------------------------------------------------------------
+# Supervisor Worker Counts (set to 0 to disable a stage)
+# -----------------------------------------------------------------------------
+supervisor:
+  download_workers: 3
+  extract_workers: 2
+  filter_workers: 1
+  dedup_workers: 1
+  detect_workers: 1
+
+# -----------------------------------------------------------------------------
+# Download Stage
+# -----------------------------------------------------------------------------
+download:
+  output_dir: "${output_dir}/videos"
+  
+  # Video format settings
+  format: "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+  max_resolution: 1080
+  timeout: 300
+  
+  # Rate limiting (set >0 to avoid YouTube blocks for large batches)
+  sleep_interval: 0        # Min seconds between downloads
+  max_sleep_interval: 0    # Max seconds (random between min and max)
+  sleep_requests: 0        # Seconds between metadata requests
+
+# -----------------------------------------------------------------------------
+# Extract Stage
+# -----------------------------------------------------------------------------
+extract:
+  output_dir: "${output_dir}/frames_raw"
+  
+  # Sampling strategy: interval, time, keyframe
+  strategy: "interval"
+  interval_frames: 30       # For interval strategy: every N frames
+  interval_seconds: 1.0     # For time strategy: every N seconds
+  max_frames_per_video: 5000
+  
+  # Output image settings
+  image_format: "jpg"       # jpg, png, webp
+  quality: 95               # JPEG/WebP quality (1-100)
+
+# -----------------------------------------------------------------------------
+# Filter Stage (SigLIP2)
+# -----------------------------------------------------------------------------
+filter:
+  output_dir: "${project_output_dir}/frames_filtered"
+  device: "${device}"  # Override: cuda, cuda:0, cpu
+  # Model settings
+  model_id: "siglip2-so400m"  # siglip2-so400m or siglip2-giant
+  batch_size: 32
+  
+  # Thresholds
+  threshold: 0.25           # Min score for positive prompts
+  margin_threshold: 0.05    # Positive must beat negative by this margin
+  
+  # Positive prompts - frame must match at least one
+  positive_prompts:
+    - "a glass door"
+    - "a french door"
+    - "a patio door"
+    - "a photo of a glass door"
+    - "a glass entrance door"
+    - "a glass entrance door with handles"
+    - "commercial double glass doors"
+    - "a sliding glass door entrance"
+    - "a storefront entrance with a glass door"
+    - "a building entrance with a glass door"
+    - "framed glass door clearly visible"
+    - "a push bar on a glass door"
+  
+  # Negative prompts - optional, filters out false positives
+  negative_prompts:
+    - "a glass wall"
+    - "a fixed glass window"
+    - "a large display window"
+    - "a glass curtain wall"
+    - "a mirror"
+    - "a reflective surface"
+    - "a shower door"
+    - "a glass partition"
+    - "a skylight"
+    - "a glass ceiling"
+    - "a split screen video"
+    - "text overlay on screen"
+    - "a video game screenshot"
+    - "blurry out of focus image"
+    - "dark grainy night shot"
+
+# -----------------------------------------------------------------------------
+# Dedup Stage (FAISS + DINOv2/SigLIP)
+# -----------------------------------------------------------------------------
+dedup:
+  output_dir: "${project_output_dir}/frames_dedup"
+  device: "${device}"  # Override: cuda, cuda:0, cpu
+  # Similarity threshold (higher = more aggressive dedup)
+  threshold: 0.90
+  batch_size: 64
+  
+  # Model type: dino (better quality) or siglip (memory efficient)
+  model_type: "dino"           # DedupModelType enum: dino, siglip
+  dino_model_id: "dinov3-base" # dinov2-base, dinov2-large, dinov3-base, etc.
+  
+  # FAISS k-nearest neighbors (higher = slower but more accurate)
+  k_neighbors: 50
+
+# -----------------------------------------------------------------------------
+# Detect Stage (Object Detection)
+# -----------------------------------------------------------------------------
+detect:
+  output_dir: "${project_output_dir}/detections"
+  device: "${device}"  # Override: cuda, cuda:0, cpu
+  # Detector type: grounding_dino or owlv2
+  detector: "grounding_dino"
+  
+  # Detection settings
+  threshold: 0.3
+  confidence_threshold: 0.3
+  batch_size: 16
+  save_visualizations: true
+
+# =============================================================================
+# MODEL IDS REFERENCE (for user convenience)
+# =============================================================================
+# 
+# SigLIP2 Models (for filter stage):
+#   siglip2-so400m:  google/siglip2-so400m-patch14-384  (default, recommended)
+#   siglip2-giant:   google/siglip2-giant-opt-patch16-384  (larger, more accurate)
+#
+# DINOv2/v3 Models (for deduplication stage):
+#   dinov3-small:    facebook/dinov3-vits16-pretrain-lvd1689m
+#   dinov3-base:     facebook/dinov3-vitb16-pretrain-lvd1689m  (default)
+#   dinov3-large:    facebook/dinov3-vitl16-pretrain-lvd1689m
+#   dinov2-base:     facebook/dinov2-base
+#   dinov2-large:    facebook/dinov2-large
+#
+# Detector Models (for detection stage):
+#   grounding_dino:  IDEA-Research/grounding-dino-base  (default, stable)
+#   dino_x:          IDEA-Research/grounding-dino-base  (alias)
+#   florence2:       microsoft/Florence-2-large  (multi-task)
+#   moondream3:      moondream/moondream3-preview or vikhyatk/moondream2  (VQA)
+#
+# Example usage in config:
+#   filter:
+#     model_id: "siglip2-giant"  # or full path: google/siglip2-giant-opt-patch16-384
+#
+#   deduplication:
+#     dino_model_id: "dinov2-large"  # or full: facebook/dinov2-large
+#
+#   detection:
+#     detector: "florence2"
+# =============================================================================
+
