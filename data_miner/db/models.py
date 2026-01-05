@@ -67,6 +67,10 @@ class Video(SQLModel, table=True):
     locked_at: Optional[datetime] = None
     heartbeat_at: Optional[datetime] = None
     
+    # Backup tracking
+    backed_up: bool = Field(default=False)
+    backed_up_at: Optional[datetime] = None
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

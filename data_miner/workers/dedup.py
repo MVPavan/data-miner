@@ -2,7 +2,6 @@
 Cross-Dedup worker - project-level deduplication across all videos.
 """
 
-import logging
 import os
 from pathlib import Path
 
@@ -19,8 +18,9 @@ from ..db.operations import (
 )
 from ..modules.deduplicator import Deduplicator
 from ..config import get_deduplication_config, DeduplicationConfig, init_hf_auth
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class CrossDedupWorker(BaseProjectStageWorker):
@@ -93,7 +93,7 @@ class CrossDedupWorker(BaseProjectStageWorker):
         # Run two-phase cross-video deduplication
         result = self._dedup.deduplicate_cross_video(
             frame_groups=frame_groups,
-            show_progress=True,
+            show_progress=False,
         )
         
         logger.info(
@@ -111,7 +111,6 @@ class CrossDedupWorker(BaseProjectStageWorker):
 def main():
     """Entry point for cross-dedup worker."""
     import argparse
-    logging.basicConfig(level=logging.INFO)
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Config YAML file path")

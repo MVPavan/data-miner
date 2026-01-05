@@ -4,7 +4,6 @@ YouTube Video Downloader Module
 Downloads videos from YouTube using yt-dlp with configurable quality settings.
 """
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -12,8 +11,9 @@ from typing import Callable, Optional
 from ..config import DownloadConfig
 from ..utils.io import ensure_dir, get_video_id
 from ..utils.validators import validate_youtube_url
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -54,6 +54,11 @@ class YouTubeDownloader:
         self.config = config
         ensure_dir(config.output_dir)
         
+        # Load blocked hashtag patterns
+        self._blocked_patterns: list[str] = []
+        if config.blocked_hashtag_patterns:
+            self._load_blocked_patterns(config.blocked_hashtag_patterns)
+        
         # Import yt-dlp lazily to speed up module import
         try:
             import yt_dlp
@@ -63,6 +68,72 @@ class YouTubeDownloader:
                 "yt-dlp is required for video downloading. "
                 "Install it with: pip install yt-dlp"
             )
+    
+    def _load_blocked_patterns(self, path: Path):
+        """Load blocked hashtag patterns from file."""
+        try:
+            with open(path) as f:
+                self._blocked_patterns = [
+                    line.strip().lower() 
+                    for line in f if line.strip() and not line.startswith("#")
+                ]
+            logger.info(f"Loaded {len(self._blocked_patterns)} blocked hashtag patterns from {path}")
+        except Exception as e:
+            logger.warning(f"Failed to load blocked patterns from {path}: {e}")
+            self._blocked_patterns = []
+    
+    def _check_blocked_hashtags(self, url: str, video_id: str) -> str | None:
+        """
+        Check if video has blocked hashtags.
+        
+        Args:
+            url: YouTube video URL
+            video_id: Video ID
+            
+        Returns:
+            Matched pattern if blocked, None if clean
+        """
+        if not self._blocked_patterns:
+            return None
+        
+        try:
+            opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "noprogress": True,
+                "skip_download": True,
+                "extract_flat": False,
+            }
+            
+            with self._yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                if not info:
+                    return None
+                
+                # Get tags/hashtags (yt-dlp returns them in 'tags' field)
+                tags = info.get("tags", []) or []
+                description = info.get("description", "") or ""
+                
+                # Combine tags and extract hashtags from description
+                all_hashtags = [t.lower() for t in tags]
+                # Extract #hashtags from description
+                import re
+                desc_hashtags = re.findall(r"#\w+", description.lower())
+                all_hashtags.extend(desc_hashtags)
+                
+                # Check for blocked patterns (case-insensitive substring match)
+                for tag in all_hashtags:
+                    for pattern in self._blocked_patterns:
+                        if pattern in tag:
+                            logger.info(f"Blocked hashtag matched: {tag} (pattern: {pattern})")
+                            return pattern
+                
+                return None
+                
+        except Exception as e:
+            logger.warning(f"Failed to check hashtags for {video_id}: {e}")
+            return None
     
     def _get_ydl_opts(self, output_template: str, progress_hook: Optional[Callable] = None) -> dict:
         """
@@ -80,6 +151,7 @@ class YouTubeDownloader:
             "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,
+            "noprogress": True,  # Suppress progress bar output
             "extract_flat": False,
             "socket_timeout": self.config.timeout,
             # Merge video and audio if needed
@@ -143,6 +215,16 @@ class YouTubeDownloader:
                 video_id="",
                 success=False,
                 error="Could not extract video ID",
+            )
+        
+        # Check blocked hashtags BEFORE download
+        blocked_pattern = self._check_blocked_hashtags(url, video_id)
+        if blocked_pattern:
+            return DownloadResult(
+                url=url,
+                video_id=video_id,
+                success=False,
+                error=f"Blocked hashtag matched: {blocked_pattern}",
             )
         
         # Check if video already exists on disk (skip re-download)

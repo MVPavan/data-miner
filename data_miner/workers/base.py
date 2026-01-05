@@ -303,6 +303,14 @@ class BaseProjectStageWorker(ABC):
         self.poll_interval = poll_interval
         self.worker_id = f"{self.worker_name}-{os.getpid()}"
         self._running = False
+        
+        # Signal handlers for graceful shutdown
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+    
+    def _handle_shutdown(self, signum, frame):
+        logger.info(f"[{self.worker_id}] Received shutdown signal")
+        self._running = False
     
     @abstractmethod
     def claim_project(self, session) -> Optional[any]:

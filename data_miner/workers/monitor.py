@@ -7,14 +7,17 @@ Responsibilities:
 - Reset projects with PENDING videos (if past FILTERING stage)
 - Reset stale video/project_video locks
 - Warn about long-running locks (>30 mins)
+- Cleanup extracted videos (delete source after extraction)
 """
 
-import logging
 import os
+import signal
 import time
+from pathlib import Path
 
 from sqlmodel import Session
 
+from ..config import MonitorConfig, get_monitor_config
 from ..db.connection import engine
 from ..db.operations import (
     transition_populating_to_filtering,
@@ -25,9 +28,12 @@ from ..db.operations import (
     reset_stale_project_video_locks,
     get_long_running_video_locks,
     get_long_running_project_video_locks,
+    get_extracted_videos_for_cleanup,
+    clear_video_path_db,
 )
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ProjectMonitorWorker:
@@ -39,24 +45,30 @@ class ProjectMonitorWorker:
     - Check FILTERING projects and transition to DEDUP_READY
     - Reset stale locks (heartbeat > 2 min)
     - Warn about long-running locks (> 30 min)
+    - Cleanup extracted videos (if configured)
     
     Runs every poll_interval seconds.
     """
     
-    def __init__(
-        self, 
-        poll_interval: int = 10,
-        stale_threshold_minutes: int = 2,
-        long_running_threshold_minutes: int = 30,
-    ):
-        self.poll_interval = poll_interval
-        self.stale_threshold_minutes = stale_threshold_minutes
-        self.long_running_threshold_minutes = long_running_threshold_minutes
+    def __init__(self, config: MonitorConfig | None = None):
+        self.config = config or get_monitor_config()
+        self.poll_interval = self.config.poll_interval
+        self.stale_threshold_minutes = self.config.stale_threshold_minutes
+        self.long_running_threshold_minutes = self.config.long_running_threshold_minutes
+        self.cleanup_extracted_videos = self.config.cleanup_extracted_videos
         self.worker_id = f"monitor-{os.getpid()}"
         self._running = False
         # Track warned locks to avoid spamming logs
         self._warned_video_locks: set[str] = set()
         self._warned_pv_locks: set[int] = set()
+        
+        # Signal handlers for graceful shutdown
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+    
+    def _handle_shutdown(self, signum, frame):
+        logger.info(f"[{self.worker_id}] Received shutdown signal")
+        self._running = False
     
     def run(self):
         """Main monitor loop."""
@@ -96,6 +108,10 @@ class ProjectMonitorWorker:
                     
                     # Long-running lock warnings (including debug sessions)
                     self._warn_long_running_locks(session)
+                    
+                    # Cleanup extracted videos (delete source files)
+                    if self.cleanup_extracted_videos:
+                        self._cleanup_extracted_videos(session)
                         
             except Exception as e:
                 logger.error(f"[{self.worker_id}] Monitor error: {e}")
@@ -139,6 +155,22 @@ class ProjectMonitorWorker:
         current_pv_ids = {pv["id"] for pv in long_pvs}
         self._warned_pv_locks &= current_pv_ids
     
+    def _cleanup_extracted_videos(self, session: Session):
+        """Delete source video files after extraction."""
+        videos = get_extracted_videos_for_cleanup(session)
+        
+        for video_id, video_path in videos:
+            try:
+                path = Path(video_path)
+                if path.exists():
+                    path.unlink()
+                    logger.info(f"[{self.worker_id}] Deleted source video: {video_path}")
+                
+                # Clear path in DB after deletion (or if file already gone)
+                clear_video_path_db(session, video_id)
+            except Exception as e:
+                logger.warning(f"[{self.worker_id}] Failed to delete video {video_id}: {e}")
+    
     def stop(self):
         """Stop the monitor."""
         self._running = False
@@ -147,23 +179,15 @@ class ProjectMonitorWorker:
 def main():
     """Entry point for project monitor."""
     import argparse
-    logging.basicConfig(level=logging.INFO)
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Config YAML file path")
-    parser.add_argument("--interval", type=int, default=10, help="Poll interval seconds")
-    parser.add_argument("--stale-threshold", type=int, default=2, help="Stale lock threshold (minutes)")
-    parser.add_argument("--long-running-threshold", type=int, default=30, help="Long-running warning threshold (minutes)")
     args = parser.parse_args()
     
     if args.config:
         os.environ["DATA_MINER_CONFIG"] = args.config
     
-    worker = ProjectMonitorWorker(
-        poll_interval=args.interval,
-        stale_threshold_minutes=args.stale_threshold,
-        long_running_threshold_minutes=args.long_running_threshold,
-    )
+    worker = ProjectMonitorWorker()  # Uses config
     worker.run()
 
 

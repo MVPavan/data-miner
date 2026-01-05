@@ -5,15 +5,15 @@ File operations, JSON handling, and path management.
 """
 
 import json
-import logging
 import re
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 from ..config import YOUTUBE_DOMAINS
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def ensure_dir(path: Path) -> Path:

@@ -2,7 +2,6 @@
 Extract worker - extracts frames from videos.
 """
 
-import logging
 import os
 from pathlib import Path
 
@@ -10,8 +9,9 @@ from .base import BaseVideoWorker
 from ..db.models import Video
 from ..modules.frame_extractor import FrameExtractor
 from ..config import get_extraction_config, ExtractionConfig, StageName
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ExtractWorker(BaseVideoWorker):
@@ -55,7 +55,6 @@ class ExtractWorker(BaseVideoWorker):
 def main():
     """Entry point for extract worker."""
     import argparse
-    logging.basicConfig(level=logging.INFO)
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Config YAML file path")

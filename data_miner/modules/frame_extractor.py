@@ -6,7 +6,6 @@ Uses PyAV for video decoding and PIL for image saving.
 Generator-based iteration for memory efficiency.
 """
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Optional
@@ -18,8 +17,9 @@ from tqdm import tqdm
 
 from ..config import ExtractionConfig, SamplingStrategy
 from ..utils.io import ensure_dir
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

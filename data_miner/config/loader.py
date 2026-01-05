@@ -35,8 +35,9 @@ def init_hf_auth() -> bool:
             login(token=token, add_to_git_credential=False)
             return True
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"HF login failed: {e}")
+            # Can't use get_logger here - circular import
+            import warnings
+            warnings.warn(f"HF login failed: {e}")
     return False
 
 from .config import (
@@ -48,6 +49,7 @@ from .config import (
     DetectionConfig,
     LoggingConfig,
     SupervisorConfig,
+    MonitorConfig,
 )
 from .constants import StageName
 
@@ -55,18 +57,19 @@ from .constants import StageName
 CONFIG_PATH_ENV = "DATA_MINER_CONFIG"
 
 # Default config path (relative to project root)
-DEFAULT_CONFIG = Path(__file__).parent.parent.parent / "settings" / "default.yaml"
-
+DEFAULT_CONFIG = Path(__file__).parent / "default.yaml"
 
 @lru_cache(maxsize=1)
-def _load_yaml(config_path: str | None = None) -> dict[str, Any]:
+def load_config(config_path: str | None = None) -> dict[str, Any]:
     """
     Load and merge YAML config (cached).
     
     Priority:
     1. Explicit config_path argument
     2. DATA_MINER_CONFIG environment variable
-    3. Default settings/default.yaml
+    3. Default config/default.yaml
+    
+    Returns merged config as dict with resolved interpolations.
     """
     # Determine path
     if config_path:
@@ -88,6 +91,10 @@ def _load_yaml(config_path: str | None = None) -> dict[str, Any]:
         cfg = OmegaConf.merge(base, cfg)
     
     return OmegaConf.to_container(cfg, resolve=True)
+
+
+# Backward compatibility alias
+_load_yaml = load_config
 
 
 def reload_config(config_path: str | None = None) -> None:
@@ -113,6 +120,16 @@ def get_download_config(config_path: str | None = None) -> DownloadConfig:
     # Merge with global output_dir if not specified
     if "output_dir" not in data:
         data["output_dir"] = f"{yaml.get('output_dir', './output')}/videos"
+    
+    # Resolve blocked_hashtag_patterns relative to config directory
+    if data.get("blocked_hashtag_patterns"):
+        pattern_path = Path(data["blocked_hashtag_patterns"]).resolve()
+        if pattern_path.is_file():
+            data["blocked_hashtag_patterns"] = pattern_path
+        else:
+            config_dir = Path(__file__).parent
+            data["blocked_hashtag_patterns"] = config_dir / Path(data["blocked_hashtag_patterns"]).name
+    
     return DownloadConfig(**data)
 
 
@@ -198,4 +215,17 @@ def get_supervisor_config(config_path: str | None = None) -> SupervisorConfig:
     """Get supervisor worker counts."""
     yaml = _load_yaml(config_path)
     return SupervisorConfig(**yaml.get("supervisor", {}))
+
+
+def get_monitor_config(config_path: str | None = None) -> MonitorConfig:
+    """Get monitor worker configuration."""
+    yaml = _load_yaml(config_path)
+    return MonitorConfig(**yaml.get("monitor", {}))
+
+
+def get_backup_config(config_path: str | None = None) -> "BackupConfig":
+    """Get backup worker configuration."""
+    from .config import BackupConfig
+    yaml = _load_yaml(config_path)
+    return BackupConfig(**yaml.get("backup", {}))
 

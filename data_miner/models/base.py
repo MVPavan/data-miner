@@ -5,7 +5,6 @@ Common utilities and base classes shared across all model wrappers.
 Centralizes repetitive code for maintainability.
 """
 
-import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Union
@@ -15,8 +14,9 @@ import torch
 from PIL import Image
 
 from ..utils.device import clear_gpu_cache
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # =============================================================================

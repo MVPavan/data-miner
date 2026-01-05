@@ -4,12 +4,13 @@ Device Management Utilities
 Handles device resolution and GPU memory management.
 """
 
-import logging
 from typing import Optional
 
 import torch
 
-logger = logging.getLogger(__name__)
+from ..logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def resolve_device(device_map: str = "auto") -> str:

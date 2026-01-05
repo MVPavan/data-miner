@@ -5,7 +5,6 @@ Wrapper for Google's SigLIP model for image-text similarity scoring.
 Used for filtering frames based on text prompts/class names.
 """
 
-import logging
 from pathlib import Path
 from typing import Union
 
@@ -16,8 +15,9 @@ from PIL import Image
 from ..config import SIGLIP2_MODELS, SIGLIP2_DEFAULT
 from ..utils.device import resolve_device, get_model_device
 from .base import BaseModel, create_batch_iterator
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SigLIPModel(BaseModel):

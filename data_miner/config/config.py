@@ -5,7 +5,7 @@ Configuration models - Pydantic models for YAML config.
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .constants import SamplingStrategy, DetectorType, DedupModelType
 
@@ -23,6 +23,9 @@ class DownloadConfig(BaseModel):
     sleep_interval: float = Field(default=0)
     max_sleep_interval: float = Field(default=0)
     sleep_requests: float = Field(default=0)
+    
+    # Hashtag blocklist (path to txt file with patterns, one per line)
+    blocked_hashtag_patterns: Optional[Path] = Field(default=None)
 
 
 class ExtractionConfig(BaseModel):
@@ -105,4 +108,53 @@ class SupervisorConfig(BaseModel):
     filter_workers: int = Field(default=1)
     dedup_workers: int = Field(default=1)
     detect_workers: int = Field(default=1)
+
+
+class MonitorConfig(BaseModel):
+    """Monitor worker settings."""
+    poll_interval: int = Field(default=10, description="Seconds between monitor checks")
+    stale_threshold_minutes: int = Field(default=2, description="Reset locks older than this")
+    long_running_threshold_minutes: int = Field(default=30, description="Warn about locks older than this")
+    cleanup_extracted_videos: bool = Field(default=False, description="Delete source videos after extraction")
+
+
+class BackupConfig(BaseModel):
+    """Backup worker settings."""
+    enabled: bool = Field(default=False, description="Enable backup worker")
+    remote_dest: str = Field(description="Destination path (local: /path or remote: user@host:/path)")
+    delete_after_backup: bool = Field(default=False, description="Delete local frames after verified backup")
+    poll_interval: int = Field(default=300, description="Seconds between backup checks")
+    verification_timeout: int = Field(default=1800, description="Seconds for rsync verification")
+    
+    @property
+    def is_remote(self) -> bool:
+        """Check if destination is remote (SSH) or local."""
+        return "@" in self.remote_dest
+    
+    @model_validator(mode='after')
+    def validate_backup_requirements(self) -> 'BackupConfig':
+        """Validate rsync and SSH when backup is enabled."""
+        if self.enabled:
+            from ..utils.ssh_helper import check_rsync_installed, test_ssh_connection
+            
+            if self.remote_dest == "":
+                raise ValueError("Backup 'remote_dest' must be specified when backup is enabled.")
+
+            # Check rsync is installed
+            if not check_rsync_installed():
+                raise ValueError(
+                    "rsync is not installed.\n"
+                    "  Install: sudo apt-get install rsync"
+                )
+            
+            # Check SSH for remote destinations
+            if self.is_remote:
+                if not test_ssh_connection(self.remote_dest):
+                    raise ValueError(
+                        f"SSH connection failed to '{self.remote_dest}'\n"
+                        "  1. Set up passwordless SSH: ssh-keygen && ssh-copy-id user@host\n"
+                        "  2. Or run: ./data_miner/utils/setup_ssh_keys.sh\n"
+                        "  3. Verify: ssh user@host 'echo ok'"
+                    )
+        return self
 

@@ -9,42 +9,11 @@ from pathlib import Path
 from typing import Optional
 
 import click
-from omegaconf import OmegaConf
 
+from .config import load_config
 from .logging import get_logger
 
 logger = get_logger(__name__)
-
-# Default config path
-DEFAULT_CONFIG = Path(__file__).parent.parent / "settings" / "default.yaml"
-
-
-def load_config(config_path: Optional[Path] = None) -> dict:
-    """
-    Load configuration with OmegaConf merging.
-    
-    - Loads default.yaml first
-    - If config_path provided, merges it on top (overriding defaults)
-    - Returns merged config as dict
-    """
-    # Load default config
-    if not DEFAULT_CONFIG.exists():
-        click.echo(f"Default config not found: {DEFAULT_CONFIG}", err=True)
-        sys.exit(1)
-    
-    base_cfg = OmegaConf.load(DEFAULT_CONFIG)
-    
-    # Merge custom config if provided
-    if config_path:
-        if not config_path.exists():
-            click.echo(f"Config not found: {config_path}", err=True)
-            sys.exit(1)
-        custom_cfg = OmegaConf.load(config_path)
-        cfg = OmegaConf.merge(base_cfg, custom_cfg)
-    else:
-        cfg = base_cfg
-    
-    return OmegaConf.to_container(cfg, resolve=True)
 
 
 @click.group()
@@ -252,9 +221,48 @@ def status(project: Optional[str]):
                 click.echo(f"  Detect Dir: {proj.detect_dir}")
             
             project_results = get_project_status_counts(session, proj.project_id)
-            click.echo(f"\n  Video Status (filter/dedup/detect):")
-            for st, count in project_results:
-                click.echo(f"    {st.value if hasattr(st, 'value') else st}: {count}")
+
+            # click.echo(f"\n Project Video Status:")
+            p_total_videos = sum(project_results.get("video", {}).values())  # total project videos
+            p_total_videos_2 = sum(project_results.get("project_video", {}).values())
+            click.echo(f"  Total Videos: {p_total_videos} (Video table) / {p_total_videos_2} (ProjectVideo table)")
+            vs = project_results.get("video", {})
+            pv = project_results.get("project_video", {})
+            # click.echo(vs)
+            # click.echo(pv)
+            p_download_pending = vs.get("VideoStatus.PENDING", 0)
+            p_downloading = vs.get("VideoStatus.DOWNLOADING", 0)
+            p_failed = vs.get("VideoStatus.FAILED", 0)
+            p_extracted = vs.get("VideoStatus.EXTRACTED", 0)
+            p_extracting = vs.get("VideoStatus.EXTRACTING", 0)
+            p_downloaded = vs.get("VideoStatus.DOWNLOADED", 0)
+            p_filtered = pv.get("ProjectVideoStatus.FILTERED", 0)
+            p_filter_pending = pv.get("ProjectVideoStatus.PENDING", 0)
+            p_filtered_empty = pv.get("ProjectVideoStatus.FILTERED_EMPTY", 0)
+            pv_failed = pv.get("ProjectVideoStatus.FAILED", 0)
+            click.echo(f"  Total pending: {p_download_pending} (download), {p_filter_pending} (filter)")
+            # click.echo(f"\n Videos Status:")
+            total_downloaded = p_downloaded + p_extracting + p_extracted
+            extraction_pending = total_downloaded - p_extracted - p_extracting
+            filter_pending = p_extracted - p_filtered - p_filtered_empty - (pv_failed-p_failed)
+            click.echo(f"\n  Downloaded: {total_downloaded}, Downloading: {p_downloading},  Failed: {p_failed}")
+            click.echo(f"  Extracted: {p_extracted}, extracting: {p_extracting}, Extraction pending: {extraction_pending}")
+            click.echo(f"  Filtered: {p_filtered}, Filter Pending: {filter_pending}, Filtered Empty: {p_filtered_empty}")
+            click.echo(f"  Project videos failed: {pv_failed}")
+                        
+
+            # # Video status (download/extract stages)
+            # video_counts = project_results.get("video", {})
+            # if video_counts:
+            #     for st, count in sorted(video_counts.items()):
+            #         click.echo(f"    {st}: {count}")
+            
+            # # ProjectVideo status (filter stages)
+            # pv_counts = project_results.get("project_video", {})
+            # if pv_counts:
+            #     for st, count in sorted(pv_counts.items()):
+            # #         click.echo(f"    {st}: {count}")
+
 
 
 @main.command("delete-project")
@@ -485,6 +493,99 @@ def _cleanup_project_paths(paths: list[dict]):
 # Workers Management
 # =============================================================================
 
+def _is_container() -> bool:
+    """Detect if running inside a container."""
+    if Path("/.dockerenv").exists():
+        return True
+    if Path("/run/.containerenv").exists():
+        return True
+    try:
+        with open("/proc/1/cgroup", "r") as f:
+            return "docker" in f.read() or "kubepods" in f.read()
+    except:
+        pass
+    return False
+
+
+def _run_cmd(cmd: list[str], use_sudo: bool = True):
+    """Run command with or without sudo based on environment."""
+    if use_sudo and not _is_container():
+        cmd = ["sudo"] + cmd
+    subprocess.run(cmd, check=True)
+
+
+def _is_supervisord_running() -> bool:
+    """Check if supervisord is running."""
+    # Check for common socket locations
+    socket_paths = [
+        "/var/run/supervisor.sock",
+        "/run/supervisor.sock",
+        "/tmp/supervisor.sock",
+    ]
+    
+    # First check if socket exists
+    socket_exists = any(Path(p).exists() for p in socket_paths)
+    if not socket_exists:
+        return False
+    
+    # Then verify with supervisorctl
+    try:
+        result = subprocess.run(
+            ["supervisorctl", "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        # Return code 0 = running, programs may or may not exist
+        # Return code != 0 with "refused" or "no such file" = not running  
+        return "refused" not in result.stderr and "No such file" not in result.stderr
+    except:
+        return False
+
+
+def _ensure_supervisord_running():
+    """Ensure supervisord is running, start if not."""
+    if _is_supervisord_running():
+        return True
+    
+    in_container = _is_container()
+    click.echo("supervisord is not running. Starting it...")
+    
+    try:
+        if in_container:
+            # In container, start without sudo
+            subprocess.Popen(
+                ["supervisord", "-c", "/etc/supervisor/supervisord.conf"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            # On host, use systemctl or start as service
+            try:
+                subprocess.run(["sudo", "systemctl", "start", "supervisor"], check=True)
+            except:
+                # Fallback to direct start
+                subprocess.Popen(
+                    ["sudo", "supervisord", "-c", "/etc/supervisor/supervisord.conf"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        
+        # Wait a bit for supervisord to start
+        import time
+        time.sleep(2)
+        
+        if _is_supervisord_running():
+            click.echo("supervisord started successfully.")
+            return True
+        else:
+            click.echo("Failed to start supervisord.", err=True)
+            return False
+    except Exception as e:
+        click.echo(f"Error starting supervisord: {e}", err=True)
+        return False
+
+
 @main.group()
 def workers():
     """Manage pipeline workers via supervisor."""
@@ -497,19 +598,25 @@ def workers_setup(config: Optional[str]):
     """Generate and install supervisor configuration."""
     import shutil
     
-    # Check if supervisor is installed and configured
+    in_container = _is_container()
+    
+    # Check if supervisor is installed
     if not shutil.which("supervisord"):
         click.echo("Error: supervisor not installed.", err=True)
-        click.echo("\nRun the following commands to install and configure supervisor:", err=True)
-        click.echo("  sudo apt-get update", err=True)
-        click.echo("  sudo apt-get install -y supervisor", err=True)
-        click.echo("  sudo systemctl enable supervisor", err=True)
-        click.echo("  sudo systemctl start supervisor", err=True)
+        if in_container:
+            click.echo("\nRun: apt-get update && apt-get install -y supervisor", err=True)
+        else:
+            click.echo("\nRun the following commands:", err=True)
+            click.echo("  sudo apt-get update", err=True)
+            click.echo("  sudo apt-get install -y supervisor", err=True)
         sys.exit(1)
     
     if not Path("/etc/supervisor/conf.d").exists():
         click.echo("Error: /etc/supervisor/conf.d directory not found.", err=True)
-        click.echo("\nRun: sudo mkdir -p /etc/supervisor/conf.d", err=True)
+        if in_container:
+            click.echo("\nRun: mkdir -p /etc/supervisor/conf.d", err=True)
+        else:
+            click.echo("\nRun: sudo mkdir -p /etc/supervisor/conf.d", err=True)
         sys.exit(1)
     
     
@@ -531,6 +638,8 @@ def workers_setup(config: Optional[str]):
     sup = cfg.get("supervisor", {})
     log_cfg = cfg.get("logging", {})
     db_cfg = cfg.get("database", {})
+    backup_cfg = cfg.get("backup", {})
+    backup_enabled = backup_cfg.get("enabled", False)
     
     log_dir = log_cfg.get("log_dir", "/var/log/data_miner")
     loki_url = log_cfg.get("loki_url", "http://localhost:3100/loki/api/v1/push")
@@ -557,7 +666,12 @@ def workers_setup(config: Optional[str]):
         programs.append("dedup_worker")
     if detect_workers > 0:
         programs.append("detect_worker")
+
     programs.append("monitor_worker")  # Always include monitor
+    
+    # Backup worker (if enabled in config) - add to programs list BEFORE creating programs_str
+    if backup_enabled:
+        programs.append("backup_worker")
     
     programs_str = ",".join(programs)
     
@@ -626,51 +740,71 @@ programs={programs_str}
     if detect_workers > 0:
         supervisor_conf += program_block("detect_worker", "detect", detect_workers, startsecs=10, stopwaitsecs=60)
     
+    # Backup worker config block (if enabled)
+    if backup_enabled:
+        supervisor_conf += program_block("backup_worker", "backup", 1, startsecs=5, stopwaitsecs=30)
+    
 
-    # Write to temp and copy with sudo
+    # Write to temp and copy
     tmp_conf = Path("/tmp/data_miner.conf")
     tmp_conf.write_text(supervisor_conf)
     
     click.echo("Creating log directory...")
-    subprocess.run(["sudo", "mkdir", "-p", log_dir], check=True)
+    _run_cmd(["mkdir", "-p", log_dir])
     click.echo(f"Log directory created at {log_dir}")
     
     click.echo("Installing supervisor configuration...")
-    subprocess.run(["sudo", "cp", str(tmp_conf), "/etc/supervisor/conf.d/data_miner.conf"], check=True)
+    _run_cmd(["cp", str(tmp_conf), "/etc/supervisor/conf.d/data_miner.conf"])
     click.echo(f"Supervisor configuration installed at /etc/supervisor/conf.d/data_miner.conf")
     
+    # Ensure supervisord is running before reloading
+    if not _ensure_supervisord_running():
+        click.echo("\nConfig installed, but supervisord is not running.", err=True)
+        click.echo("Start supervisord manually, then run: data-miner workers start", err=True)
+        sys.exit(1)
+    
     click.echo("Reloading supervisor...")
-    subprocess.run(["sudo", "supervisorctl", "reread"], check=True)
-    subprocess.run(["sudo", "supervisorctl", "update"], check=True)
+    _run_cmd(["supervisorctl", "reread"])
+    _run_cmd(["supervisorctl", "update"])
     
     click.echo("\n✓ Setup complete! Use 'data-miner workers start' to start workers.")
+    if in_container:
+        click.echo("  (Container detected - running without sudo)")
 
 
 @workers.command("start")
 def workers_start():
     """Start all workers."""
-    subprocess.run(["sudo", "supervisorctl", "start", "data_miner:*"], check=True)
+    if not _ensure_supervisord_running():
+        sys.exit(1)
+    _run_cmd(["supervisorctl", "start", "data_miner:*"])
     click.echo("Workers started.")
 
 
 @workers.command("stop")
 def workers_stop():
     """Stop all workers."""
-    subprocess.run(["sudo", "supervisorctl", "stop", "data_miner:*"], check=True)
+    _run_cmd(["supervisorctl", "stop", "data_miner:*"])
     click.echo("Workers stopped.")
 
 
 @workers.command("restart")
 def workers_restart():
     """Restart all workers."""
-    subprocess.run(["sudo", "supervisorctl", "restart", "data_miner:*"], check=True)
+    if not _ensure_supervisord_running():
+        sys.exit(1)
+    _run_cmd(["supervisorctl", "restart", "data_miner:*"])
     click.echo("Workers restarted.")
 
 
 @workers.command("status")
 def workers_status():
     """Show worker status."""
-    subprocess.run(["sudo", "supervisorctl", "status", "data_miner:*"])
+    # Don't use check=True because supervisorctl returns 3 when any process is stopped
+    cmd = ["supervisorctl", "status", "data_miner:*"]
+    if not _is_container():
+        cmd = ["sudo"] + cmd
+    subprocess.run(cmd)  # No check=True
 
 
 if __name__ == "__main__":

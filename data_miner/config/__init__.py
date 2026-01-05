@@ -34,8 +34,11 @@ from .config import (
     DatabaseConfig,
     LoggingConfig,
     SupervisorConfig,
+    MonitorConfig,
+    BackupConfig,
 )
 from .loader import (
+    load_config,
     get_database_config,
     get_download_config,
     get_extraction_config,
@@ -44,6 +47,8 @@ from .loader import (
     get_detection_config,
     get_logging_config,
     get_supervisor_config,
+    get_monitor_config,
+    get_backup_config,
     get_project_name,
     get_output_dir,
     reload_config,

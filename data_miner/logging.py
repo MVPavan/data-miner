@@ -137,3 +137,5 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
 # Convenience exports
 logger = get_logger()
 
+# to remove progress bar form download logger
+# sed -i -e 's/\r/\n/g' -e '/\[download\]/d' -e '/^[[:space:]]*$/d' download_02.log

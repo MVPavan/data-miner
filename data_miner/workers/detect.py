@@ -2,7 +2,6 @@
 Detection worker - project-level detection on cross-dedup'd frames.
 """
 
-import logging
 import os
 from pathlib import Path
 
@@ -18,8 +17,9 @@ from ..db.operations import (
 )
 from ..modules.detector import ObjectDetector
 from ..config import get_detection_config, get_deduplication_config, DetectionConfig, init_hf_auth
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ProjectDetectWorker(BaseProjectStageWorker):
@@ -94,7 +94,6 @@ class ProjectDetectWorker(BaseProjectStageWorker):
 def main():
     """Entry point for detection worker."""
     import argparse
-    logging.basicConfig(level=logging.INFO)
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Config YAML file path")

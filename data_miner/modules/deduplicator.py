@@ -6,7 +6,6 @@ Supports DINOv3 (default) or SigLIP2 (memory-efficient mode).
 Uses FAISS for scalable cross-video deduplication.
 """
 
-import logging
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,8 +21,9 @@ from ..models.dinov3_model import DINOv3Model
 from ..models.siglip_model import SigLIPModel
 from ..utils.io import ensure_dir
 from ..utils.device import get_model_device
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

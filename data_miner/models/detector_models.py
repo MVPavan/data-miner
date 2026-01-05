@@ -8,7 +8,6 @@ Unified interface for multiple open-set detection models:
 - Grounding DINO (stable)
 """
 
-import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,8 +20,9 @@ from PIL import Image
 from ..config import DetectorType
 from ..utils.device import resolve_device, get_model_device, clear_gpu_cache
 from .base import load_image
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

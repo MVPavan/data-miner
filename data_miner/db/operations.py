@@ -1,3 +1,4 @@
+# mypy: disable-error-code="call-overload"
 """
 Database operations - claim, release, and CRUD functions.
 
@@ -616,6 +617,85 @@ def update_project_frame_counts(session: Session) -> int:
     return len(rows)
 
 
+def get_extracted_videos_for_cleanup(session: Session) -> list[tuple[str, str]]:
+    """
+    Get videos that are EXTRACTED and still have video_path.
+    Returns list of (video_id, video_path) tuples.
+    """
+    result = session.exec(
+        text("""
+            SELECT video_id, video_path FROM videos
+            WHERE status = 'EXTRACTED'
+              AND video_path IS NOT NULL
+        """)
+    )
+    return [(row[0], row[1]) for row in result.fetchall()]
+
+
+def clear_video_path_db(session: Session, video_id: str) -> bool:
+    """Clear video_path after video file has been deleted."""
+    result = session.exec(
+        text("""
+            UPDATE videos SET video_path = NULL
+            WHERE video_id = :video_id
+        """).bindparams(video_id=video_id)
+    )
+    session.commit()
+    return (result.rowcount or 0) > 0
+
+
+# =============================================================================
+# Backup Operations (called by backup worker)
+# =============================================================================
+
+def get_videos_ready_for_backup(session: Session) -> list:
+    """
+    Find videos ready for backup.
+    
+    A video is ready when:
+    - status = EXTRACTED
+    - frames_dir is not null
+    - backed_up = False
+    - ALL project_videos for this video are in terminal status (FILTERED, FILTERED_EMPTY, FAILED)
+    
+    Returns list of Video objects.
+    """
+    from .models import Video
+    
+    result = session.exec(
+        text("""
+            SELECT v.video_id, v.frames_dir
+            FROM videos v
+            WHERE v.status = 'EXTRACTED'
+              AND v.frames_dir IS NOT NULL
+              AND v.backed_up = FALSE
+              AND NOT EXISTS (
+                  SELECT 1 FROM project_videos pv
+                  WHERE pv.video_id = v.video_id
+                    AND pv.status NOT IN ('FILTERED', 'FILTERED_EMPTY', 'FAILED')
+              )
+              AND EXISTS (
+                  SELECT 1 FROM project_videos pv
+                  WHERE pv.video_id = v.video_id
+              )
+        """)
+    )
+    return [{"video_id": row[0], "frames_dir": row[1]} for row in result.fetchall()]
+
+
+def mark_video_backed_up(session: Session, video_id: str) -> bool:
+    """Mark video as backed up with timestamp."""
+    result = session.exec(
+        text("""
+            UPDATE videos 
+            SET backed_up = TRUE, backed_up_at = NOW()
+            WHERE video_id = :video_id
+        """).bindparams(video_id=video_id)
+    )
+    session.commit()
+    return (result.rowcount or 0) > 0
+
+
 # =============================================================================
 # Stale Lock Recovery (called by monitor)
 # =============================================================================
@@ -722,14 +802,37 @@ def get_video_status_counts(session: Session) -> list[tuple[str, int]]:
     return session.exec(stmt).all()
 
 
-def get_project_status_counts(session: Session, project_id: int) -> list[tuple[str, int]]:
-    """Get counts of project_videos by status (per-project stages)."""
-    stmt = (
+def get_project_status_counts(session: Session, project_id: int) -> dict:
+    """
+    Get both ProjectVideo and Video status counts for a project.
+    
+    Returns:
+        {
+            "project_video": {FILTERED: n, FILTERED_EMPTY: n, FAILED: n, ...},
+            "video": {PENDING: n, DOWNLOADED: n, EXTRACTED: n, ...}
+        }
+    """
+    # 1. ProjectVideo status counts (PENDING, FILTERING, FILTERED, FILTERED_EMPTY, FAILED)
+    pv_stmt = (
         select(ProjectVideo.status, func.count())
         .where(ProjectVideo.project_id == project_id)
         .group_by(ProjectVideo.status)
     )
-    return session.exec(stmt).all()
+    pv_counts = {str(status): count for status, count in session.exec(pv_stmt).all()}
+    
+    # 2. Video status counts (for videos in this project)
+    v_stmt = (
+        select(Video.status, func.count())
+        .join(ProjectVideo, Video.video_id == ProjectVideo.video_id)
+        .where(ProjectVideo.project_id == project_id)
+        .group_by(Video.status)
+    )
+    v_counts = {str(status): count for status, count in session.exec(v_stmt).all()}
+    
+    return {
+        "project_video": pv_counts,
+        "video": v_counts,
+    }
 
 
 def count_videos_by_project(session: Session, project_id: int) -> int:

@@ -4,7 +4,6 @@ Frame Filter Module
 Filters frames based on text prompts using SigLIP image-text similarity.
 """
 
-import logging
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,8 +15,9 @@ import numpy as np
 from ..config import FilterConfig
 from ..models.siglip_model import SigLIPModel
 from ..utils.io import ensure_dir
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

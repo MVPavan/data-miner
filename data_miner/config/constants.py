@@ -136,11 +136,13 @@ SIGLIP2_DEFAULT = "siglip2-so400m"
 # DINO Models (Deduplication)
 # =============================================================================
 DINO_MODELS = {
-    "dinov3-small": "facebook/dinov3-vits16-pretrain-lvd1689m",
-    "dinov3-base": "facebook/dinov3-vitb16-pretrain-lvd1689m",
-    "dinov3-large": "facebook/dinov3-vitl16-pretrain-lvd1689m",
     "dinov2-base": "facebook/dinov2-base",
     "dinov2-large": "facebook/dinov2-large",
+    "dinov3-small": "facebook/dinov3-vits16-pretrain-lvd1689m",      # 21.6M
+    "dinov3-base": "facebook/dinov3-vitb16-pretrain-lvd1689m",       # 85.7M
+    "dinov3-large": "facebook/dinov3-vitl16-pretrain-lvd1689m",      # 304M
+    "dinov3-huge": "facebook/dinov3-vith16plus-pretrain-lvd1689m",   # 0.8B
+    "dinov3-giant": "facebook/dinov3-vit7b16-pretrain-lvd1689m",     # 7B
 }
 DINO_DEFAULT = "dinov3-base"
 

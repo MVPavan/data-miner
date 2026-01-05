@@ -5,7 +5,6 @@ Wrapper for Meta's DINOv3 (or DINOv2 fallback) for image embeddings.
 Used for deduplication via cosine similarity.
 """
 
-import logging
 from pathlib import Path
 from typing import Union
 
@@ -16,8 +15,9 @@ from PIL import Image
 from ..config import DINO_MODELS, DINO_DEFAULT
 from ..utils.device import resolve_device, get_model_device
 from .base import BaseModel, create_batch_iterator
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class DINOv3Model(BaseModel):

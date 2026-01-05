@@ -2,7 +2,6 @@
 Filter worker - filters frames using SigLIP similarity.
 """
 
-import logging
 import os
 from pathlib import Path
 
@@ -10,8 +9,9 @@ from .base import BaseProjectVideosWorker
 from ..db.models import Video, ProjectVideo
 from ..modules.frame_filter import FrameFilter
 from ..config import get_filter_config, FilterConfig, StageName, init_hf_auth
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class FilterWorker(BaseProjectVideosWorker):
@@ -69,7 +69,6 @@ class FilterWorker(BaseProjectVideosWorker):
 def main():
     """Entry point for filter worker."""
     import argparse
-    logging.basicConfig(level=logging.INFO)
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Config YAML file path")

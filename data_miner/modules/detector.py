@@ -4,7 +4,6 @@ Object Detector Module
 Runs open-set object detection on frames using configurable detector backends.
 """
 
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -16,8 +15,9 @@ from tqdm import tqdm
 from ..config import DetectionConfig, DetectorType
 from ..models.detector_models import BaseDetector, DetectionResult, get_detector
 from ..utils.io import ensure_dir, save_json
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

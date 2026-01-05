@@ -2,7 +2,6 @@
 Download worker - downloads videos from YouTube.
 """
 
-import logging
 import os
 from pathlib import Path
 
@@ -10,8 +9,9 @@ from .base import BaseVideoWorker
 from ..db.models import Video
 from ..modules.downloader import YouTubeDownloader
 from ..config import get_download_config, DownloadConfig, StageName
+from ..logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class DownloadWorker(BaseVideoWorker):
@@ -47,7 +47,6 @@ class DownloadWorker(BaseVideoWorker):
 def main():
     """Entry point for download worker."""
     import argparse
-    logging.basicConfig(level=logging.INFO)
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Config YAML file path")
