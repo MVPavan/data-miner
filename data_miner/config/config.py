@@ -52,8 +52,13 @@ class FilterConfig(BaseModel):
     
     # Negative prompts - optional, for filtering out false positives
     negative_prompts: list[str] = Field(default_factory=list)
+    negative_threshold: float = Field(default=0.25, description="Max score for negative prompts")
     margin_threshold: float = Field(default=0.05, description="Positive must beat negative by this margin")
 
+    # zoom prompts - optional, for filtering out close-up shots
+    zoom_prompts: list[str] = Field(default_factory=list)
+    zoom_threshold: float = Field(default=0.3, description="Zoom threshold should be less than this")
+    zoom_margin_threshold: float = Field(default=0.05, description="Positive must beat zoom by this margin")
 
 class DeduplicationConfig(BaseModel):
     """Deduplication stage config."""

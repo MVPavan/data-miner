@@ -7,15 +7,14 @@ Filters frames based on text prompts using SigLIP image-text similarity.
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
-from tqdm import tqdm
 import numpy as np
+from tqdm import tqdm
 
 from ..config import FilterConfig
+from ..logging import get_logger
 from ..models.siglip_model import SigLIPModel
 from ..utils.io import ensure_dir
-from ..logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -99,12 +98,38 @@ class FrameFilter:
         Returns:
             FilterResult with passing frames
         """
+        def debug_video_id(video_id: str):
+            ###### just for debug ##########
+            frame_dict = {v.stem:i for i,v in enumerate(frame_paths)}
+            _idx = frame_dict.get(video_id)
+            _pp = positive_prompts[np.argmax(pos_scores[_idx])]
+            _np = negative_prompts[np.argmax(neg_scores[_idx])] if negative_prompts else 'N/A'
+            _zp = zoom_prompts[np.argmax(zoom_scores[_idx])] if zoom_prompts else 'N/A'
+            _pm = pos_max[_idx]
+            _nm = neg_max[_idx] if negative_prompts else 0.0
+            _zm = zoom_max[_idx] if zoom_prompts else 0.0
+
+            print(
+                f"DEBUG: Frame '{video_id}': \n"
+                f"{_pm:.3f} - Pos='{_pp}', \n"
+                f"{_nm:.3f} - Neg='{_np}', \n"
+                f"{_zm:.3f} - Zoom='{_zp}', \n"
+                f"{_pm - _nm:.3f} margin Pos-Neg, \n"
+                f"{_pm - _zm:.3f} margin Pos-Zoom"
+            )
+            ###############################
+
         if not frame_paths:
             return FilterResult(total_frames=0, passed_frames=0)
         
+        frame_paths = sorted(frame_paths)
         positive_prompts = self.config.positive_prompts
         negative_prompts = self.config.negative_prompts or []
-        all_prompts = positive_prompts + negative_prompts
+        zoom_prompts = self.config.zoom_prompts or []
+        all_prompts = positive_prompts + negative_prompts + zoom_prompts
+        num_positive = len(positive_prompts)
+        num_negative = len(negative_prompts)
+        num_zoom = len(zoom_prompts)
         
         logger.info(
             f"Filtering {len(frame_paths)} frames "
@@ -121,22 +146,29 @@ class FrameFilter:
             batch_size=self.config.batch_size,
             show_progress=show_progress,
         )
-        
+
         # Split scores into positive and negative
-        num_positive = len(positive_prompts)
         pos_scores = scores[:, :num_positive]
         pos_max = pos_scores.max(axis=1)
-        
+        pos_mask = pos_max > self.config.threshold
+        neg_mask = np.ones_like(pos_mask, dtype=bool)
+        zoom_mask = np.ones_like(pos_mask, dtype=bool)
         # Determine which frames pass
         if negative_prompts:
             # Positive + Negative mode: positive must beat negative by margin
-            neg_scores = scores[:, num_positive:]
+            neg_scores = scores[:, num_positive:num_positive+num_negative]
             neg_max = neg_scores.max(axis=1)
-            margin = pos_max - neg_max
-            mask = (pos_max > self.config.threshold) & (margin > self.config.margin_threshold)
-        else:
-            # Positive-only mode: just check threshold
-            mask = pos_max > self.config.threshold
+            pos_neg_margin = pos_max - neg_max
+            neg_mask = (neg_max < self.config.negative_threshold) & (pos_neg_margin > self.config.margin_threshold)
+        
+        
+        if zoom_prompts:
+            zoom_scores = scores[:, num_positive+num_negative:]
+            zoom_max = zoom_scores.max(axis=1)
+            pos_zoom_margin = pos_max - zoom_max
+            zoom_mask = (zoom_max < self.config.zoom_threshold) & (pos_zoom_margin > self.config.zoom_margin_threshold)
+        
+        mask = pos_mask & neg_mask & zoom_mask
         
         valid_frame_ids = np.where(mask)[0].tolist()
         

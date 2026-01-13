@@ -98,13 +98,23 @@ def visualize_remote_view_images(dataset_config: DatasetConfig):
     # session.wait()  # Keep the app running until closed by the user
     return session
 
-def visualize_remote_view_images_multiple(dataset_configs: List[DatasetConfig]):
+def visualize_remote_view_images_multiple(dataset_configs: List[DatasetConfig], port:int=0):
+    dataset = None
     sessions = []
     for dataset_config in dataset_configs:
-        sessions.append(visualize_remote_view_images(dataset_config))
+        if port != 0:
+            if dataset is None:
+                dataset = load_dataset(dataset_config)
+                session = fo.launch_app(dataset, address="0.0.0.0", port=port)
+            else:
+                session.dataset = load_dataset(dataset_config)
+        else:
+            sessions.append(visualize_remote_view_images(dataset_config))
+    
     # run in infinite loop            
     while True:
         time.sleep(10)
+
 
 if __name__ == "__main__":
     
@@ -132,11 +142,65 @@ if __name__ == "__main__":
         port=7772
     )
 
+    direct_doors_videos_v2 = DatasetConfig(
+        name="direct_doors_videos_v2",
+        dataset_type="images",
+        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_filter_v2",
+        overwrite=True,
+        port=7773
+    )
+
+    direct_doors_removed = DatasetConfig(
+        name="direct_doors_removed",
+        dataset_type="images",
+        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_diff",
+        overwrite=True,
+        port=7774
+    )
+
+    direct_doors_videos_v3 = DatasetConfig(
+        name="direct_doors_videos_v3",
+        dataset_type="images",
+        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_filter_v3",
+        overwrite=True,
+        port=7775
+    )
+
+    direct_doors_removed_v3 = DatasetConfig(
+        name="direct_doors_removed_v3",
+        dataset_type="images",
+        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_v3_diff",
+        overwrite=True,
+        port=7776
+    )
+
+    # filter_test = DatasetConfig(
+    #     name="test",
+    #     dataset_type="images",
+    #     images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/test/0Fe0mUrqmBg_test",
+    #     overwrite=True,
+    #     port=7773
+    # )
+
+    # filter_test_fv2 = DatasetConfig(
+    #     name="test_fv2",
+    #     dataset_type="images",
+    #     images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/test/0Fe0mUrqmBg_fv2",
+    #     overwrite=True,
+    #     port=7774
+    # )
+
     # visualize_remote_view_images(dataset_config=delivery_videos)
     visualize_remote_view_images_multiple(
         dataset_configs=[
             delivery_videos,
             real_estate_videos,
             direct_doors_videos,
-        ]
+            direct_doors_videos_v2,
+            direct_doors_removed,
+            direct_doors_videos_v3,
+            direct_doors_removed_v3
+        ],
+        port = 0 # if port not zero, all datasets will be visualized in same port 
+        # ignoring individual dataset ports
     )
