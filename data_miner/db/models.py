@@ -23,7 +23,14 @@ class Project(SQLModel, table=True):
     name: str = Field(max_length=100, unique=True)
     output_dir: Optional[str] = None
     project_stage: ProjectStatus = Field(default=ProjectStatus.POPULATING)
-    
+
+    # Video counts (updated by monitor)
+    total_videos: int = Field(default=0)
+    videos_pending: int = Field(default=0)
+    videos_downloaded: int = Field(default=0)
+    videos_extracted: int = Field(default=0)
+    videos_failed: int = Field(default=0)
+
     # Frame counts (updated by monitor)
     extracted_frames: int = Field(default=0)
     filtered_frames: int = Field(default=0)

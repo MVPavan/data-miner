@@ -7,7 +7,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from .constants import SamplingStrategy, DetectorType, DedupModelType
+from .constants import SamplingStrategy, DetectorType, DedupModelType, DinoEmbeddingStage
 
 
 class DownloadConfig(BaseModel):
@@ -70,6 +70,10 @@ class DeduplicationConfig(BaseModel):
     # Model selection
     model_type: DedupModelType = Field(default=DedupModelType.DINO)
     dino_model_id: str = Field(default="dinov3-base")
+    dino_embedding_stage: DinoEmbeddingStage = Field(
+        default=DinoEmbeddingStage.POOLER,
+        description="DINO embedding extraction stage: pooler, hidden_cls, or hidden_mean"
+    )
     
     # FAISS settings
     k_neighbors: int = Field(default=50)

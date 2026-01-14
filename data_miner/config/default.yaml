@@ -175,6 +175,7 @@ dedup:
   # Model type: dino (better quality) or siglip (memory efficient)
   model_type: "dino"           # DedupModelType enum: dino, siglip
   dino_model_id: "dinov3-base" # dinov2-base, dinov2-large, dinov3-base, etc.
+  dino_embedding_stage: "pooler"  # pooler, hidden_cls, hidden_mean
   
   # FAISS k-nearest neighbors (higher = slower but more accurate)
   k_neighbors: 50

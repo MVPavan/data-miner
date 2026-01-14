@@ -427,11 +427,12 @@ Generated via `data-miner workers setup --config path/to/config.yaml`
 
 ## Processing Modules
 
-### 1. Downloader ([downloader.py](../data_miner/modules/downloader.py))
+### 1. Downloader (`downloader.py`)
 
 Downloads YouTube videos using yt-dlp with configurable rate limiting.
 
 **Key Features:**
+
 - Format selection (max 1080p by default)
 - Rate limiting (sleep intervals between downloads)
 - Hashtag blocklist filtering
@@ -443,7 +444,7 @@ class YouTubeDownloader:
         """Download a single video, returns path and metadata."""
 ```
 
-### 2. Frame Extractor ([frame_extractor.py](../data_miner/modules/frame_extractor.py))
+### 2. Frame Extractor (`frame_extractor.py`)
 
 Extracts frames from videos using PyAV.
 
@@ -454,11 +455,12 @@ Extracts frames from videos using PyAV.
 | `time` | Every N seconds |
 | `keyframe` | Scene change detection |
 
-### 3. Frame Filter ([frame_filter.py](../data_miner/modules/frame_filter.py))
+### 3. Frame Filter (`frame_filter.py`)
 
 Filters frames based on SigLIP2 image-text similarity.
 
 **Two Modes:**
+
 1. **Positive-only**: Frame passes if `max(positive_scores) > threshold`
 2. **Positive + Negative**: Also requires `max(positive) - max(negative) > margin`
 
@@ -475,11 +477,12 @@ class FrameFilter:
         """
 ```
 
-### 4. Deduplicator ([deduplicator.py](../data_miner/modules/deduplicator.py))
+### 4. Deduplicator (`deduplicator.py`)
 
 Removes duplicate frames using embedding-based similarity with FAISS.
 
 **Two-Phase Algorithm:**
+
 1. **Phase 1 - Per-Video**: Remove temporal duplicates within each video using greedy selection
 2. **Phase 2 - Cross-Video**: Use FAISS ANN search to find and remove duplicates across all videos
 
@@ -500,10 +503,11 @@ flowchart LR
 ```
 
 **Supported Models:**
+
 - **DINOv3** (default): Best quality embeddings
 - **SigLIP2**: Memory-efficient, reuses filter model
 
-### 5. Detector ([detector.py](../data_miner/modules/detector.py))
+### 5. Detector (`detector.py`)
 
 Runs open-set object detection on frames.
 
@@ -541,7 +545,7 @@ class BaseModel(ABC):
     def __exit__(self, *args): self.unload()
 ```
 
-### SigLIPModel ([siglip_model.py](../data_miner/models/siglip_model.py))
+### SigLIPModel (`siglip_model.py`)
 
 Wrapper for Google's SigLIP2 for image-text similarity:
 
@@ -556,7 +560,7 @@ class SigLIPModel(BaseModel):
         """Returns (N_images, N_texts) similarity matrix."""
 ```
 
-### DINOv3Model ([dinov3_model.py](../data_miner/models/dinov3_model.py))
+### DINOv3Model (`dinov3_model.py`)
 
 Wrapper for Meta's DINOv3/DINOv2 for image embeddings:
 
@@ -748,7 +752,7 @@ timeline
 
 ### V3 Architecture (File-Based)
 
-The earlier V3 version documented in [CODE_WALKTHROUGH.md](./CODE_WALKTHROUGH.md) used a different architecture:
+The earlier V3 version used a different architecture:
 
 #### Key Components
 
@@ -779,7 +783,7 @@ videos:
 
 #### Proposed Async Enhancement
 
-The [ASYNC_PIPELINE_IMPLEMENTATION_PLAN.md](./ASYNC_PIPELINE_IMPLEMENTATION_PLAN.md) proposed an async evolution:
+The original async pipeline implementation plan proposed an async evolution:
 
 - `asyncio` event loop for orchestration
 - `ThreadPoolExecutor` for blocking operations
@@ -790,7 +794,7 @@ This design influenced the current worker architecture but was adapted for datab
 
 #### Parallel Pipeline Options
 
-Two approaches were considered in [PARALLEL_PIPELINE_DESIGN.md](./PARALLEL_PIPELINE_DESIGN.md):
+Two approaches were considered in the parallel pipeline design:
 
 1. **Per-Video Streaming**: Each video flows through all stages concurrently
 2. **Stage-Level Async Queues**: Separate workers per stage with folder-based message passing

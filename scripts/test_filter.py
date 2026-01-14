@@ -1,5 +1,6 @@
 from pathlib import Path
-from data_miner.config import FilterConfig, SIGLIP2_MODELS
+
+from data_miner.config import SIGLIP2_MODELS, FilterConfig
 from data_miner.modules.frame_filter import FrameFilter
 
 # threshold=0.35,
@@ -147,5 +148,5 @@ result = _filter.filter_frames(
     video_id="frames_dedup_filter_v3",
 )
 print(f"\n {result.passed_frames}/{result.total_frames} frames passed")
-print(f"Completed")
+print("Completed")
 

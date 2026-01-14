@@ -187,6 +187,12 @@ detect:
 
 ### Monitor Settings
 
+The monitor worker handles:
+
+- **Project stage transitions** (e.g., FILTERING → DEDUP_READY)
+- **Stale lock recovery** (resets locks from crashed workers)
+- **Frame count aggregation**
+
 ```yaml
 monitor:
   poll_interval: 10                   # Seconds between checks
@@ -199,13 +205,41 @@ monitor:
 
 ### Backup Settings
 
+The backup worker syncs `frames_raw/` to a remote destination after videos are extracted.
+
 ```yaml
 backup:
-  enabled: false
-  remote_dest: "user@host:/path/to/backup"
-  delete_after_backup: false
-  poll_interval: 300
+  enabled: false                    # Enable backup worker
+  remote_dest: "user@host:/path"    # SSH destination or local path
+  delete_after_backup: false        # Delete local frames after verified backup
+  poll_interval: 300                # Seconds between backup checks
+  verification_timeout: 1800        # Seconds for rsync verification
 ```
+
+> **Note**: Backup uses rsync over SSH. Ensure SSH keys are configured for passwordless access.
+
+---
+
+### Logging (Grafana + Loki)
+
+```yaml
+logging:
+  level: "INFO"                                        # DEBUG, INFO, WARNING, ERROR
+  loki_url: "http://localhost:3100/loki/api/v1/push"   # Loki push endpoint
+  log_dir: "output/logs"                               # Local log directory
+```
+
+Logs are automatically sent to:
+
+1. **Console** - Always enabled
+2. **File** - If `LOG_FILE` env var is set
+3. **Loki** - If `python-logging-loki` is installed and Loki is running
+
+**Access logs in Grafana:**
+
+1. Open `http://localhost:3000`
+2. Add Loki data source: `http://loki:3100`
+3. Use LogQL queries: `{application="data_miner"}`
 
 ---
 

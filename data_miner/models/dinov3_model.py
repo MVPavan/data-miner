@@ -11,11 +11,12 @@ from typing import Union
 import numpy as np
 import torch
 from PIL import Image
+from torch.nn import functional as F
 
-from ..config import DINO_MODELS, DINO_DEFAULT
-from ..utils.device import resolve_device, get_model_device
-from .base import BaseModel, create_batch_iterator
+from ..config import DINO_DEFAULT, DINO_MODELS, DinoEmbeddingStage
 from ..logging import get_logger
+from ..utils.device import get_model_device, resolve_device
+from .base import BaseModel, create_batch_iterator
 
 logger = get_logger(__name__)
 
@@ -59,7 +60,7 @@ class DINOv3Model(BaseModel):
         if self._loaded:
             return
         
-        from transformers import AutoModel, AutoImageProcessor
+        from transformers import AutoImageProcessor, AutoModel
         
         logger.info(f"Loading DINO model: {self.model_id}")
         
@@ -87,6 +88,7 @@ class DINOv3Model(BaseModel):
         batch_size: int = 32,
         show_progress: bool = False,
         normalize: bool = True,
+        stage: DinoEmbeddingStage = DinoEmbeddingStage.POOLER,
     ) -> np.ndarray:
         """
         Compute embeddings for a list of images.
@@ -96,6 +98,7 @@ class DINOv3Model(BaseModel):
             batch_size: Batch size for inference
             show_progress: Show progress bar
             normalize: L2-normalize embeddings
+            stage: Embedding extraction stage (POOLER, HIDDEN_CLS, HIDDEN_MEAN)
             
         Returns:
             numpy array of shape (num_images, embedding_dim)
@@ -124,10 +127,16 @@ class DINOv3Model(BaseModel):
             outputs = self.model(**inputs)
             
             # Use pooler output if available, else use CLS token from last hidden state
-            if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+            if stage == DinoEmbeddingStage.POOLER and hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
                 embeddings = outputs.pooler_output
-            else:
+            elif stage == DinoEmbeddingStage.HIDDEN_CLS:
                 embeddings = outputs.last_hidden_state[:, 0]
+            elif stage == DinoEmbeddingStage.HIDDEN_MEAN: 
+                # mean pooling with out cls token
+                embeddings = outputs.last_hidden_state[:, 1:]
+                embeddings = embeddings.mean(dim=1)
+            else:
+                raise ValueError(f"Unsupported stage: {stage}")
             
             all_embeddings.append(embeddings.cpu().numpy())
         

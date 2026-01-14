@@ -46,6 +46,7 @@ flowchart LR
 ```
 
 The pipeline uses:
+
 - **PostgreSQL** for state management with row-level locking
 - **Supervisor** for worker process management
 - **Heartbeat-based locking** for concurrent safety

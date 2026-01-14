@@ -2,7 +2,7 @@
 
 A comprehensive guide to the architecture and code flow of Video Miner V3, a high-performance video mining pipeline for generating large-scale computer vision datasets from YouTube videos.
 
-![Pipeline Architecture](./architecture.png)
+![Pipeline Architecture](../../diagrams/architecture.png)
 
 ---
 
@@ -67,7 +67,7 @@ video_miner_v3/
 
 ## Entry Points
 
-### CLI ([cli.py](../video_miner_v3/cli.py))
+### CLI (`cli.py`)
 
 The main entry point is the `video-miner` CLI built with Click:
 
@@ -84,11 +84,11 @@ def main(ctx: click.Context, verbose: bool):
 
 | Command | Function | Description |
 |---------|----------|-------------|
-| `run-config` | [run_config()](../video_miner_v3/cli.py#L390-L469) | Run pipeline from YAML config file(s) |
-| `validate-config` | [validate_config_cmd()](../video_miner_v3/cli.py#L472-L504) | Validate YAML config without running |
-| `registry status` | [registry_status()](../video_miner_v3/cli.py#L113-L142) | Show registry statistics |
-| `registry list` | [registry_list()](../video_miner_v3/cli.py#L178-L221) | List videos in registry |
-| `registry export` | [registry_export()](../video_miner_v3/cli.py#L145-L175) | Export URLs to file |
+| `run-config` | `run_config()` | Run pipeline from YAML config file(s) |
+| `validate-config` | `validate_config_cmd()` | Validate YAML config without running |
+| `registry status` | `registry_status()` | Show registry statistics |
+| `registry list` | `registry_list()` | List videos in registry |
+| `registry export` | `registry_export()` | Export URLs to file |
 
 #### Pipeline Execution Flow
 
@@ -104,7 +104,7 @@ flowchart TD
     H --> I[VideoPipeline.run]
 ```
 
-The [_execute_pipeline()](../video_miner_v3/cli.py#L228-L387) function:
+The `_execute_pipeline()` function:
 1. Loads/creates the video registry
 2. Executes optional search stage
 3. Gathers URLs from config, files, or registry
@@ -115,7 +115,7 @@ The [_execute_pipeline()](../video_miner_v3/cli.py#L228-L387) function:
 
 ## Configuration System
 
-### Pydantic Models ([config.py](../video_miner_v3/config.py))
+### Pydantic Models (`config.py`)
 
 All configuration uses Pydantic for validation:
 
@@ -187,11 +187,11 @@ classDiagram
 
 | Enum | Values | Location |
 |------|--------|----------|
-| `DetectorType` | dino-x, moondream3, florence2, grounding-dino | [config.py:35-40](../video_miner_v3/config.py#L35-L40) |
-| `SamplingStrategy` | interval, time, keyframe | [config.py:43-47](../video_miner_v3/config.py#L43-L47) |
-| `FilterModel` | siglip2-so400m, siglip2-giant | [config.py:50-53](../video_miner_v3/config.py#L50-L53) |
+| `DetectorType` | dino-x, moondream3, florence2, grounding-dino | `config.py:35-40` |
+| `SamplingStrategy` | interval, time, keyframe | `config.py:43-47` |
+| `FilterModel` | siglip2-so400m, siglip2-giant | `config.py:50-53` |
 
-### OmegaConf Loader ([config_loader.py](../video_miner_v3/config_loader.py))
+### OmegaConf Loader (`config_loader.py`)
 
 Supports layered configuration merging:
 
@@ -206,11 +206,11 @@ def load_config(user_config, overrides, resolve=True):
 ```
 
 Key functions:
-- [load_config()](../video_miner_v3/config_loader.py#L21-L86) - Load and merge YAML configs
-- [validate_config()](../video_miner_v3/config_loader.py#L115-L212) - Validate required fields
-- [print_config()](../video_miner_v3/config_loader.py#L215-L226) - Pretty print configuration
+- `load_config()` - Load and merge YAML configs
+- `validate_config()` - Validate required fields
+- `print_config()` - Pretty print configuration
 
-### Constants ([constants.py](../video_miner_v3/constants.py))
+### Constants (`constants.py`)
 
 Centralized source of truth for all model IDs and defaults:
 
@@ -229,7 +229,7 @@ Default thresholds:
 
 ## Pipeline Orchestration
 
-### VideoPipeline ([pipeline.py](../video_miner_v3/pipeline.py))
+### VideoPipeline (`pipeline.py`)
 
 The main orchestrator coordinates all processing stages:
 
@@ -274,7 +274,7 @@ class VideoPipeline:
 
 #### Main Run Method
 
-[VideoPipeline.run()](../video_miner_v3/pipeline.py#L186-L307):
+`VideoPipeline.run()`:
 
 ```python
 def run(self, show_progress: bool = True) -> PipelineResult:
@@ -305,7 +305,7 @@ def run(self, show_progress: bool = True) -> PipelineResult:
 
 #### Registry-Aware Filtering
 
-The pipeline uses [_filter_by_registry()](../video_miner_v3/pipeline.py#L138-L184) to skip already-processed videos:
+The pipeline uses `_filter_by_registry()` to skip already-processed videos:
 
 ```python
 def _filter_by_registry(self, items, get_video_id, stage_name, force=False):
@@ -325,7 +325,7 @@ def _filter_by_registry(self, items, get_video_id, stage_name, force=False):
 
 ## Processing Modules
 
-### 1. Downloader ([downloader.py](../video_miner_v3/modules/downloader.py))
+### 1. Downloader (`downloader.py`)
 
 Downloads YouTube videos using yt-dlp with concurrent processing.
 
@@ -346,13 +346,13 @@ flowchart TD
 - `YouTubeDownloader` - Main downloader class
 
 **Key Methods:**
-- [download_single()](../video_miner_v3/modules/downloader.py#L110-L203) - Download one video
-- [download_batch()](../video_miner_v3/modules/downloader.py#L205-L317) - Concurrent batch download
-- [gather_input_urls()](../video_miner_v3/modules/downloader.py#L320-L370) - Collect URLs from config sources
+- `download_single()` - Download one video
+- `download_batch()` - Concurrent batch download
+- `gather_input_urls()` - Collect URLs from config sources
 
 ---
 
-### 2. Frame Extractor ([frame_extractor.py](../video_miner_v3/modules/frame_extractor.py))
+### 2. Frame Extractor (`frame_extractor.py`)
 
 Extracts frames from videos using PyAV with configurable sampling strategies.
 
@@ -370,13 +370,13 @@ Extracts frames from videos using PyAV with configurable sampling strategies.
 - `FrameExtractor` - Main extractor class
 
 **Key Methods:**
-- [iterate_frames()](../video_miner_v3/modules/frame_extractor.py#L155-L232) - Generator yielding FrameInfo
-- [extract_video()](../video_miner_v3/modules/frame_extractor.py#L234-L337) - Extract and save frames
-- [extract_batch()](../video_miner_v3/modules/frame_extractor.py#L339-L438) - Concurrent batch extraction
+- `iterate_frames()` - Generator yielding FrameInfo
+- `extract_video()` - Extract and save frames
+- `extract_batch()` - Concurrent batch extraction
 
 ---
 
-### 3. Frame Filter ([frame_filter.py](../video_miner_v3/modules/frame_filter.py))
+### 3. Frame Filter (`frame_filter.py`)
 
 Filters frames using SigLIP2 text-image similarity.
 
@@ -395,12 +395,12 @@ flowchart LR
 - `FrameFilter` - Main filter class
 
 **Key Methods:**
-- [filter_frames()](../video_miner_v3/modules/frame_filter.py#L75-L193) - Filter single video frames
-- [filter_batch()](../video_miner_v3/modules/frame_filter.py#L195-L242) - Filter multiple videos
+- `filter_frames()` - Filter single video frames
+- `filter_batch()` - Filter multiple videos
 
 ---
 
-### 4. Deduplicator ([deduplicator.py](../video_miner_v3/modules/deduplicator.py))
+### 4. Deduplicator (`deduplicator.py`)
 
 Removes duplicate frames using embedding-based similarity with FAISS.
 
@@ -432,13 +432,13 @@ flowchart TD
 - **SigLIP2** - Memory-efficient, reuses filter model
 
 **Key Methods:**
-- [deduplicate()](../video_miner_v3/modules/deduplicator.py#L247-L333) - Single batch deduplication
-- [deduplicate_cross_video()](../video_miner_v3/modules/deduplicator.py#L335-L465) - Two-phase cross-video dedup
-- [_faiss_dedup()](../video_miner_v3/modules/deduplicator.py#L190-L245) - FAISS-based O(N log N) dedup
+- `deduplicate()` - Single batch deduplication
+- `deduplicate_cross_video()` - Two-phase cross-video dedup
+- `_faiss_dedup()` - FAISS-based O(N log N) dedup
 
 ---
 
-### 5. Object Detector ([detector.py](../video_miner_v3/modules/detector.py))
+### 5. Object Detector (`detector.py`)
 
 Runs open-set object detection on frames.
 
@@ -451,8 +451,8 @@ Runs open-set object detection on frames.
 | Grounding DINO | `IDEA-Research/grounding-dino-base` | Stable |
 
 **Key Methods:**
-- [detect_single()](../video_miner_v3/modules/detector.py#L78-L107) - Detect in one image
-- [detect_batch()](../video_miner_v3/modules/detector.py#L169-L248) - Batch detection with progress
+- `detect_single()` - Detect in one image
+- `detect_batch()` - Batch detection with progress
 
 **Output:**
 - `annotations.json` - COCO-format annotations
@@ -462,7 +462,7 @@ Runs open-set object detection on frames.
 
 ## ML Model Wrappers
 
-### Base Model ([base.py](../video_miner_v3/models/base.py))
+### Base Model (`base.py`)
 
 Abstract base class providing common functionality:
 
@@ -485,13 +485,13 @@ class BaseModel(ABC):
 ```
 
 **Utilities:**
-- [load_image()](../video_miner_v3/models/base.py#L26-L54) - Convert Path/np.array/PIL to RGB Image
-- [create_batch_iterator()](../video_miner_v3/models/base.py#L139-L165) - Batch iterator with tqdm
-- [load_model_with_fallback()](../video_miner_v3/models/base.py#L172-L201) - Try multiple model IDs
+- `load_image()` - Convert Path/np.array/PIL to RGB Image
+- `create_batch_iterator()` - Batch iterator with tqdm
+- `load_model_with_fallback()` - Try multiple model IDs
 
 ---
 
-### SigLIP Model ([siglip_model.py](../video_miner_v3/models/siglip_model.py))
+### SigLIP Model (`siglip_model.py`)
 
 Wrapper for Google's SigLIP2 for image-text similarity:
 
@@ -513,7 +513,7 @@ class SigLIPModel(BaseModel):
 
 ---
 
-### DINOv3 Model ([dinov3_model.py](../video_miner_v3/models/dinov3_model.py))
+### DINOv3 Model (`dinov3_model.py`)
 
 Wrapper for Meta's DINOv2/v3 for image embeddings:
 
@@ -532,7 +532,7 @@ class DINOv3Model(BaseModel):
 
 ---
 
-### Detector Models ([detector_models.py](../video_miner_v3/models/detector_models.py))
+### Detector Models (`detector_models.py`)
 
 Unified interface for multiple detection backends:
 
@@ -588,7 +588,7 @@ def get_detector(detector_type: DetectorType, model_id: str, device_map: str):
 
 ## Video Registry System
 
-### VideoRegistry ([registry.py](../video_miner_v3/registry.py))
+### VideoRegistry (`registry.py`)
 
 Pydantic-based YAML registry for tracking video processing status:
 
@@ -685,16 +685,16 @@ class VideoStatus(str, Enum):
 ```
 
 **Key Methods:**
-- [add_video()](../video_miner_v3/registry.py#L181-L212) - Add video to registry
-- [update_stage()](../video_miner_v3/registry.py) - Update stage completion
-- [get_pending()](../video_miner_v3/registry.py) - Get unprocessed videos
-- [save()](../video_miner_v3/registry.py) - Thread-safe YAML save
+- `add_video()` - Add video to registry
+- `update_stage()` - Update stage completion
+- `get_pending()` - Get unprocessed videos
+- `save()` - Thread-safe YAML save
 
 ---
 
 ## Utility Functions
 
-### Device Management ([device.py](../video_miner_v3/utils/device.py))
+### Device Management (`device.py`)
 
 ```python
 def resolve_device(device_map: str = "auto") -> str:
@@ -711,7 +711,7 @@ def clear_gpu_cache():
     torch.cuda.synchronize()
 ```
 
-### I/O Utilities ([io.py](../video_miner_v3/utils/io.py))
+### I/O Utilities (`io.py`)
 
 | Function | Description |
 |----------|-------------|

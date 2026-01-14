@@ -13,15 +13,14 @@ from typing import Optional, Union
 
 import faiss
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 
-from ..config import DeduplicationConfig, DedupModelType
+from ..config import DeduplicationConfig, DedupModelType, DinoEmbeddingStage
+from ..logging import get_logger
 from ..models.dinov3_model import DINOv3Model
 from ..models.siglip_model import SigLIPModel
-from ..utils.io import ensure_dir
 from ..utils.device import get_model_device
-from ..logging import get_logger
+from ..utils.io import ensure_dir
 
 logger = get_logger(__name__)
 
@@ -105,6 +104,7 @@ class Deduplicator:
         images: list[Path],
         batch_size: int,
         show_progress: bool,
+        stage: DinoEmbeddingStage = DinoEmbeddingStage.POOLER,
     ) -> np.ndarray:
         """Get embeddings using the configured model."""
         self._model.load()
@@ -119,6 +119,7 @@ class Deduplicator:
                 batch_size=batch_size,
                 show_progress=show_progress,
                 normalize=True,
+                stage=stage
             )
     
     def _get_siglip_embeddings(
@@ -129,7 +130,6 @@ class Deduplicator:
     ) -> np.ndarray:
         """Extract image embeddings from SigLIP (without text)."""
         import torch
-        from PIL import Image as PILImage
         
         all_embeddings = []
         iterator = range(0, len(images), batch_size)
@@ -261,6 +261,38 @@ class Deduplicator:
         Returns:
             DeduplicationResult with unique frame paths
         """
+        frame_paths = sorted(frame_paths)
+        def debug_only():
+            from collections import defaultdict
+
+            from sklearn.metrics.pairwise import cosine_similarity
+            frames_group = defaultdict(lambda: defaultdict(list))
+            for i,_p in enumerate(frame_paths):
+                key = "_".join(_p.stem.split('_')[:-1])
+                frames_group[key]['paths'].append(_p)
+                frames_group[key]['indices'].append(i)
+
+            video_id = "-GiYcWvjq5k"
+            _idxs = frames_group[video_id]['indices']
+            _paths = frames_group[video_id]['paths']
+            
+            ep = self._get_embeddings(images=_paths,  batch_size=8, show_progress=False, stage=DinoEmbeddingStage.POOLER)
+            ehc = self._get_embeddings(images=_paths,  batch_size=8, show_progress=False, stage=DinoEmbeddingStage.HIDDEN_CLS)
+            ehm = self._get_embeddings(images=_paths,  batch_size=8, show_progress=False, stage=DinoEmbeddingStage.HIDDEN_MEAN)
+            smep = cosine_similarity(ep).round(3)
+            smehc = cosine_similarity(ehc).round(3)
+            smehm = cosine_similarity(ehm).round(3)
+            i=0
+            for _i,(a,b,c) in enumerate(zip(smep[i],smehc[i],smehm[i])):
+                print(_i,a,b,c)
+
+            _embeds = self._get_embeddings(images=_paths,  batch_size=8, show_progress=False)
+            sm = cosine_similarity(_embeds)
+
+            image_names = ["-EYLe6QQyAo_003660", "-EYLe6QQyAo_003690"]
+            selected_idxs = [_idxs[_i] for _i,_p in enumerate(_paths) if _p.stem in image_names]
+            sim_matrix = cosine_similarity(embeddings[selected_idxs])
+
         if not frame_paths:
             return DeduplicationResult(
                 total_frames=0,
@@ -290,6 +322,7 @@ class Deduplicator:
             images=frame_paths,
             batch_size=self.config.batch_size,
             show_progress=show_progress,
+            stage=self.config.dino_embedding_stage,
         )
         
         # FAISS-based deduplication (scalable to 50k+ frames)
@@ -379,6 +412,7 @@ class Deduplicator:
                 images=paths,
                 batch_size=self.config.batch_size,
                 show_progress=False,
+                stage=self.config.dino_embedding_stage,
             )
             
             # FAISS dedup within video
@@ -423,6 +457,7 @@ class Deduplicator:
             images=phase1_paths,
             batch_size=self.config.batch_size,
             show_progress=show_progress,
+            stage=self.config.dino_embedding_stage,
         )
         
         # FAISS dedup across all

@@ -40,7 +40,17 @@ docker compose up -d
 docker compose ps
 ```
 
-The included `docker-compose.yaml` starts PostgreSQL on port 5432 with default credentials.
+The included `docker-compose.yaml` starts PostgreSQL on port 5432 with default credentials. It also includes:
+
+- **Loki** - Log aggregation at `http://localhost:3100`
+- **Grafana** - Log visualization at `http://localhost:3000`
+- **Adminer** - Database admin UI at `http://localhost:8880`
+
+```bash
+# Fix permissions for Loki and Grafana (first time only)
+sudo chown -R 10001:10001 data/loki
+sudo chown -R 472:472 data/grafana
+```
 
 ### Option 2: Local PostgreSQL
 

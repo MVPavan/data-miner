@@ -15,9 +15,11 @@ erDiagram
         int project_id PK
         string name UK
         ProjectStatus project_stage
+        int total_videos
+        int videos_downloaded
+        int videos_extracted
         int extracted_frames
         int filtered_frames
-        int unique_frames
     }
     
     VIDEO {
@@ -52,11 +54,18 @@ Tracks project-level state and cross-video operations.
 | `project_id` | int | Primary key |
 | `name` | str | Unique project name |
 | `project_stage` | ProjectStatus | Current stage |
+| `total_videos` | int | Total videos in project |
+| `videos_pending` | int | Videos pending download |
+| `videos_downloaded` | int | Videos downloaded (cumulative, includes extracted) |
+| `videos_extracted` | int | Videos with frames extracted |
+| `videos_failed` | int | Failed videos |
 | `extracted_frames` | int | Total frames extracted |
 | `filtered_frames` | int | Total frames passed filter |
 | `unique_frames` | int | Frames after dedup |
 | `dedup_dir` | str | Dedup output directory |
 | `detect_dir` | str | Detection output directory |
+
+> **Note**: Video counts are cumulative where appropriate. `videos_downloaded` includes extracted videos.
 
 ---
 

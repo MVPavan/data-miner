@@ -80,6 +80,19 @@ class DedupModelType(str, Enum):
     SIGLIP = "siglip"
 
 
+class DinoEmbeddingStage(str, Enum):
+    """DINO embedding extraction stage.
+    
+    Controls which layer output to use for embeddings:
+    - POOLER: Pooled CLS token (default, best for classification similarity)
+    - HIDDEN_CLS: Raw CLS token from last hidden layer
+    - HIDDEN_MEAN: Mean of all patch tokens (global image structure)
+    """
+    POOLER = "pooler"
+    HIDDEN_CLS = "hidden_cls"
+    HIDDEN_MEAN = "hidden_mean"
+
+
 class StageName(str, Enum):
     """Pipeline stage names."""
     DOWNLOAD = "download"

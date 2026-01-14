@@ -1,11 +1,10 @@
 # python script to visualize remote view images and annotations using voxel51
 
 import time
-from pathlib import Path
-import fiftyone as fo
-import fiftyone.zoo as foz
-import fiftyone.utils.yolo as fouyolo
 from typing import List
+
+import fiftyone as fo
+import fiftyone.utils.yolo as fouyolo
 from pydantic import BaseModel, model_validator
 
 FO_DATASET_MAP = {
@@ -193,13 +192,13 @@ if __name__ == "__main__":
     # visualize_remote_view_images(dataset_config=delivery_videos)
     visualize_remote_view_images_multiple(
         dataset_configs=[
-            delivery_videos,
-            real_estate_videos,
+            # delivery_videos,
+            # real_estate_videos,
             direct_doors_videos,
-            direct_doors_videos_v2,
-            direct_doors_removed,
-            direct_doors_videos_v3,
-            direct_doors_removed_v3
+            # direct_doors_videos_v2,
+            # direct_doors_removed,
+            # direct_doors_videos_v3,
+            # direct_doors_removed_v3
         ],
         port = 0 # if port not zero, all datasets will be visualized in same port 
         # ignoring individual dataset ports

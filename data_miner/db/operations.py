@@ -585,9 +585,19 @@ def reset_projects_with_pending_videos(session: Session) -> int:
 
 def update_project_frame_counts(session: Session) -> int:
     """
-    Update extracted_frames and filtered_frames for all active projects.
+    Update frame counts and video counts for all active projects.
     Only writes if counts have changed (read is cheap, write is expensive).
     Skips COMPLETE projects.
+    
+    Updates:
+    - extracted_frames, filtered_frames (frame counts)
+    - total_videos, videos_pending, videos_downloaded, videos_extracted, videos_failed
+    
+    Count logic (cumulative where applicable):
+    - videos_pending: PENDING or DOWNLOADING
+    - videos_downloaded: DOWNLOADED, EXTRACTING, or EXTRACTED (cumulative - includes extracted)
+    - videos_extracted: EXTRACTED only (terminal success state)
+    - videos_failed: FAILED only
     
     Returns number of projects updated.
     """
@@ -595,12 +605,22 @@ def update_project_frame_counts(session: Session) -> int:
         text("""
             UPDATE projects p SET
                 extracted_frames = counts.extracted,
-                filtered_frames = counts.filtered
+                filtered_frames = counts.filtered,
+                total_videos = counts.total,
+                videos_pending = counts.pending,
+                videos_downloaded = counts.downloaded,
+                videos_extracted = counts.extr,
+                videos_failed = counts.failed
             FROM (
                 SELECT 
                     pv.project_id,
                     COALESCE(SUM(v.frame_count), 0)::INTEGER as extracted,
-                    COALESCE(SUM(pv.passed_frames), 0)::INTEGER as filtered
+                    COALESCE(SUM(pv.passed_frames), 0)::INTEGER as filtered,
+                    COUNT(*)::INTEGER as total,
+                    COUNT(*) FILTER (WHERE v.status IN ('PENDING', 'DOWNLOADING'))::INTEGER as pending,
+                    COUNT(*) FILTER (WHERE v.status IN ('DOWNLOADED', 'EXTRACTING', 'EXTRACTED'))::INTEGER as downloaded,
+                    COUNT(*) FILTER (WHERE v.status = 'EXTRACTED')::INTEGER as extr,
+                    COUNT(*) FILTER (WHERE v.status = 'FAILED')::INTEGER as failed
                 FROM project_videos pv
                 JOIN videos v ON pv.video_id = v.video_id
                 GROUP BY pv.project_id
@@ -608,7 +628,12 @@ def update_project_frame_counts(session: Session) -> int:
             WHERE p.project_id = counts.project_id
               AND p.project_stage != 'COMPLETE'
               AND (p.extracted_frames != counts.extracted 
-                   OR p.filtered_frames != counts.filtered)
+                   OR p.filtered_frames != counts.filtered
+                   OR p.total_videos != counts.total
+                   OR p.videos_pending != counts.pending
+                   OR p.videos_downloaded != counts.downloaded
+                   OR p.videos_extracted != counts.extr
+                   OR p.videos_failed != counts.failed)
             RETURNING p.project_id
         """)
     )
