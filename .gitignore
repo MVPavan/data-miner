@@ -17,3 +17,5 @@
 **/data/*
 *.env
 **/*.egg-info/*
+*.log
+**/site/*
