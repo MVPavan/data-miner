@@ -17,15 +17,12 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY data_miner/ ./data_miner/
 
-# Install Python dependencies
-RUN pip install --no-cache-dir uv && \
-    uv pip install --system -e .
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN uv pip install --system -e .
 
 # Create directories for supervisor and logs
 RUN mkdir -p /var/log/supervisor /etc/supervisor/conf.d
 
-# Copy default config (will be overridden by volume mount)
-COPY run_configs/run.yaml /app/config.yaml
 
 # Environment variables
 ENV DATA_MINER_CONFIG=/app/config.yaml

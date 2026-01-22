@@ -1,0 +1,79 @@
+# Standalone Single-Machine Stack
+# Auto-generated from cluster.yaml
+# Runs all services on one machine
+#
+# Usage:
+#   cd docker_configs && docker compose -f docker-compose.standalone.yml up -d
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: dm_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: data_miner
+    ports:
+    - 5432:5432
+    volumes:
+    - ../data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres -d data_miner
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  data-miner:
+    build:
+      context: ..
+      dockerfile: docker_configs/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATA_MINER_CONFIG: /app/config.yaml
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/data_miner
+    volumes:
+    - ./standalone.yaml:/app/config.yaml:ro
+    - ../data/output:/mnt/swdshared
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: 1
+            capabilities:
+            - gpu
+    container_name: dm_workers
+    depends_on:
+      postgres:
+        condition: service_healthy
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: dm_grafana
+    restart: unless-stopped
+    ports:
+    - 3000:3000
+    volumes:
+    - ../data/grafana:/var/lib/grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: dm_loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+    - 3100:3100
+    volumes:
+    - ../data/loki:/loki
+    restart: unless-stopped
+  adminer:
+    image: adminer
+    container_name: dm_adminer
+    restart: unless-stopped
+    ports:
+    - 8880:8080
+    depends_on:
+    - postgres
+volumes: {}
