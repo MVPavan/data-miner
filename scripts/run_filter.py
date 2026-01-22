@@ -76,17 +76,17 @@ negative_prompts = [
 full_view_positive_prompts = [
     "a full glass door",
     "a glass door fully visible",
-    "the entire glass door is in the frame",
-    "a wide shot of a glass door",
-    "a wide shot of an entrance with a glass door",
-    "a storefront entrance with a glass door",
-    "a building entrance with a glass door",
-    "commercial double glass doors fully visible",
-    "a sliding glass door with the full door visible",
     "a french door fully visible",
     "a patio door fully visible",
-    "a framed glass door fully visible",
     "a glass entrance door fully visible",
+    "commercial double glass doors fully visible",
+    "a sliding glass door with the full door visible",
+    "a storefront entrance with a glass door",
+    "a building entrance with a glass door",
+    "the entire glass door is in the frame",
+    "a framed glass door fully visible",
+    "a wide shot of a glass door",
+    "a wide shot of an entrance with a glass door",
     "a glass door with surrounding context visible",
 ]
 
@@ -123,7 +123,7 @@ non_door_or_bad_negative_prompts = [
     "blurry out of focus image",
     "dark grainy night shot",
 ]
-input_dir = Path("/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup")
+input_dir = Path("/mnt/data_2/pavan/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_filtered")
 
 filter_conf = FilterConfig(
     output_dir=input_dir.parent,
@@ -131,21 +131,23 @@ filter_conf = FilterConfig(
     model_id=SIGLIP2_MODELS["siglip2-giant"],
     batch_size=8,
     positive_prompts=full_view_positive_prompts,
-    threshold=0.3,
     negative_prompts=non_door_or_bad_negative_prompts,
-    negative_threshold=0.3,
-    margin_threshold=0.1,
     zoom_prompts=closeup_negative_prompts,
-    zoom_threshold=0.3,
-    zoom_margin_threshold=0.1,
+    positive_thr=0.3,
+    negative_thr=0.3,
+    pos_neg_margin_thr=0.1,
+    zoom_thr=0.3,
+    pos_zoom_margin_thr=0.1,
 )
-frame_paths = list(Path(input_dir).glob("*.jpg")) + list(Path(input_dir).glob("*.png"))
+
+# glob recursively for jpg and png files
+frame_paths = list(Path(input_dir).rglob("*.jpg")) + list(Path(input_dir).rglob("*.png"))
 
 _filter = FrameFilter(config=filter_conf, device_map=filter_conf.device)
 
 result = _filter.filter_frames(
     frame_paths=frame_paths,
-    video_id="frames_dedup_filter_v3",
+    video_id="frames_filtered_v2",
 )
 print(f"\n {result.passed_frames}/{result.total_frames} frames passed")
 print("Completed")

@@ -150,7 +150,7 @@ class FrameFilter:
         # Split scores into positive and negative
         pos_scores = scores[:, :num_positive]
         pos_max = pos_scores.max(axis=1)
-        pos_mask = pos_max > self.config.threshold
+        pos_mask = pos_max > self.config.positive_thr
         neg_mask = np.ones_like(pos_mask, dtype=bool)
         zoom_mask = np.ones_like(pos_mask, dtype=bool)
         # Determine which frames pass
@@ -159,14 +159,14 @@ class FrameFilter:
             neg_scores = scores[:, num_positive:num_positive+num_negative]
             neg_max = neg_scores.max(axis=1)
             pos_neg_margin = pos_max - neg_max
-            neg_mask = (neg_max < self.config.negative_threshold) & (pos_neg_margin > self.config.margin_threshold)
+            neg_mask = (neg_max < self.config.negative_thr) & (pos_neg_margin > self.config.pos_neg_margin_thr)
         
         
         if zoom_prompts:
             zoom_scores = scores[:, num_positive+num_negative:]
             zoom_max = zoom_scores.max(axis=1)
             pos_zoom_margin = pos_max - zoom_max
-            zoom_mask = (zoom_max < self.config.zoom_threshold) & (pos_zoom_margin > self.config.zoom_margin_threshold)
+            zoom_mask = (zoom_max < self.config.zoom_thr) & (pos_zoom_margin > self.config.pos_zoom_margin_thr)
         
         mask = pos_mask & neg_mask & zoom_mask
         

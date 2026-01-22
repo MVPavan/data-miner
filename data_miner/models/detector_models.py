@@ -8,8 +8,7 @@ Unified interface for multiple open-set detection models:
 - Grounding DINO (stable)
 """
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+
 from pathlib import Path
 from typing import Optional, Union
 
@@ -18,96 +17,12 @@ import torch
 from PIL import Image
 
 from ..config import DetectorType
-from ..utils.device import resolve_device, get_model_device, clear_gpu_cache
-from .base import load_image
 from ..logging import get_logger
+from ..utils.device import clear_gpu_cache, get_model_device
+from .base import BaseDetector
 
 logger = get_logger(__name__)
 
-
-@dataclass
-class Detection:
-    """A single detection result."""
-    bbox: tuple[float, float, float, float]  # (x1, y1, x2, y2) normalized 0-1
-    label: str
-    confidence: float
-    caption: Optional[str] = None  # Optional caption for the detection
-
-
-@dataclass
-class DetectionResult:
-    """Detection results for an image."""
-    image_path: Optional[Path]
-    detections: list[Detection] = field(default_factory=list)
-    width: int = 0
-    height: int = 0
-    
-    def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "image_path": str(self.image_path) if self.image_path else None,
-            "width": self.width,
-            "height": self.height,
-            "detections": [
-                {
-                    "bbox": list(d.bbox),
-                    "bbox_abs": [
-                        int(d.bbox[0] * self.width),
-                        int(d.bbox[1] * self.height),
-                        int(d.bbox[2] * self.width),
-                        int(d.bbox[3] * self.height),
-                    ],
-                    "label": d.label,
-                    "confidence": d.confidence,
-                    "caption": d.caption,
-                }
-                for d in self.detections
-            ],
-        }
-
-
-class BaseDetector(ABC):
-    """Abstract base class for detection models."""
-    
-    def __init__(self, device_map: str = "auto"):
-        self.device_map = resolve_device(device_map)
-        self.model = None
-        self.processor = None
-        self._loaded = False
-    
-    @abstractmethod
-    def load(self) -> None:
-        """Load the model."""
-        pass
-    
-    @abstractmethod
-    def unload(self) -> None:
-        """Unload the model to free memory."""
-        pass
-    
-    @abstractmethod
-    def detect(
-        self,
-        image: Union[Path, str, Image.Image, np.ndarray],
-        prompt: str,
-        confidence_threshold: float = 0.3,
-    ) -> DetectionResult:
-        """
-        Detect objects in an image.
-        
-        Args:
-            image: Input image
-            prompt: Text prompt describing what to detect
-            confidence_threshold: Minimum confidence for detections
-            
-        Returns:
-            DetectionResult with list of detections
-        """
-        pass
-    
-    def _load_image(self, image: Union[Path, str, Image.Image, np.ndarray]) -> Image.Image:
-        """Convert various image inputs to PIL Image."""
-        return load_image(image)
 
 
 class Florence2Detector(BaseDetector):
@@ -344,12 +259,10 @@ class MoondreamDetector(BaseDetector):
     Attempts to use Moondream3 first, falls back to Moondream2.
     """
     
-    def __init__(
-        self,
-        model_id: str = "vikhyatk/moondream2",
-        device_map: str = "auto",
-    ):
+    def __init__(self, device_map: str = "auto"):
         super().__init__(device_map)
+        from .moondream import MoonDreamHelper
+        
         self.model_id = model_id
         self.tokenizer = None
         self._actual_model_id = None
@@ -392,7 +305,7 @@ class MoondreamDetector(BaseDetector):
                 logger.warning(f"Failed to load {model_id}: {e}")
                 continue
         
-        raise RuntimeError(f"Failed to load any Moondream model")
+        raise RuntimeError("Failed to load any Moondream model")
     
     def unload(self) -> None:
         if self.model is not None:
@@ -486,7 +399,6 @@ def get_detector(
         BaseDetector instance
     """
     detectors = {
-        DetectorType.DINO_X: (GroundingDINODetector, "IDEA-Research/grounding-dino-base"),
         DetectorType.MOONDREAM3: (MoondreamDetector, "vikhyatk/moondream2"),
         DetectorType.FLORENCE2: (Florence2Detector, "microsoft/Florence-2-large"),
         DetectorType.GROUNDING_DINO: (GroundingDINODetector, "IDEA-Research/grounding-dino-base"),

@@ -39,8 +39,11 @@ The pipeline uses:
 ## 🚀 Quick Start
 
 ```bash
-# Install
-pip install -e .
+# Creates new .venv and Install in editable mode
+uv sync
+
+# Install with editable mode in exisiting virtual environment
+uv pip install -e .
 
 # Initialize database
 data-miner init-db

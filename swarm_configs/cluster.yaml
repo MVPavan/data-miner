@@ -1,0 +1,77 @@
+# Cluster Configuration Template
+# Fill in with actual machine details
+#
+# Authentication: Use either password OR key_file for each machine
+# Environment variables can be used for secrets: ${VAR_NAME}
+
+cluster:
+  # Master node - runs PostgreSQL, SeaweedFS master/filer, and main workers
+  master:
+    host: "192.168.1.100"  # Replace with actual IP
+    user: "admin"
+    # Choose one authentication method:
+    key_file: "~/.ssh/id_rsa"
+    # password: "${MASTER_PASSWORD}"
+    
+    # Local disk path for SeaweedFS volume data
+    local_disk: "/data/seaweed"
+    
+    # Ports (for reference)
+    ports:
+      postgres: 5432
+      seaweed_master: 9333
+      seaweed_filer: 8888
+      grafana: 3000
+
+  # Worker nodes - run download workers and SeaweedFS volume servers
+  workers:
+    - host: "192.168.1.101"
+      user: "worker"
+      key_file: "~/.ssh/id_rsa"
+      local_disk: "/data/seaweed"
+      download_workers: 3  # Override from worker.yaml if needed
+
+    - host: "192.168.1.102"
+      user: "worker"
+      key_file: "~/.ssh/id_rsa"
+      local_disk: "/data/seaweed"
+      download_workers: 3
+
+    - host: "192.168.1.103"
+      user: "worker"
+      key_file: "~/.ssh/id_rsa"
+      local_disk: "/mnt/storage"  # Different disk path example
+      download_workers: 2
+
+    # Add more workers as needed (up to 9 for total of 10 machines)
+    # - host: "192.168.1.104"
+    #   user: "worker"
+    #   key_file: "~/.ssh/id_rsa"
+    #   local_disk: "/data/seaweed"
+    #   download_workers: 3
+
+# Storage configuration
+storage:
+  # Replication: 000 = no replication (single copy)
+  replication: "000"
+  
+  # Mount point inside containers (don't change unless you know what you're doing)
+  fuse_mount: "/mnt/shared"
+
+# Database (managed by master, workers connect to it)
+database:
+  name: "data_miner"
+  user: "postgres"
+  password: "postgres"  # Change in production!
+  port: 5432
+
+# Deployment settings
+deployment:
+  # Docker image tag to use
+  image_tag: "latest"
+  
+  # Path to project on each machine (for building/copying)
+  project_path: "/opt/data_miner"
+  
+  # Whether to rebuild image on deploy
+  rebuild_image: true

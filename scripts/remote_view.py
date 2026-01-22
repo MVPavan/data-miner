@@ -115,91 +115,43 @@ def visualize_remote_view_images_multiple(dataset_configs: List[DatasetConfig], 
         time.sleep(10)
 
 
+def dataset_config_creator(dataset_paths:dict[str, str], port_start:int=7770) -> List[DatasetConfig]:
+    dataset_configs = []
+    _port = port_start
+    for name, path in dataset_paths.items():
+        dataset_configs.append(
+            DatasetConfig(
+                name=name,
+                images_dir=path,
+                dataset_type='images',
+                overwrite=True,
+                port=_port
+            )
+        )
+        _port += 1
+    return dataset_configs
+
 if __name__ == "__main__":
     
-    delivery_videos = DatasetConfig(
-        name="delivery_videos",
-        dataset_type="images",
-        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_dedup",
-        overwrite=False,
-        port=7770
-    )
-
-    real_estate_videos = DatasetConfig(
-        name="real_estate_videos",
-        dataset_type="images",
-        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/real_estate_v1/frames_dedup",
-        overwrite=False,
-        port=7771
-    )
-
-    direct_doors_videos = DatasetConfig(
-        name="direct_doors_videos",
-        dataset_type="images",
-        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup",
-        overwrite=False,
-        port=7772
-    )
-
-    direct_doors_videos_v2 = DatasetConfig(
-        name="direct_doors_videos_v2",
-        dataset_type="images",
-        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_filter_v2",
-        overwrite=True,
-        port=7773
-    )
-
-    direct_doors_removed = DatasetConfig(
-        name="direct_doors_removed",
-        dataset_type="images",
-        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_diff",
-        overwrite=True,
-        port=7774
-    )
-
-    direct_doors_videos_v3 = DatasetConfig(
-        name="direct_doors_videos_v3",
-        dataset_type="images",
-        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_filter_v3",
-        overwrite=True,
-        port=7775
-    )
-
-    direct_doors_removed_v3 = DatasetConfig(
-        name="direct_doors_removed_v3",
-        dataset_type="images",
-        images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_v3_diff",
-        overwrite=True,
-        port=7776
-    )
-
-    # filter_test = DatasetConfig(
-    #     name="test",
-    #     dataset_type="images",
-    #     images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/test/0Fe0mUrqmBg_test",
-    #     overwrite=True,
-    #     port=7773
-    # )
-
-    # filter_test_fv2 = DatasetConfig(
-    #     name="test_fv2",
-    #     dataset_type="images",
-    #     images_dir="/mnt/data_2/pavan/project_helpers/data_miner/output/projects/test/0Fe0mUrqmBg_fv2",
-    #     overwrite=True,
-    #     port=7774
-    # )
+    dataset_paths = {
+        # "delivery_dedup": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_dedup",
+        # "real_estate_dedup": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/real_estate_v1/frames_dedup",
+        # "direct_doors_dedup": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup",
+        # "direct_doors_dedup_v2": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_v2",
+        # "direct_doors_dedup_v2_diff": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_v2_diff",
+        # "direct_doors_filtered_v2": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_filter_v2",
+        # "direct_doors_dedup_v3": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_v3",
+        # "direct_doors_dedup_v3_filtered": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_dedup_v3_filtered",
+        # "direct_doors_filter_v2_dedup": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/direct_doors_v1/frames_filter_v2_dedup",
+        "delivery_dedup": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_dedup",
+        "delivery_dedup_v2": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_dedup_v2",
+        "delivery_dedup_v2_filtered": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_dedup_v2_filter",
+        "delivery_filtered_v2_dedup": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
+    }
 
     # visualize_remote_view_images(dataset_config=delivery_videos)
     visualize_remote_view_images_multiple(
-        dataset_configs=[
-            # delivery_videos,
-            # real_estate_videos,
-            direct_doors_videos,
-            # direct_doors_videos_v2,
-            # direct_doors_removed,
-            # direct_doors_videos_v3,
-            # direct_doors_removed_v3
-        ],
+        dataset_configs=dataset_config_creator(dataset_paths, port_start=7770),
         port = 0 # if port not zero, all datasets will be visualized in same port 
         # ignoring individual dataset ports
     )

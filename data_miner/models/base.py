@@ -8,12 +8,11 @@ Centralizes repetitive code for maintainability.
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Union
-
+from dataclasses import dataclass, field
 import numpy as np
-import torch
 from PIL import Image
 
-from ..utils.device import clear_gpu_cache
+from ..utils.device import clear_gpu_cache, resolve_device
 from ..logging import get_logger
 
 logger = get_logger(__name__)
@@ -199,3 +198,89 @@ def load_model_with_fallback(
             continue
     
     raise RuntimeError(f"Failed to load any {model_name}. Tried: {model_ids}")
+
+
+@dataclass
+class Detection:
+    """A single detection result."""
+    bbox: tuple[float, float, float, float]  # (x1, y1, x2, y2) normalized 0-1
+    label: str
+    confidence: float
+    caption: Optional[str] = None  # Optional caption for the detection
+
+
+@dataclass
+class DetectionResult:
+    """Detection results for an image."""
+    image_path: Optional[Path]
+    detections: list[Detection] = field(default_factory=list)
+    width: int = 0
+    height: int = 0
+    
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "image_path": str(self.image_path) if self.image_path else None,
+            "width": self.width,
+            "height": self.height,
+            "detections": [
+                {
+                    "bbox": list(d.bbox),
+                    "bbox_abs": [
+                        int(d.bbox[0] * self.width),
+                        int(d.bbox[1] * self.height),
+                        int(d.bbox[2] * self.width),
+                        int(d.bbox[3] * self.height),
+                    ],
+                    "label": d.label,
+                    "confidence": d.confidence,
+                    "caption": d.caption,
+                }
+                for d in self.detections
+            ],
+        }
+
+
+class BaseDetector(ABC):
+    """Abstract base class for detection models."""
+    
+    def __init__(self, device_map: str = "auto"):
+        self.device_map = resolve_device(device_map)
+        self.model = None
+        self.processor = None
+        self._loaded = False
+    
+    @abstractmethod
+    def load(self) -> None:
+        """Load the model."""
+        pass
+    
+    @abstractmethod
+    def unload(self) -> None:
+        """Unload the model to free memory."""
+        pass
+    
+    @abstractmethod
+    def detect(
+        self,
+        image: Union[Path, str, Image.Image, np.ndarray],
+        prompt: str,
+        confidence_threshold: float = 0.3,
+    ) -> DetectionResult:
+        """
+        Detect objects in an image.
+        
+        Args:
+            image: Input image
+            prompt: Text prompt describing what to detect
+            confidence_threshold: Minimum confidence for detections
+            
+        Returns:
+            DetectionResult with list of detections
+        """
+        pass
+    
+    def _load_image(self, image: Union[Path, str, Image.Image, np.ndarray]) -> Image.Image:
+        """Convert various image inputs to PIL Image."""
+        return load_image(image)
+

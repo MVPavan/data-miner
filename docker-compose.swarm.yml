@@ -1,0 +1,242 @@
+# Docker Swarm Stack for Distributed Data Miner
+#
+# Deployment:
+#   1. Initialize swarm on master: docker swarm init --advertise-addr MASTER_IP
+#   2. Join workers: docker swarm join --token TOKEN MASTER_IP:2377
+#   3. Label master node: docker node update --label-add role=master MASTER_HOSTNAME
+#   4. Deploy: docker stack deploy -c docker-compose.swarm.yml dm
+#   5. Scale: docker service scale dm_download=30
+#
+# Note: Before deploying, build and push image to registry or build locally on all nodes
+
+version: "3.8"
+
+services:
+  # =============================================================================
+  # PostgreSQL Database (Master only)
+  # =============================================================================
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: data_miner
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - dm-network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d data_miner" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # =============================================================================
+  # SeaweedFS Master (Manager node only)
+  # =============================================================================
+  seaweed-master:
+    image: chrislusf/seaweedfs
+    command: master -ip=seaweed-master -defaultReplication=000 -volumeSizeLimitMB=1000
+    networks:
+      - dm-network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  # =============================================================================
+  # SeaweedFS Filer (Manager node only)
+  # =============================================================================
+  seaweed-filer:
+    image: chrislusf/seaweedfs
+    command: filer -master=seaweed-master:9333
+    networks:
+      - dm-network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+    depends_on:
+      - seaweed-master
+
+  # =============================================================================
+  # SeaweedFS Volume Servers (One per node - global mode)
+  # =============================================================================
+  seaweed-volume:
+    image: chrislusf/seaweedfs
+    command: volume -mserver=seaweed-master:9333 -dir=/data -max=100
+    volumes:
+      - seaweed-data:/data
+    networks:
+      - dm-network
+    deploy:
+      mode: global # One instance per node
+      restart_policy:
+        condition: on-failure
+    depends_on:
+      - seaweed-master
+
+  # =============================================================================
+  # SeaweedFS FUSE Mount (One per node - global mode)
+  # Mounts SeaweedFS as /mnt/seaweed for other containers
+  # =============================================================================
+  seaweed-mount:
+    image: chrislusf/seaweedfs
+    command: mount -filer=seaweed-filer:8888 -dir=/mnt/seaweed -filer.path=/
+    volumes:
+      - shared-data:/mnt/seaweed:shared
+    networks:
+      - dm-network
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+    # FUSE requires privileged - need to set via docker system
+    # See: https://github.com/moby/moby/issues/24862
+    # Workaround: Use --privileged when joining swarm or use host volume
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    privileged: true
+    depends_on:
+      - seaweed-filer
+
+  # =============================================================================
+  # Download Workers (Distributed across all nodes)
+  # =============================================================================
+  download:
+    image: ${REGISTRY:-localhost:5000}/data-miner:${TAG:-latest}
+    environment:
+      - DATA_MINER_CONFIG=/app/config.yaml
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/data_miner
+    configs:
+      - source: worker-config
+        target: /app/config.yaml
+    volumes:
+      - shared-data:/mnt/shared:shared
+    networks:
+      - dm-network
+    deploy:
+      mode: replicated
+      replicas: 10 # Adjust: total download workers across cluster
+      placement:
+        constraints:
+          - node.role == worker # Only on worker nodes
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          memory: 2G
+    depends_on:
+      - postgres
+      - seaweed-mount
+
+  # =============================================================================
+  # Master Workers (Extract, Filter, Dedup - Manager node only)
+  # =============================================================================
+  master-workers:
+    image: ${REGISTRY:-localhost:5000}/data-miner:${TAG:-latest}
+    environment:
+      - DATA_MINER_CONFIG=/app/config.yaml
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/data_miner
+    configs:
+      - source: master-config
+        target: /app/config.yaml
+    volumes:
+      - shared-data:/mnt/shared:shared
+    networks:
+      - dm-network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      resources:
+        reservations:
+          generic_resources:
+            - discrete_resource_spec:
+                kind: 'gpu'
+                value: 1
+    depends_on:
+      - postgres
+      - seaweed-mount
+
+  # =============================================================================
+  # Monitoring (Manager node only)
+  # =============================================================================
+  grafana:
+    image: grafana/grafana:10.0.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    networks:
+      - dm-network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  adminer:
+    image: adminer
+    ports:
+      - "8880:8080"
+    networks:
+      - dm-network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  dm-network:
+    driver: overlay
+    attachable: true
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres-data:
+  seaweed-data:
+  shared-data:
+  grafana-data:
+
+    # =============================================================================
+    # Configs (Swarm configs for worker YAML files)
+    # =============================================================================
+configs:
+  master-config:
+    file: ./swarm_configs/master.yaml
+  worker-config:
+    file: ./swarm_configs/worker.yaml

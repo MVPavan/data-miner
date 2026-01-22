@@ -11,7 +11,6 @@ from typing import Union
 import numpy as np
 import torch
 from PIL import Image
-from torch.nn import functional as F
 
 from ..config import DINO_DEFAULT, DINO_MODELS, DinoEmbeddingStage
 from ..logging import get_logger

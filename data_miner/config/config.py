@@ -7,7 +7,12 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from .constants import SamplingStrategy, DetectorType, DedupModelType, DinoEmbeddingStage
+from .constants import (
+    DedupModelType,
+    DetectorType,
+    DinoEmbeddingStage,
+    SamplingStrategy,
+)
 
 
 class DownloadConfig(BaseModel):
@@ -48,17 +53,17 @@ class FilterConfig(BaseModel):
     
     # Positive prompts - frames must match at least one above threshold
     positive_prompts: list[str] = Field(default_factory=list)
-    threshold: float = Field(default=0.25, description="Min score for positive prompts")
+    positive_thr: float = Field(default=0.25, description="Min score for positive prompts")
     
     # Negative prompts - optional, for filtering out false positives
     negative_prompts: list[str] = Field(default_factory=list)
-    negative_threshold: float = Field(default=0.25, description="Max score for negative prompts")
-    margin_threshold: float = Field(default=0.05, description="Positive must beat negative by this margin")
+    negative_thr: float = Field(default=0.25, description="Max score for negative prompts")
+    pos_neg_margin_thr: float = Field(default=0.05, description="Positive must beat negative by this margin")
 
     # zoom prompts - optional, for filtering out close-up shots
     zoom_prompts: list[str] = Field(default_factory=list)
-    zoom_threshold: float = Field(default=0.3, description="Zoom threshold should be less than this")
-    zoom_margin_threshold: float = Field(default=0.05, description="Positive must beat zoom by this margin")
+    zoom_thr: float = Field(default=0.3, description="Zoom threshold should be less than this")
+    pos_zoom_margin_thr: float = Field(default=0.05, description="Positive must beat zoom by this margin")
 
 class DeduplicationConfig(BaseModel):
     """Deduplication stage config."""
