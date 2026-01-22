@@ -1,0 +1,55 @@
+# Worker Node Stack
+# Auto-generated from cluster.yaml
+# Runs: SeaweedFS volume, data-miner (download workers only)
+#
+# Usage:
+#   MASTER_IP=192.168.1.100 LOCAL_DISK=/data/seaweed docker compose -f docker-compose.worker.yml up -d
+
+services:
+
+  seaweed-volume:
+    image: chrislusf/seaweedfs
+    container_name: dm_seaweed_volume
+    restart: unless-stopped
+    command: volume -mserver=${MASTER_IP}:9333 -dir=/data -max=100
+    environment:
+      - MASTER_IP=${MASTER_IP}
+    volumes:
+      - ${LOCAL_DISK:-./data/seaweed}:/data
+
+
+  seaweed-mount:
+    image: chrislusf/seaweedfs
+    container_name: dm_seaweed_mount
+    restart: unless-stopped
+    command: mount -filer=${MASTER_IP}:8888 -dir=/mnt/seaweed -filer.path=/
+    privileged: true
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      - MASTER_IP=${MASTER_IP}
+    volumes:
+      - seaweed-data:/mnt/seaweed:shared
+
+
+  data-miner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dm_download_workers
+    restart: unless-stopped
+    depends_on:
+      - seaweed-mount
+    environment:
+      - DATA_MINER_CONFIG=/app/config.yaml
+      - DATABASE_URL=postgresql://postgres:postgres@${MASTER_IP}:5432/data_miner
+      - MASTER_IP=${MASTER_IP}
+    volumes:
+      - ./swarm_configs/worker.yaml:/app/config.yaml:ro
+      - seaweed-data:/mnt/shared:shared
+
+
+volumes:
+  seaweed-data:

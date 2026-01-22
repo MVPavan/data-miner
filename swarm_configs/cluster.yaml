@@ -75,3 +75,46 @@ deployment:
   
   # Whether to rebuild image on deploy
   rebuild_image: true
+
+# =============================================================================
+# Deployment Scenarios
+# Used by scripts/generate_compose.py to auto-generate docker-compose files
+# =============================================================================
+scenarios:
+  # Single machine deployment - runs ALL services and ALL workers
+  # Generated when cluster.workers is empty or missing
+  standalone:
+    data_miner_config: standalone.yaml
+    services:
+      - postgres
+      - seaweed-master
+      - seaweed-filer
+      - seaweed-volume
+      - seaweed-mount
+      - data-miner
+      - grafana
+      - adminer
+
+  # Master node in distributed deployment
+  # Runs processing workers (extract, filter, dedup, detect)
+  master:
+    data_miner_config: master.yaml
+    services:
+      - postgres
+      - seaweed-master
+      - seaweed-filer
+      - seaweed-volume
+      - seaweed-mount
+      - data-miner
+      - grafana
+      - adminer
+
+  # Worker nodes in distributed deployment
+  # Runs download workers only, connects to master's DB and SeaweedFS
+  worker:
+    data_miner_config: worker.yaml
+    services:
+      - seaweed-volume
+      - seaweed-mount
+      - data-miner
+
