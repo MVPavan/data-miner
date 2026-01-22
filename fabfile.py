@@ -1,23 +1,18 @@
 """
 Fabric Deployment Script for Distributed Data Miner
 
-Supports both Docker Compose and Docker Swarm modes.
+Supports Docker Swarm mode for distributed deployments.
 
-COMPOSE MODE (deploy per-machine):
-    fab deploy-master                   # Deploy master node
-    fab deploy-worker -H 192.168.1.101  # Deploy to specific worker
-    fab deploy-all                      # Deploy to all machines
-
-SWARM MODE (single deployment):
+SWARM MODE:
     fab swarm-init                      # Initialize swarm on master
     fab swarm-join                      # Join all workers to swarm
     fab swarm-deploy                    # Deploy stack to swarm
     fab swarm-scale --service=download --replicas=30
+    fab swarm-status                    # Check swarm and service status
 
 Common:
     fab --list                          # Show available tasks
-    fab status                          # Check status of all machines
-    fab logs -H 192.168.1.101           # View logs from a machine
+    fab logs --service=download         # View logs from a service
 """
 
 import os
@@ -33,17 +28,13 @@ from invoke import Context
 # Configuration
 # =============================================================================
 
-CLUSTER_CONFIG_PATH = Path(__file__).parent / "swarm_configs" / "cluster.yaml"
+CLUSTER_CONFIG_PATH = Path(__file__).parent / "docker_configs" / "cluster.yaml"
 PROJECT_FILES = [
-    "Dockerfile",
-    "docker-compose.master.yml",
-    "docker-compose.worker.yml",
-    "docker-compose.swarm.yml",
     "pyproject.toml",
     "uv.lock",
     "data_miner/",
     "run_configs/",
-    "swarm_configs/",
+    "docker_configs/",
 ]
 
 
@@ -166,8 +157,8 @@ def sync_project(c, dest_path: str = "/opt/data_miner"):
 
 
 @task
-def deploy_master(c):
-    """Deploy master node stack."""
+def deploy_standalone(c):
+    """Deploy standalone stack (single machine, no swarm)."""
     config = load_cluster_config()
     master_config = config["cluster"]["master"]
     
@@ -176,94 +167,34 @@ def deploy_master(c):
         c = get_connection(master_config)
     
     dest_path = config["deployment"]["project_path"]
+    persistent_dir = config.get("storage", {}).get("persistent_data_dir", "./data")
     
-    print(f"Deploying master stack to {c.host}...")
+    print(f"Deploying standalone stack to {c.host}...")
     
     # Sync project files
     sync_project(c, dest_path)
     
     # Create data directories
-    local_disk = master_config["local_disk"]
-    c.sudo(f"mkdir -p {local_disk}")
-    c.sudo(f"mkdir -p {dest_path}/data/postgres")
-    c.sudo(f"mkdir -p {dest_path}/data/grafana")
+    c.sudo(f"mkdir -p {dest_path}/{persistent_dir}/postgres")
+    c.sudo(f"mkdir -p {dest_path}/{persistent_dir}/grafana")
+    c.sudo(f"mkdir -p {dest_path}/{persistent_dir}/loki")
+    c.sudo(f"mkdir -p {dest_path}/{persistent_dir}/output")
     
     # Build and start
-    with c.cd(dest_path):
+    with c.cd(f"{dest_path}/docker_configs"):
         if config["deployment"].get("rebuild_image", True):
-            c.run("docker compose -f docker-compose.master.yml build")
+            c.run("docker compose -f docker-compose.standalone.yml build")
         
-        c.run("docker compose -f docker-compose.master.yml up -d")
+        c.run("docker compose -f docker-compose.standalone.yml up -d")
     
-    print("Master deployment complete!")
+    print("Standalone deployment complete!")
 
 
-@task
-def deploy_worker(c, master_ip: Optional[str] = None):
-    """Deploy worker node stack."""
-    config = load_cluster_config()
-    dest_path = config["deployment"]["project_path"]
-    
-    if master_ip is None:
-        master_ip = config["cluster"]["master"]["host"]
-    
-    # Find worker config
-    worker_config = None
-    for w in config["cluster"]["workers"]:
-        if w["host"] == c.host:
-            worker_config = w
-            break
-    
-    if worker_config is None:
-        print(f"Warning: No config found for {c.host}, using defaults")
-        worker_config = {"local_disk": "/data/seaweed"}
-    
-    local_disk = worker_config["local_disk"]
-    
-    print(f"Deploying worker stack to {c.host}...")
-    
-    # Sync project files
-    sync_project(c, dest_path)
-    
-    # Create data directory
-    c.sudo(f"mkdir -p {local_disk}")
-    
-    # Build and start with environment variables
-    with c.cd(dest_path):
-        if config["deployment"].get("rebuild_image", True):
-            c.run("docker compose -f docker-compose.worker.yml build")
-        
-        c.run(f"MASTER_IP={master_ip} LOCAL_DISK={local_disk} docker compose -f docker-compose.worker.yml up -d")
-    
-    print(f"Worker deployment complete on {c.host}!")
-
-
-@task
-def deploy_all(c):
-    """Deploy to all machines defined in cluster.yaml."""
-    config = load_cluster_config()
-    
-    # Deploy master first
-    print("\n" + "="*50)
-    print("Deploying MASTER")
-    print("="*50)
-    master_conn = get_connection(config["cluster"]["master"])
-    deploy_master(master_conn)
-    
-    master_ip = config["cluster"]["master"]["host"]
-    
-    # Deploy workers
-    for worker_config in config["cluster"]["workers"]:
-        print("\n" + "="*50)
-        print(f"Deploying WORKER: {worker_config['host']}")
-        print("="*50)
-        
-        worker_conn = get_connection(worker_config)
-        deploy_worker(worker_conn, master_ip=master_ip)
-    
-    print("\n" + "="*50)
-    print("All deployments complete!")
-    print("="*50)
+# REMOVED: deploy_worker and deploy_all - use swarm mode instead
+# For distributed deployments, use:
+#   fab swarm-init
+#   fab swarm-join  
+#   fab swarm-deploy
 
 
 # =============================================================================
@@ -272,75 +203,22 @@ def deploy_all(c):
 
 @task
 def status(c):
-    """Check status of all machines."""
+    """Check swarm status (alias for swarm-status)."""
+    swarm_status(c)
+
+
+@task
+def logs(c, service: str = "download", lines: int = 50):
+    """View logs from a swarm service."""
     config = load_cluster_config()
-    
-    print("\n" + "="*50)
-    print("CLUSTER STATUS")
-    print("="*50)
-    
-    # Master status
     master_conn = get_connection(config["cluster"]["master"])
-    print(f"\nMaster ({config['cluster']['master']['host']}):")
-    try:
-        master_conn.run("docker compose -f /opt/data_miner/docker-compose.master.yml ps")
-    except Exception as e:
-        print(f"  Error: {e}")
-    
-    # Worker status
-    for worker_config in config["cluster"]["workers"]:
-        worker_conn = get_connection(worker_config)
-        print(f"\nWorker ({worker_config['host']}):")
-        try:
-            worker_conn.run("docker compose -f /opt/data_miner/docker-compose.worker.yml ps")
-        except Exception as e:
-            print(f"  Error: {e}")
+    master_conn.run(f"docker service logs --tail {lines} dm_{service}")
 
 
 @task
-def logs(c, service: str = "data-miner", lines: int = 50):
-    """View logs from a machine."""
-    print(f"Logs from {c.host}...")
-    c.run(f"docker logs --tail {lines} dm_{service.replace('-', '_')}")
-
-
-@task
-def stop_all(c):
-    """Stop all containers on all machines."""
-    config = load_cluster_config()
-    
-    # Stop workers first
-    for worker_config in config["cluster"]["workers"]:
-        print(f"Stopping worker {worker_config['host']}...")
-        worker_conn = get_connection(worker_config)
-        try:
-            worker_conn.run("docker compose -f /opt/data_miner/docker-compose.worker.yml down")
-        except Exception as e:
-            print(f"  Error: {e}")
-    
-    # Stop master
-    print(f"Stopping master...")
-    master_conn = get_connection(config["cluster"]["master"])
-    try:
-        master_conn.run("docker compose -f /opt/data_miner/docker-compose.master.yml down")
-    except Exception as e:
-        print(f"  Error: {e}")
-    
-    print("All containers stopped!")
-
-
-@task
-def restart_workers(c):
-    """Restart download workers on all worker machines."""
-    config = load_cluster_config()
-    
-    for worker_config in config["cluster"]["workers"]:
-        print(f"Restarting worker on {worker_config['host']}...")
-        worker_conn = get_connection(worker_config)
-        try:
-            worker_conn.run("docker restart dm_download_workers")
-        except Exception as e:
-            print(f"  Error: {e}")
+def stop(c):
+    """Stop the swarm stack (alias for swarm-down)."""
+    swarm_down(c)
 
 
 # =============================================================================

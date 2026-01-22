@@ -5,7 +5,7 @@
 project_name: "distributed_run"
 
 # Output directories use shared SeaweedFS mount
-output_dir: "/mnt/shared"
+output_dir: "/mnt/swdshared"
 project_output_dir: "${output_dir}/projects/${project_name}"
 
 # No input config needed - workers pull from database
@@ -25,7 +25,7 @@ database:
 logging:
   level: "INFO"
   loki_url: "http://${MASTER_IP:-localhost}:3100/loki/api/v1/push"
-  log_dir: "/mnt/shared/logs"
+  log_dir: "/mnt/swdshared/logs"
 
 device: "cpu"  # Download doesn't need GPU
 
