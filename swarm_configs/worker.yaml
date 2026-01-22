@@ -16,6 +16,17 @@ input:
   urls: []
   url_file: null
 
+# Database - connects to master (set MASTER_IP env var or use docker-compose)
+# The DATABASE_URL env var overrides this if set
+database:
+  url: "postgresql://postgres:postgres@${MASTER_IP:-localhost}:5432/data_miner"
+
+# Logging - sends logs to master's Loki instance
+logging:
+  level: "INFO"
+  loki_url: "http://${MASTER_IP:-localhost}:3100/loki/api/v1/push"
+  log_dir: "/mnt/shared/logs"
+
 device: "cpu"  # Download doesn't need GPU
 
 # -----------------------------------------------------------------------------

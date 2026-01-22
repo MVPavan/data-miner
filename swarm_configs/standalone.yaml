@@ -1,10 +1,10 @@
-# Master Node Configuration
-# Runs: extract, filter, dedup, detect workers (NOT download)
-# Download is handled by distributed workers
+# Standalone Configuration
+# For single-machine deployment - runs ALL workers including downloads
+# Use this when you don't have a distributed cluster
 
-project_name: "distributed_run"
+project_name: "standalone_run"
 
-# Output directories use shared SeaweedFS mount
+# Output directories use local SeaweedFS mount
 output_dir: "/mnt/shared"
 project_output_dir: "${output_dir}/projects/${project_name}"
 
@@ -30,17 +30,17 @@ device: "cuda:0"
 
 # -----------------------------------------------------------------------------
 # Supervisor Worker Counts
-# Master runs everything EXCEPT download (workers handle that)
+# Standalone mode: ALL workers enabled on single machine
 # -----------------------------------------------------------------------------
 supervisor:
-  download_workers: 0  # Disabled - handled by worker machines
+  download_workers: 3   # Enable downloads on this machine
   extract_workers: 2
   filter_workers: 1
   dedup_workers: 1
   detect_workers: 0
 
 # -----------------------------------------------------------------------------
-# Download Stage (reference config, not used on master)
+# Download Stage
 # -----------------------------------------------------------------------------
 download:
   output_dir: "${output_dir}/videos"
