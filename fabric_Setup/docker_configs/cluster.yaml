@@ -5,16 +5,18 @@
 # Environment variables can be used for secrets: ${VAR_NAME}
 
 cluster:
+  # SSH Keys automated setup
+  ssh_key:
+    name: "id_rsa_data_miner"     # Key file name in ~/.ssh/
+    comment: "data_miner_key"     # Comment in authorized_keys (used for cleanup)
+
   # Master node - runs PostgreSQL, SeaweedFS master/filer, and main workers
   master:
-    host: "192.168.1.100"  # Replace with actual IP
-    user: "admin"
+    host: "10.96.122.9"  # Replace with actual IP
+    user: "pavanmv"
     # Choose one authentication method:
-    key_file: "~/.ssh/id_rsa"
-    # password: "${MASTER_PASSWORD}"
-    
-    # Local disk path for SeaweedFS volume data
-    local_disk: "/data/seaweed"
+    # key_file: "~/.ssh/id_rsa"
+    password: "${MASTER_PASSWORD}"
     
     # Ports (for reference)
     ports:
@@ -25,29 +27,27 @@ cluster:
 
   # Worker nodes - run download workers and SeaweedFS volume servers
   workers:
-    - host: "192.168.1.101"
-      user: "worker"
-      key_file: "~/.ssh/id_rsa"
-      local_disk: "/data/seaweed"
-      download_workers: 3
+    - host: "10.96.122.14"
+      user: "pavan"
+      # key_file: "~/.ssh/id_rsa"
+      password: "${WORKER_PASSWORD}"
+      download_workers: 0
 
-  #   - host: "192.168.1.102"
-  #     user: "worker"
-  #     key_file: "~/.ssh/id_rsa"
-  #     local_disk: "/data/seaweed"
-  #     download_workers: 3
+    - host: "10.96.122.132"
+      user: "pavanmv"
+      # key_file: "~/.ssh/id_rsa"
+      password: "${WORKER_PASSWORD}"
+      download_workers: 0
 
   #   - host: "192.168.1.103"
   #     user: "worker"
   #     key_file: "~/.ssh/id_rsa"
-  #     local_disk: "/mnt/storage"  # Different disk path example
   #     download_workers: 2
 
-  #   # Add more workers as needed (up to 9 for total of 10 machines)
+  #   # Add more workers as needed
   #   # - host: "192.168.1.104"
   #   #   user: "worker"
   #   #   key_file: "~/.ssh/id_rsa"
-  #   #   local_disk: "/data/seaweed"
   #   #   download_workers: 3
 
 # Storage configuration
@@ -64,7 +64,7 @@ storage:
 
   # Persistent data directory - MASTER ONLY (or localhost in standalone)
   # Used for Postgres, Grafana, Loki, and output data
-  persistent_data_dir: "../data"
+  persistent_data_dir: "/data/data_miner_db"
 
 # Database (managed by master, workers connect to it)
 database:

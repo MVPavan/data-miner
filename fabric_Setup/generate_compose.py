@@ -122,12 +122,12 @@ seaweed_services = {
         "image": "chrislusf/seaweedfs",
         "container_name": "dm_seaweed_master",
         "restart": "unless-stopped",
-        "command": "master -ip=seaweed-master -defaultReplication={replication}",
+        "command": "master -ip.bind=0.0.0.0 -ip=seaweed-master -defaultReplication={replication}",
         "ports": ["9333:9333", "19333:19333"],
         "volumes": ["{data_dir}/seaweed/master:/data"],
         "swarm_overrides": {
-            "_remove": ["container_name", "restart", "ports", "volumes"],
-            "command": "master -ip=seaweed-master -defaultReplication={replication} -volumeSizeLimitMB=1000",
+            "_remove": ["container_name", "restart", "volumes"],
+            "command": "master -ip.bind=0.0.0.0 -ip=seaweed-master -defaultReplication={replication} -volumeSizeLimitMB=1000",
             "networks": ["dm-network"],
             "deploy": {
                 "mode": "replicated",
@@ -161,12 +161,12 @@ seaweed_services = {
         "image": "chrislusf/seaweedfs",
         "container_name": "dm_seaweed_filer",
         "restart": "unless-stopped",
-        "command": "filer -master=seaweed-master:9333 -ip=seaweed-filer",
+        "command": "filer -master=seaweed-master:9333 -ip.bind=0.0.0.0 -ip=seaweed-filer",
         "depends_on": ["seaweed-master", "seaweed-volume"],
         "ports": ["8888:8888", "18888:18888"],
         "swarm_overrides": {
-            "_remove": ["container_name", "restart", "depends_on", "ports"],
-            "command": "filer -master=seaweed-master:9333",
+            "_remove": ["container_name", "restart", "depends_on"],
+            "command": "filer -master=seaweed-master:9333 -ip.bind=0.0.0.0 -ip=seaweed-filer",
             "networks": ["dm-network"],
             "deploy": {
                 "mode": "replicated",
@@ -189,7 +189,7 @@ seaweed_services = {
         "volumes": ["seaweed-data:/mnt/swdshared:shared"],
         "swarm_overrides": {
             "_remove": ["container_name", "restart", "depends_on"],
-            "volumes": ["shared-data:/mnt/swdshared:shared"],
+            "volumes": ["/mnt/swdshared:/mnt/swdshared"],
             "networks": ["dm-network"],
             "deploy": {
                 "mode": "global",
@@ -247,7 +247,7 @@ data_miner_services = {
                 "_remove": ["build", "restart", "depends_on", "deploy"],
                 "image": "${REGISTRY:-localhost:5000}/data-miner:${TAG:-latest}",
                 "configs": [{"source": "worker-config", "target": "/app/config.yaml"}],
-                "volumes": ["shared-data:/mnt/swdshared:shared"],
+                "volumes": ["/mnt/swdshared:/mnt/swdshared:rslave"],
                 "networks": ["dm-network"],
                 "deploy": {
                     "mode": "replicated",
@@ -263,7 +263,7 @@ data_miner_services = {
                 "_remove": ["build", "restart", "depends_on"],
                 "image": "${REGISTRY:-localhost:5000}/data-miner:${TAG:-latest}",
                 "configs": [{"source": "master-config", "target": "/app/config.yaml"}],
-                "volumes": ["shared-data:/mnt/swdshared:shared"],
+                "volumes": ["/mnt/swdshared:/mnt/swdshared:rslave"],
                 "networks": ["dm-network"],
                 "deploy": {
                     "mode": "replicated",
@@ -449,7 +449,7 @@ def render_service(name: str, config: dict, mode: str = "compose", variant: str 
 def generate_compose_file(scenario: str, config: dict) -> str:
     """Generate a complete compose file for a scenario."""
     scenario_def = SCENARIOS[scenario]
-    mode = "swarm" if scenario == "swarm" else "compose"
+    mode = "swarm" if scenario in ("swarm", "seaweed") else "compose"
     
     # Build services dict
     services = {}
