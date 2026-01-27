@@ -2,54 +2,78 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://mvpavan.github.io/data-miner/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/architecture/database-models/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/architecture/overview/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/architecture/workers/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/development/contributing/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
+    </url>
+    <url>
+         <loc>https://mvpavan.github.io/data-miner/k3s/01-concepts/</loc>
+         <lastmod>2026-01-27</lastmod>
+    </url>
+    <url>
+         <loc>https://mvpavan.github.io/data-miner/k3s/01b-questions-answered/</loc>
+         <lastmod>2026-01-27</lastmod>
+    </url>
+    <url>
+         <loc>https://mvpavan.github.io/data-miner/k3s/02-installation/</loc>
+         <lastmod>2026-01-27</lastmod>
+    </url>
+    <url>
+         <loc>https://mvpavan.github.io/data-miner/k3s/k8s-core-concepts/</loc>
+         <lastmod>2026-01-27</lastmod>
+    </url>
+    <url>
+         <loc>https://mvpavan.github.io/data-miner/k3s/kubectl-commands/</loc>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/reference/legacy/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/reference/legacy/async_pipeline_implementation_plan/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/reference/legacy/video_miner_v3_async/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/reference/legacy/video_miner_v3_code_walkthrough/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/user-guide/cli-reference/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/user-guide/configuration/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
+    </url>
+    <url>
+         <loc>https://mvpavan.github.io/data-miner/user-guide/fabric-deployment/</loc>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/user-guide/installation/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
     <url>
          <loc>https://mvpavan.github.io/data-miner/user-guide/quickstart/</loc>
-         <lastmod>2026-01-14</lastmod>
+         <lastmod>2026-01-27</lastmod>
     </url>
 </urlset>
