@@ -1,0 +1,194 @@
+# seaweedfs.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: seaweedfs
+---
+# Master
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: master
+  namespace: seaweedfs
+spec:
+  serviceName: master
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seaweedfs
+      component: master
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+        component: master
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: pavanjci
+      containers:
+      - name: master
+        image: chrislusf/seaweedfs:latest
+        args: ["master", "-ip=$(POD_IP)", "-ip.bind=0.0.0.0", "-port=9333", "-mdir=/data", "-defaultReplication=000"]
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        ports:
+        - containerPort: 9333
+        - containerPort: 19333
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        hostPath:
+          path: /data/seaweed/master
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: master
+  namespace: seaweedfs
+spec:
+  clusterIP: None
+  selector:
+    app: seaweedfs
+    component: master
+  ports:
+  - name: http
+    port: 9333
+  - name: grpc
+    port: 19333
+---
+# Filer
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: filer
+  namespace: seaweedfs
+spec:
+  serviceName: filer
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seaweedfs
+      component: filer
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+        component: filer
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: pavanjci
+      containers:
+      - name: filer
+        image: chrislusf/seaweedfs:latest
+        args: ["filer", "-master=master:9333", "-port=8888"]
+        ports:
+        - containerPort: 8888
+        - containerPort: 18888
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        hostPath:
+          path: /data/seaweed/filer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: filer
+  namespace: seaweedfs
+spec:
+  clusterIP: None
+  selector:
+    app: seaweedfs
+    component: filer
+  ports:
+  - name: http
+    port: 8888
+  - name: grpc
+    port: 18888
+---
+# Volume
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: volume
+  namespace: seaweedfs
+spec:
+  selector:
+    matchLabels:
+      app: seaweedfs
+      component: volume
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+        component: volume
+    spec:
+      containers:
+      - name: volume
+        image: chrislusf/seaweedfs:latest
+        args: ["volume", "-mserver=master:9333", "-ip=$(POD_IP)", "-port=8080", "-dir=/data", "-max=0"]
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        ports:
+        - containerPort: 8080
+        - containerPort: 18080
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        hostPath:
+          path: /data/seaweed/volume
+---
+# Mount
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: mount
+  namespace: seaweedfs
+spec:
+  selector:
+    matchLabels:
+      app: seaweedfs
+      component: mount
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+        component: mount
+    spec:
+      containers:
+      - name: mount
+        image: chrislusf/seaweedfs:latest
+        # command: ["/usr/bin/weed", "mount", "-filer=filer:8888", "-dir=/swdfs_mnt/swshared", "-allowOthers", "-umask=000", "-dirAutoCreate", "-dirPerm=777"]
+        command: ["weed"]
+        args: ["mount", "-filer=filer:8888", "-dir=/swdfs_mnt/swshared", "-allowOthers", "-umask=000"]
+        securityContext:
+          privileged: true
+          # capabilities:
+          #   add:
+          #     - SYS_ADMIN
+        volumeMounts:
+        - name: mnt
+          mountPath: /swdfs_mnt
+          mountPropagation: Bidirectional
+        - name: fuse
+          mountPath: /dev/fuse
+      volumes:
+      - name: mnt
+        hostPath:
+          path: /swdfs_mnt
+          type: DirectoryOrCreate
+      - name: fuse
+        hostPath:
+          path: /dev/fuse

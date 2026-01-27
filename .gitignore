@@ -18,4 +18,4 @@
 *.env
 **/*.egg-info/*
 *.log
-**/site/*
+**/site/*fabric_Setup/weed
