@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: filter-worker
+  namespace: data-miner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: filter-worker
+  template:
+    metadata:
+      labels:
+        app: filter-worker
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: pavanjci
+        gpu: "true"
+      containers:
+        - name: filter-worker
+          image: data-miner:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "data_miner.workers.filter"]
+          env:
+            - name: DATA_MINER_CONFIG
+              value: "/config/config.yaml"
+            - name: DATABASE_URL
+              value: "postgresql://postgres:postgres@postgres.data-miner.svc.cluster.local:5432/data_miner"
+            - name: LOKI_URL
+              value: "http://loki.data-miner.svc.cluster.local:3100/loki/api/v1/push"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-secret
+                  key: token
+                  optional: true
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: seaweedfs
+              mountPath: /swdfs_mnt/swshared
+      volumes:
+        - name: config
+          configMap:
+            name: data-miner-config
+        - name: seaweedfs
+          hostPath:
+            path: /swdfs_mnt/swshared
+            type: Directory

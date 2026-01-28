@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: extract-worker
+  namespace: data-miner
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: extract-worker
+  template:
+    metadata:
+      labels:
+        app: extract-worker
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: pavanjci
+      containers:
+        - name: extract-worker
+          image: data-miner:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "data_miner.workers.extract"]
+          env:
+            - name: DATA_MINER_CONFIG
+              value: "/config/config.yaml"
+            - name: DATABASE_URL
+              value: "postgresql://postgres:postgres@postgres.data-miner.svc.cluster.local:5432/data_miner"
+            - name: LOKI_URL
+              value: "http://loki.data-miner.svc.cluster.local:3100/loki/api/v1/push"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: seaweedfs
+              mountPath: /swdfs_mnt/swshared
+          livenessProbe:
+            exec:
+              command: ["test", "-f", "/tmp/healthy"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+      volumes:
+        - name: config
+          configMap:
+            name: data-miner-config
+        - name: seaweedfs
+          hostPath:
+            path: /swdfs_mnt/swshared
+            type: Directory

@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: loki
+  namespace: data-miner
+spec:
+  serviceName: loki
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loki
+  template:
+    metadata:
+      labels:
+        app: loki
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: pavanjci
+      containers:
+        - name: loki
+          image: grafana/loki:2.9.0
+          ports:
+            - containerPort: 3100
+          args:
+            - "-config.file=/etc/loki/local-config.yaml"
+          volumeMounts:
+            - name: loki-data
+              mountPath: /loki
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: loki-data
+          hostPath:
+            path: /data/data_miner_db/loki
+            type: DirectoryOrCreate

@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-miner-config
+  namespace: data-miner
+data:
+  config.yaml: |
+    # =============================================================================
+    # Data Miner - K3s Configuration
+    # =============================================================================
+    
+    project_name: "glass_door"
+    output_dir: "/swdfs_mnt/swshared/data_miner_output"
+    project_output_dir: "${output_dir}/projects/${project_name}"
+    device: "auto"
+    
+    input:
+      search_enabled: true
+      search_queries:
+        - "glass door installation"
+        - "sliding glass door"
+        - "french door installation"
+        - "patio door replacement"
+      max_results_per_query: 50
+      urls: []
+      url_file: null
+    
+    # K3s service DNS names (Note: Code uses DATABASE_URL env var, this is for reference or if code changes)
+    database:
+      url: "postgresql://postgres:postgres@postgres.data-miner.svc.cluster.local:5432/data_miner"
+    
+    logging:
+      level: "INFO"
+      loki_url: "http://loki.data-miner.svc.cluster.local:3100/loki/api/v1/push"
+      log_dir: "/swdfs_mnt/swshared/data_miner_output/logs"
+    
+    # Not used in K8s (managed by K8s replicas)
+    supervisor:
+      download_workers: 1
+      extract_workers: 1
+      filter_workers: 1
+      dedup_workers: 1
+      detect_workers: 1
+    
+    monitor:
+      poll_interval: 10
+      stale_threshold_minutes: 2
+      long_running_threshold_minutes: 30
+      cleanup_extracted_videos: false
+    
+    backup:
+      enabled: false
+      remote_dest: ""
+      delete_after_backup: false
+      poll_interval: 300
+      verification_timeout: 1800
+    
+    download:
+      output_dir: "${output_dir}/videos"
+      format: "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+      max_resolution: 1080
+      timeout: 300
+      sleep_interval: 30
+      max_sleep_interval: 60
+      sleep_requests: 10
+      blocked_hashtag_patterns: ""
+    
+    extract:
+      output_dir: "${output_dir}/frames_raw"
+      strategy: "interval"
+      interval_frames: 30
+      interval_seconds: 1.0
+      max_frames_per_video: 5000
+      image_format: "jpg"
+      quality: 95
+    
+    filter:
+      output_dir: "${project_output_dir}/frames_filtered"
+      device: "${device}"
+      model_id: "siglip2-so400m"
+      batch_size: 32
+      threshold: 0.25
+      margin_threshold: 0.05
+      positive_prompts:
+        - "a glass door"
+        - "a french door"
+        - "a patio door"
+        - "a photo of a glass door"
+        - "a glass entrance door"
+        - "a glass entrance door with handles"
+        - "commercial double glass doors"
+        - "a sliding glass door entrance"
+        - "a storefront entrance with a glass door"
+        - "a building entrance with a glass door"
+        - "framed glass door clearly visible"
+        - "a push bar on a glass door"
+      negative_prompts:
+        - "a glass wall"
+        - "a fixed glass window"
+        - "a large display window"
+        - "a glass curtain wall"
+        - "a mirror"
+        - "a reflective surface"
+        - "a shower door"
+        - "a glass partition"
+        - "a skylight"
+        - "a glass ceiling"
+        - "a split screen video"
+        - "text overlay on screen"
+        - "a video game screenshot"
+        - "blurry out of focus image"
+        - "dark grainy night shot"
+    
+    dedup:
+      output_dir: "${project_output_dir}/frames_dedup"
+      device: "${device}"
+      threshold: 0.90
+      batch_size: 64
+      model_type: "dino"
+      dino_model_id: "dinov3-base"
+      dino_embedding_stage: "pooler"
+      k_neighbors: 50
+    
+    detect:
+      output_dir: "${project_output_dir}/detections"
+      device: "${device}"
+      detector: "grounding_dino"
+      threshold: 0.3
+      confidence_threshold: 0.3
+      batch_size: 16
+      save_visualizations: true
