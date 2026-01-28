@@ -20,3 +20,5 @@
 *.log
 **/site/
 *fabric_Setup/weed
+*.pt
+*.pth
