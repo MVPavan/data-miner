@@ -184,9 +184,11 @@ if __name__ == "__main__":
         images_dir="/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
         dataset_type="images",
         yolo_pred_folders=[
-            "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/moondream/frames_filtered_v2_dedup/pred_txt_merged_filtered"
+            "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/moondream/frames_filtered_v2_dedup/pred_txt_merged_filtered",
+            "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/owlvit/frames_filtered_v2_dedup/pred_txt",
+            "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/yolo_world/frames_filtered_v2_dedup/pred_txt",
         ],
-        prediction_fields=["moon"],
+        prediction_fields=["moon", "owlvit", "yolo_world"],
         overwrite=True,
         port=7773,
     )
