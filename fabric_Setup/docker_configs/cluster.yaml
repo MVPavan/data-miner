@@ -1,0 +1,128 @@
+# Cluster Configuration Template
+# Fill in with actual machine details
+#
+# Authentication: Use either password OR key_file for each machine
+# Environment variables can be used for secrets: ${VAR_NAME}
+
+cluster:
+  # SSH Keys automated setup
+  ssh_key:
+    name: "id_rsa_data_miner"     # Key file name in ~/.ssh/
+    comment: "data_miner_key"     # Comment in authorized_keys (used for cleanup)
+
+  # Master node - runs PostgreSQL, SeaweedFS master/filer, and main workers
+  master:
+    host: "10.96.122.9"  # Replace with actual IP
+    user: "pavanmv"
+    # Choose one authentication method:
+    # key_file: "~/.ssh/id_rsa"
+    password: "${MASTER_PASSWORD}"
+    
+    # Ports (for reference)
+    ports:
+      postgres: 5432
+      seaweed_master: 9333
+      seaweed_filer: 8888
+      grafana: 3000
+
+  # Worker nodes - run download workers and SeaweedFS volume servers
+  workers:
+    - host: "10.96.122.14"
+      user: "pavan"
+      # key_file: "~/.ssh/id_rsa"
+      password: "${WORKER_PASSWORD}"
+      download_workers: 0
+
+    - host: "10.96.122.132"
+      user: "pavanmv"
+      # key_file: "~/.ssh/id_rsa"
+      password: "${WORKER_PASSWORD}"
+      download_workers: 0
+
+  #   - host: "192.168.1.103"
+  #     user: "worker"
+  #     key_file: "~/.ssh/id_rsa"
+  #     download_workers: 2
+
+  #   # Add more workers as needed
+  #   # - host: "192.168.1.104"
+  #   #   user: "worker"
+  #   #   key_file: "~/.ssh/id_rsa"
+  #   #   download_workers: 3
+
+# Storage configuration
+storage:
+  # Replication: 000 = no replication (single copy)
+  replication: "000"
+  
+  # Mount point inside containers (don't change unless you know what you're doing)
+  fuse_mount: "/mnt/swdshared"
+
+  # SeaweedFS data directory - used on ALL machines (master + workers)
+  # This is where SeaweedFS volume server stores blob data
+  seaweed_data_dir: "/data/seaweed"
+
+  # Persistent data directory - MASTER ONLY (or localhost in standalone)
+  # Used for Postgres, Grafana, Loki, and output data
+  persistent_data_dir: "/data/data_miner_db"
+
+# Database (managed by master, workers connect to it)
+database:
+  name: "data_miner"
+  user: "postgres"
+  password: "postgres"  # Change in production!
+  port: 5432
+
+# Deployment settings
+deployment:
+  # Docker image tag to use
+  image_tag: "latest"
+  
+  # Path to project on each machine (for building/copying)
+  project_path: "/opt/data_miner"
+  
+  # Whether to rebuild image on deploy
+  rebuild_image: true
+
+# =============================================================================
+# Deployment Scenarios
+# Used by scripts/generate_compose.py to auto-generate docker-compose files
+# =============================================================================
+scenarios:
+  # Single machine deployment - runs ALL services and ALL workers
+  # Generated when cluster.workers is empty or missing
+  standalone:
+    data_miner_config: standalone.yaml
+    services:
+      - postgres
+      - seaweed-master
+      - seaweed-filer
+      - seaweed-volume
+      - seaweed-mount
+      - data-miner
+      - grafana
+      - adminer
+
+  # Master node in distributed deployment
+  # Runs processing workers (extract, filter, dedup, detect)
+  master:
+    data_miner_config: master.yaml
+    services:
+      - postgres
+      - seaweed-master
+      - seaweed-filer
+      - seaweed-volume
+      - seaweed-mount
+      - data-miner
+      - grafana
+      - adminer
+
+  # Worker nodes in distributed deployment
+  # Runs download workers only, connects to master's DB and SeaweedFS
+  worker:
+    data_miner_config: worker.yaml
+    services:
+      - seaweed-volume
+      - seaweed-mount
+      - data-miner
+

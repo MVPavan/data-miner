@@ -1,0 +1,28 @@
+# configs/default.yaml - All defaults in one file
+# User only needs to override what differs from these defaults
+
+predict:
+  model: null           # Required: rfdetr, yolox, etc.
+  checkpoint: null      # Required: path to weights
+  images: null          # Required: path to images
+  output: ./predictions.json
+  threshold: 0.001
+  device: cuda
+
+evaluate:
+  dataset:
+    gt_path: null       # Required: path to ground truth annotations
+    predictions: []     # Required: list of {path, name}
+  iou_threshold: 0.5
+  conf_threshold: 0.001
+  classes: []           # Empty = all classes
+
+analyze:
+  precision_targets: [0.8, 0.85, 0.9]
+  tpfp_conf_thresholds: [0.3, 0.4, 0.5, 0.6]
+
+output:
+  path: ./results
+  overwrite: false
+  use_cache: true
+  log_file: null        # Optional: path to log file
