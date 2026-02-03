@@ -11,7 +11,7 @@
 **/output/*
 **/run.yaml
 **/run_configs/*
-**/.devcontainer*
+# **/.devcontainer*
 **/cpf/*
 **/logs/*
 **/data/*
