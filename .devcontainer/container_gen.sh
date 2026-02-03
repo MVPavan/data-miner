@@ -136,3 +136,9 @@ cat <<EOF > devcontainer.json
 EOF
 
 echo "devcontainer.json generated."
+
+echo creating bind mount folders if they do not exist...
+mkdir -p $DATASET
+mkdir -p $PIXI_HOME
+mkdir -p $HF_HOME
+mkdir -p $UV_CACHE_DIR

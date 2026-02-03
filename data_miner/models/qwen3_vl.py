@@ -9,7 +9,10 @@ Usage:
 
 Example:
     CUDA_VISIBLE_DEVICES=0,1 python -m data_miner.models.qwen3_vl
+
 """
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 
 import json
 import re
@@ -327,10 +330,10 @@ class Qwen3VLHelper:
 if __name__ == "__main__":
     # Example usage - modify paths as needed
     input_folder = Path(
-        "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup"
+        "/data/pavan/codes/tycoai/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup"
     )
     output_folder = Path(
-        "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/qwen3vl/frames_filtered_v2_dedup"
+        "/data/pavan/codes/tycoai/data_miner/output/projects/delivery_pov_v1/qwen3vl/frames_filtered_v2_dedup"
     )
 
     # Initialize detector
