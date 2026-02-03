@@ -1,0 +1,55 @@
+# Worker Node Configuration
+# Runs: download workers ONLY
+# Connects to master's PostgreSQL for task coordination
+
+project_name: "distributed_run"
+
+# Output directories use shared SeaweedFS mount
+output_dir: "/mnt/swdshared"
+project_output_dir: "${output_dir}/projects/${project_name}"
+
+# No input config needed - workers pull from database
+input:
+  search_enabled: false
+  search_queries: []
+  max_results_per_query: 0
+  urls: []
+  url_file: null
+
+# Database - connects to master (set MASTER_IP env var or use docker-compose)
+# The DATABASE_URL env var overrides this if set
+database:
+  url: "postgresql://postgres:postgres@${MASTER_IP:-localhost}:5432/data_miner"
+
+# Logging - sends logs to master's Loki instance
+logging:
+  level: "INFO"
+  loki_url: "http://${MASTER_IP:-localhost}:3100/loki/api/v1/push"
+  log_dir: "/mnt/swdshared/logs"
+
+device: "cpu"  # Download doesn't need GPU
+
+# -----------------------------------------------------------------------------
+# Supervisor Worker Counts
+# Workers run ONLY download
+# -----------------------------------------------------------------------------
+supervisor:
+  download_workers: 3  # Adjust based on machine capability
+  extract_workers: 0
+  filter_workers: 0
+  dedup_workers: 0
+  detect_workers: 0
+
+# -----------------------------------------------------------------------------
+# Download Stage
+# -----------------------------------------------------------------------------
+download:
+  output_dir: "${output_dir}/videos"
+  format: "bestvideo[height<=720]+bestaudio/best[height<=720]"
+  max_resolution: 720
+  timeout: 300
+  
+  # Rate limiting - important to avoid YouTube blocks
+  sleep_interval: 20
+  max_sleep_interval: 30
+  sleep_requests: 1

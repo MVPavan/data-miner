@@ -1,0 +1,70 @@
+# Docker Swarm Stack for Distributed Data Miner
+# Auto-generated from cluster.yaml
+#
+# Deployment:
+#   1. Initialize swarm on master: docker swarm init --advertise-addr MASTER_IP
+#   2. Join workers: docker swarm join --token TOKEN MASTER_IP:2377
+#   3. Deploy: docker stack deploy -c docker-compose.swarm.yml dm
+#   4. Scale: docker service scale dm_download=N
+
+services:
+  seaweed-master:
+    image: chrislusf/seaweedfs
+    command: master -ip=seaweed-master -defaultReplication=000 -volumeSizeLimitMB=1000
+    networks:
+    - dm-network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+        - node.role == manager
+      restart_policy:
+        condition: on-failure
+  seaweed-filer:
+    image: chrislusf/seaweedfs
+    command: filer -master=seaweed-master:9333
+    networks:
+    - dm-network
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+        - node.role == manager
+      restart_policy:
+        condition: on-failure
+  seaweed-volume:
+    image: chrislusf/seaweedfs
+    command: volume -mserver=seaweed-master:9333 -dir=/data/seaweed -max=100
+    volumes:
+    - /data/seaweed:/data/seaweed
+    networks:
+    - dm-network
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+  seaweed-mount:
+    image: chrislusf/seaweedfs
+    command: mount -filer=seaweed-filer:8888 -dir=/mnt/swdshared -filer.path=/
+    privileged: true
+    devices:
+    - /dev/fuse
+    cap_add:
+    - SYS_ADMIN
+    volumes:
+    - shared-data:/mnt/swdshared:shared
+    networks:
+    - dm-network
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+volumes:
+  seaweed-data: null
+  shared-data: null
+networks:
+  dm-network:
+    driver: overlay
+    attachable: true

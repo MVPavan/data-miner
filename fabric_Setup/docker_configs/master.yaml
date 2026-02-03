@@ -1,0 +1,93 @@
+# Master Node Configuration
+# Runs: extract, filter, dedup, detect workers (NOT download)
+# Download is handled by distributed workers
+
+project_name: "distributed_run"
+
+# Output directories use shared SeaweedFS mount
+output_dir: "/mnt/swdshared"
+project_output_dir: "${output_dir}/projects/${project_name}"
+
+input:
+  search_enabled: true
+  search_queries:
+    - "glass door"
+  max_results_per_query: 50
+  urls: []
+  url_file: null
+
+# Database - local postgres container
+database:
+  url: "postgresql://postgres:postgres@postgres:5432/data_miner"
+
+# Logging
+logging:
+  level: "INFO"
+  loki_url: "http://localhost:3100/loki/api/v1/push"
+  log_dir: "/mnt/swdshared/logs"
+
+device: "cuda:0"
+
+# -----------------------------------------------------------------------------
+# Supervisor Worker Counts
+# Master runs everything EXCEPT download (workers handle that)
+# -----------------------------------------------------------------------------
+supervisor:
+  download_workers: 0  # Disabled - handled by worker machines
+  extract_workers: 2
+  filter_workers: 1
+  dedup_workers: 1
+  detect_workers: 0
+
+# -----------------------------------------------------------------------------
+# Download Stage (reference config, not used on master)
+# -----------------------------------------------------------------------------
+download:
+  output_dir: "${output_dir}/videos"
+  format: "bestvideo[height<=720]+bestaudio/best[height<=720]"
+  max_resolution: 720
+  timeout: 300
+  sleep_interval: 20
+  max_sleep_interval: 30
+  sleep_requests: 1
+
+# -----------------------------------------------------------------------------
+# Extraction Stage
+# -----------------------------------------------------------------------------
+extract:
+  output_dir: "${output_dir}/frames_raw"
+  strategy: "interval"
+  interval_frames: 30
+  interval_seconds: 1.0
+  max_frames_per_video: 5000
+
+# -----------------------------------------------------------------------------
+# Filter Stage (SigLIP2)
+# -----------------------------------------------------------------------------
+filter:
+  output_dir: "${project_output_dir}/frames_filtered"
+  device: "cuda:0"
+  model_id: "siglip2-so400m"
+  batch_size: 16
+  threshold: 0.25
+  margin_threshold: 0.05
+  
+  positive_prompts:
+    - "a glass door"
+    - "a french door"
+    - "a patio door"
+  
+  negative_prompts:
+    - "a glass wall"
+    - "a mirror"
+
+# -----------------------------------------------------------------------------
+# Deduplication Stage
+# -----------------------------------------------------------------------------
+dedup:
+  output_dir: "${project_output_dir}/frames_dedup"
+  threshold: 0.90
+  batch_size: 16
+  model_type: "dino"
+  dino_model_id: "dinov3-base"
+  k_neighbors: 50

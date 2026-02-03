@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: data_miner_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: data_miner
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d data_miner" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # loki permission fix - sudo chown -R 10001:10001 data/loki
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: data_miner_loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./data/loki:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+
+  # grafana permission fix - sudo chown -R 472:472 data/grafana
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: data_miner_grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    depends_on:
+      - loki
+
+  adminer:
+    image: adminer
+    container_name: data_miner_adminer
+    restart: unless-stopped
+    ports:
+      - "8880:8080"
+    depends_on:
+      - postgres

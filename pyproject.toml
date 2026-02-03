@@ -1,0 +1,38 @@
+[project]
+name = "data_miner"
+version = "0.1.0"
+description = "PostgreSQL-based multi-process video data mining pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "sqlmodel>=0.0.22",
+    "psycopg2-binary>=2.9.9",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "omegaconf>=2.3",
+    "click>=8.0",
+    "rich>=13.0",
+    "yt-dlp>=2024.0",
+    "av>=12.0",
+    "pillow>=10.0",
+    "torch>=2.0",
+    "transformers>=4.40",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
+    "tqdm>=4.66",
+    "faiss-cpu>=1.7",
+    "opencv-python-headless>=4.5",
+    "python-logging-loki>=0.3.1",
+    "python-dotenv>=1.0",
+    "torchvision>=0.24.1",
+    "accelerate>=1.12.0",
+    "fabric>=3.2.0",
+    "fiftyone>=1.11.1",
+    "pyinfra>=3.6",
+]
+
+[project.scripts]
+data-miner = "data_miner.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

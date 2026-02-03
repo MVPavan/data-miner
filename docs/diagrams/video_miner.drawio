@@ -1,0 +1,70 @@
+<mxfile host="Electron" modified="2025-12-16T05:09:01.431Z" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/21.6.5 Chrome/114.0.5735.243 Electron/25.3.1 Safari/537.36" etag="lgQfizl0XKXI5oj5Vm70" version="21.6.5" type="device">
+  <diagram name="Page-1" id="n2OG5D_6Erpvl7ZFQ4SP">
+    <mxGraphModel dx="1418" dy="820" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-33" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=4;" vertex="1" parent="1">
+          <mxGeometry x="120" y="300" width="660" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-29" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="ItVRAYYoHMTXk5Wikjkp-1" target="ItVRAYYoHMTXk5Wikjkp-19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-31" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="ItVRAYYoHMTXk5Wikjkp-1" target="ItVRAYYoHMTXk5Wikjkp-26">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-1" value="YT Search" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#6d8764;fontColor=#ffffff;strokeColor=#3A5431;" vertex="1" parent="1">
+          <mxGeometry x="150" y="485" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="ItVRAYYoHMTXk5Wikjkp-2" target="ItVRAYYoHMTXk5Wikjkp-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-32" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="ItVRAYYoHMTXk5Wikjkp-2" target="ItVRAYYoHMTXk5Wikjkp-26">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-2" value="YT Download" style="whiteSpace=wrap;html=1;rounded=1;fillColor=#76608a;fontColor=#ffffff;strokeColor=#432D57;" vertex="1" parent="1">
+          <mxGeometry x="300" y="380" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="ItVRAYYoHMTXk5Wikjkp-4" target="ItVRAYYoHMTXk5Wikjkp-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-4" value="Frame Sampling" style="whiteSpace=wrap;html=1;rounded=1;fillColor=#76608a;fontColor=#ffffff;strokeColor=#432D57;" vertex="1" parent="1">
+          <mxGeometry x="460" y="380" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="ItVRAYYoHMTXk5Wikjkp-6" target="ItVRAYYoHMTXk5Wikjkp-8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-6" value="Semantic Filter&lt;br&gt;SigLip2" style="whiteSpace=wrap;html=1;rounded=1;fillColor=#76608a;fontColor=#ffffff;strokeColor=#432D57;" vertex="1" parent="1">
+          <mxGeometry x="620" y="380" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="ItVRAYYoHMTXk5Wikjkp-8" target="ItVRAYYoHMTXk5Wikjkp-10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-8" value="Deduplication&lt;br&gt;DinoV3" style="whiteSpace=wrap;html=1;rounded=1;fillColor=#76608a;fontColor=#ffffff;strokeColor=#432D57;" vertex="1" parent="1">
+          <mxGeometry x="620" y="490" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-25" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="ItVRAYYoHMTXk5Wikjkp-10" target="ItVRAYYoHMTXk5Wikjkp-24">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-10" value="Auto Annotation&lt;br&gt;MoonDream3/&lt;br&gt;DinoX" style="whiteSpace=wrap;html=1;rounded=1;fillColor=#76608a;fontColor=#ffffff;strokeColor=#432D57;" vertex="1" parent="1">
+          <mxGeometry x="460" y="490" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-28" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ItVRAYYoHMTXk5Wikjkp-19" target="ItVRAYYoHMTXk5Wikjkp-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-19" value="YT URLs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#6d8764;strokeColor=#3A5431;fontColor=#ffffff;" vertex="1" parent="1">
+          <mxGeometry x="150" y="380" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-24" value="Coco Json" style="whiteSpace=wrap;html=1;rounded=1;fillColor=#a0522d;fontColor=#ffffff;strokeColor=#6D1F00;" vertex="1" parent="1">
+          <mxGeometry x="460" y="581" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-26" value="Video Registry" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#647687;fontColor=#ffffff;strokeColor=#314354;" vertex="1" parent="1">
+          <mxGeometry x="310" y="480" width="100" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="ItVRAYYoHMTXk5Wikjkp-34" value="&lt;font style=&quot;font-size: 23px;&quot;&gt;Video Mining&lt;/font&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+          <mxGeometry x="350" y="320" width="160" height="40" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

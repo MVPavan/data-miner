@@ -1,0 +1,46 @@
+# Blocked Hashtag Patterns
+# Case-insensitive substring matching
+# One pattern per line
+
+# Short-form content
+# shorts
+# short
+# tiktok
+# reels
+# viral
+# trending
+
+# Compilations and edits
+# fail
+prank
+# funny
+meme
+edit
+montage
+bestof
+
+# Gaming/Entertainment
+gaming
+gta
+minecraft
+gameplay
+asmr
+#music
+#song
+cover
+remix
+game
+xbox
+playstation
+ps4
+ps3
+ps5
+esports
+pcgam
+
+# Non-relevant content
+#reaction
+unboxing
+anime
+cartoon
+trailer
