@@ -1,0 +1,53 @@
+services:
+  data_miner:
+    build:
+      context: ./
+      dockerfile: nvidia_pytorch.Dockerfile
+    image: nvidia-pytorch:25.06-py3
+    container_name: nvpt-dm
+    network_mode: host
+    environment:
+      - HF_HOME=/data/all_cache/hf_home
+      - UV_CACHE_DIR
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - type: bind
+        source: /data/pavan/tycoai/project_helpers/data_miner
+        target: /data/pavan/tycoai/project_helpers/data_miner
+      - type: bind
+        source: /data/
+        target: /data/
+      - type: bind
+        source: /data/all_cache/pixi_home
+        target: /data/all_cache/pixi_home
+      - type: bind
+        source: /data/all_cache/hf_home
+        target: /data/all_cache/hf_home
+      - type: bind
+        source: /data/all_cache/uv_cache
+        target: /data/all_cache/uv_cache
+      
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      stack:
+        soft: 67108864
+        hard: 67108864
+    security_opt:
+      - apparmor:unconfined
+    ipc: host
+    
+    stdin_open: true 
+    tty: true
+
+    # Uncomment if below doesnt work
+    # runtime: nvidia
+    # default choice
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
