@@ -216,23 +216,39 @@ if __name__ == "__main__":
     # )
     # visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)
 
+    # delivery_filtered_v2_dedup_md = DatasetConfig(
+    #     name="delivery_filtered_v2_dedup_v1",
+    #     images_dir="/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
+    #     dataset_type="images",
+    #     yolo_pred_folders=[
+    #         "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/merged_detections_03iou_08conf/frames_filtered_v2_dedup",
+    #         "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/merged_detections_03iou_07conf/frames_filtered_v2_dedup",
+    #         "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/merged_detections_03iou_06conf/frames_filtered_v2_dedup",
+    #         "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/merged_detections_03iou_05conf/frames_filtered_v2_dedup",
+    #     ],
+    #     prediction_fields=[
+    #         "merged_detections_03iou_08conf",
+    #         "merged_detections_03iou_07conf",
+    #         "merged_detections_03iou_06conf",
+    #         "merged_detections_03iou_05conf",
+    #     ],
+    #     overwrite=True,
+    #     port=7774,
+    # )
+    # visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)
+
     delivery_filtered_v2_dedup_md = DatasetConfig(
-        name="delivery_filtered_v2_dedup_v1",
-        images_dir="/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
+        name="delivery_filtered_v2_dedup_qwen",
+        images_dir="/data/pavan/codes/tycoai/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
         dataset_type="images",
         yolo_pred_folders=[
-            "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/merged_detections_03iou_08conf/frames_filtered_v2_dedup",
-            "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/merged_detections_03iou_07conf/frames_filtered_v2_dedup",
-            "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/merged_detections_03iou_06conf/frames_filtered_v2_dedup",
-            "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/merged_detections_03iou_05conf/frames_filtered_v2_dedup",
+            "/data/pavan/codes/tycoai/data_miner/output/projects/delivery_pov_v1/qwen3vl/frames_filtered_v2_dedup/pred_txt",
         ],
         prediction_fields=[
-            "merged_detections_03iou_08conf",
-            "merged_detections_03iou_07conf",
-            "merged_detections_03iou_06conf",
-            "merged_detections_03iou_05conf",
+            "qwen3vl",
         ],
         overwrite=True,
-        port=7774,
+        port=7775,
     )
     visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)
+
