@@ -1,6 +1,7 @@
 # python script to visualize remote view images and annotations using voxel51
 
 import time
+from pathlib import Path
 from typing import List
 
 import fiftyone as fo
@@ -46,6 +47,54 @@ class DatasetConfig(BaseModel):
                 "Length of prediction_field must match length of yolo_pred_folder"
             )
         return self
+
+
+def modify_yolo_qwen_rater_labels(
+    yolo_pred_folder: str | Path, output_folder: str | Path
+):
+    """
+    Modify YOLO labels for Qwen rater by filtering based on confidence scores.
+
+    yolo_pred_folder: Path to the folder containing YOLO prediction text files.
+    output_folder: Path to the folder where modified text files will be saved.
+    """
+    output_folder = Path(output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+    yolo_pred_folder = Path(yolo_pred_folder)
+
+    for filename in yolo_pred_folder.iterdir():
+        if filename.suffix == ".txt":
+            # Read YOLO labels from the text file
+            with open(filename, "r") as f:
+                lines = f.readlines()
+
+            # it will have 7 values: class_id, x_center, y_center, width, height, confidence_score, category
+            # discard category and save
+            modified_lines = []
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) == 7:
+                    (
+                        class_id,
+                        x_center,
+                        y_center,
+                        width,
+                        height,
+                        confidence_score,
+                        category,
+                    ) = parts
+                    confidence_score = float(confidence_score)
+                    # Filter based on confidence score threshold (e.g., 0.5)
+                    if confidence_score >= 0.5:
+                        modified_line = f"{class_id} {x_center} {y_center} {width} {height} {confidence_score}\n"
+                        modified_lines.append(modified_line)
+                else:
+                    print(f"Unexpected format in file {filename}: {line.strip()}")
+
+            # Write the modified lines to the output file
+            output_path = output_folder / filename.name
+            with open(output_path, "w") as f:
+                f.writelines(modified_lines)
 
 
 def load_dataset(dataset_config: DatasetConfig) -> fo.Dataset:
@@ -236,19 +285,21 @@ if __name__ == "__main__":
     #     port=7774,
     # )
     # visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)
-
+    modify_yolo_qwen_rater_labels(
+        yolo_pred_folder="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations",
+        output_folder="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations_modified",
+    )
     delivery_filtered_v2_dedup_md = DatasetConfig(
-        name="delivery_filtered_v2_dedup_qwen",
-        images_dir="/data/pavan/codes/tycoai/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
+        name="delivery_filtered_v2_dedup_qwen_rater",
+        images_dir="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
         dataset_type="images",
         yolo_pred_folders=[
-            "/data/pavan/codes/tycoai/data_miner/output/projects/delivery_pov_v1/qwen3vl/frames_filtered_v2_dedup/pred_txt",
+            "/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations_modified",
         ],
         prediction_fields=[
-            "qwen3vl",
+            "qwen3vl_rater",
         ],
         overwrite=True,
         port=7775,
     )
     visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)
-
