@@ -276,12 +276,10 @@ def visualize_detections(
                 anns = anns[np.newaxis, :]
         except Exception:
             continue
-
         for ann in anns:
             # YOLO format: class x_center y_center width height (normalized)
             cls_id = int(ann[0])
             x_center, y_center, width, height = ann[1:5]
-
             # Convert to pixel coordinates
             x1 = (x_center - width / 2) * img_w
             y1 = (y_center - height / 2) * img_h
@@ -308,7 +306,6 @@ def visualize_masks(
 ):
     """
     Visualize segmentation masks overlaid on images.
-
     Args:
         images_folder: Folder containing input images
         masks_folder: Folder containing .npz mask files
@@ -317,7 +314,6 @@ def visualize_masks(
         draw_bboxes: Whether to draw bounding boxes around masks
     """
     from .sam import mask_to_bbox
-
     images_folder = Path(images_folder)
     masks_folder = Path(masks_folder)
     output_folder = Path(output_folder)
@@ -352,7 +348,6 @@ def visualize_masks(
             overlay[mask > 0] = (
                 overlay[mask > 0] * (1 - alpha) + color * alpha
             ).astype(np.uint8)
-
         # Draw bounding boxes
         pil_image = Image.fromarray(overlay)
         if draw_bboxes:
@@ -360,7 +355,6 @@ def visualize_masks(
             for mask in masks:
                 x1, y1, x2, y2 = mask_to_bbox(mask)
                 draw.rectangle([x1, y1, x2, y2], outline="white", width=2)
-
         output_path = output_folder / image_file.name
         pil_image.save(output_path)
 
@@ -378,7 +372,6 @@ def load_yolo_annotations(ann_file: Union[str, Path]) -> list[dict]:
     ann_file = Path(ann_file)
     if not ann_file.exists():
         return []
-
     try:
         anns = np.loadtxt(ann_file)
         if len(anns) == 0:
@@ -387,7 +380,6 @@ def load_yolo_annotations(ann_file: Union[str, Path]) -> list[dict]:
             anns = anns[np.newaxis, :]
     except Exception:
         return []
-
     return [
         {
             "class_id": int(ann[0]),
@@ -406,14 +398,12 @@ def save_yolo_annotations(
 ):
     """
     Save detections in YOLO format.
-
     Args:
         detections: List of [class_id, x, y, w, h, ...] (normalized coords)
         output_path: Path to save the annotation file
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
     with open(output_path, "w") as f:
         for det in detections:
             cls_id, x_min, y_min, width, height = det[:5]
@@ -449,7 +439,6 @@ def save_detection_summary(
     }
     if avg_latency is not None:
         summary["avg_latency_s"] = avg_latency
-
     summary_path = output_dir / "detection_summary.json"
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=4)

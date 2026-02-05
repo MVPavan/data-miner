@@ -114,7 +114,6 @@ class GroundingDINOHelper:
             detection_classes: Text labels to detect (uses self.detection_class if None)
             output_format: "normalized" (default) or "pixel"
             text_threshold: Text matching threshold (default: 0.25)
-
         Returns:
             If output_format="normalized":
                 List of [class_id, x, y, w, h, confidence] with 0-1 coords
@@ -296,6 +295,5 @@ if __name__ == "__main__":
     # results = gdino.query_image("image.jpg", "the main entrance door")
     # for det in results:
     #     print(f"Found: {det['label']} at {det['bbox']}")
-
     # # Visualize
     # visualize_detections(input_folder, output_folder / "pred_txt", output_folder / "vis")

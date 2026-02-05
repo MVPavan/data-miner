@@ -75,18 +75,15 @@ class BaseModel(ABC):
     - Load/unload lifecycle
     - Image loading utilities
     """
-
     def __init__(self):
         """Initialize base model."""
         self.model = None
         self.processor = None  # Generic name for processor/tokenizer
         self._loaded = False
-
     @property
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
         return self._loaded
-
     @abstractmethod
     def load(self) -> None:
         """Load the model. Must be implemented by subclasses."""
@@ -119,17 +116,14 @@ class BaseModel(ABC):
     ) -> list[Image.Image]:
         """Load a batch of images."""
         return load_images_batch(images)
-
     def _ensure_loaded(self) -> None:
         """Ensure model is loaded before inference."""
         if not self._loaded:
             self.load()
-
     def __enter__(self):
         """Context manager entry - load model."""
         self.load()
         return self
-
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit - unload model."""
         self.unload()
@@ -140,7 +134,6 @@ class BaseModel(ABC):
 # Batch Processing Utilities
 # =============================================================================
 
-
 def create_batch_iterator(
     items: list,
     batch_size: int,
@@ -149,13 +142,11 @@ def create_batch_iterator(
 ):
     """
     Create a batch iterator with optional progress bar.
-
     Args:
         items: List of items to batch
         batch_size: Size of each batch
         show_progress: Whether to show tqdm progress
         desc: Description for progress bar
-
     Yields:
         Tuples of (start_idx, batch)
     """
@@ -174,7 +165,6 @@ def create_batch_iterator(
 # Model Loading with Fallback
 # =============================================================================
 
-
 def load_model_with_fallback(
     model_ids: list[str],
     loader_func,
@@ -182,7 +172,6 @@ def load_model_with_fallback(
 ) -> tuple:
     """
     Try loading models in order, returning first successful load.
-
     Args:
         model_ids: List of model IDs to try in order
         loader_func: Function that takes model_id and returns (model, processor)
@@ -203,14 +192,12 @@ def load_model_with_fallback(
         except Exception as e:
             logger.warning(f"Failed to load {model_id}: {e}")
             continue
-
     raise RuntimeError(f"Failed to load any {model_name}. Tried: {model_ids}")
 
 
 @dataclass
 class Detection:
     """A single detection result."""
-
     bbox: tuple[float, float, float, float]  # (x1, y1, x2, y2) normalized 0-1
     label: str
     confidence: float
@@ -220,12 +207,10 @@ class Detection:
 @dataclass
 class DetectionResult:
     """Detection results for an image."""
-
     image_path: Optional[Path]
     detections: list[Detection] = field(default_factory=list)
     width: int = 0
     height: int = 0
-
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -252,23 +237,19 @@ class DetectionResult:
 
 class BaseDetector(ABC):
     """Abstract base class for detection models."""
-
     def __init__(self, device_map: str = "auto"):
         self.device_map = resolve_device(device_map)
         self.model = None
         self.processor = None
         self._loaded = False
-
     @abstractmethod
     def load(self) -> None:
         """Load the model."""
         pass
-
     @abstractmethod
     def unload(self) -> None:
         """Unload the model to free memory."""
         pass
-
     @abstractmethod
     def detect(
         self,
@@ -278,12 +259,10 @@ class BaseDetector(ABC):
     ) -> DetectionResult:
         """
         Detect objects in an image.
-
         Args:
             image: Input image
             prompt: Text prompt describing what to detect
             confidence_threshold: Minimum confidence for detections
-
         Returns:
             DetectionResult with list of detections
         """
