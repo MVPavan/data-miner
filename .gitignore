@@ -11,7 +11,9 @@
 **/output/*
 **/run.yaml
 **/run_configs/*
-# **/.devcontainer*
+**/.devcontainer/*compose*
+**/.devcontainer/dev_entrypoint.sh
+**/.devcontainer/devcontainer.json
 **/cpf/*
 **/logs/*
 **/data/*
@@ -23,3 +25,5 @@
 *.pt
 *.pth
 *.sql
+*.jpg
+*.png

@@ -14,6 +14,10 @@ Usage:
     CUDA_VISIBLE_DEVICES=0,1 python -m data_miner.models.qwen3_vl_rater
 """
 
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+
 import json
 import re
 import time
@@ -49,7 +53,7 @@ Task: Evaluate if the RED bounding box correctly annotates an ENTRANCE DOOR.
 
 DEFINITIONS:
 - ENTRANCE DOOR: A door people walk through to enter/exit. Can be solid, glass, or partially glass. Must have door cues: frame, handle, hinges, threshold, or opening seam.
-- NOT A DOOR: Windows, glass walls, glass partitions, glass facades, display windows, or glass surfaces without door cues.
+- NOT ENTRANCE DOOR: cupboard doors, Windows, glass walls, glass partitions, glass facades, display windows, or glass surfaces without door cues.
 
 RETURN exactly this JSON format, nothing else:
 {"is_door": true/false, "score": 0.XX, "reason": "CODE"}
@@ -524,13 +528,13 @@ class Qwen3VLAnnotationRater:
 if __name__ == "__main__":
     # Example usage - modify paths as needed
     image_folder = Path(
-        "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup"
+        "/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup"
     )
     annotation_folder = Path(
-        "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/gdino/frames_filtered_v2_dedup/pred_txt"
+        "/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/merged_detections/frames_filtered_v2_dedup"
     )
     output_folder = Path(
-        "/data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated"
+        "/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated"
     )
 
     # Initialize rater
