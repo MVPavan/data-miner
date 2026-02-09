@@ -1,0 +1,28 @@
+# CVAT Annotation Job Configuration
+anno_key: "my_annotation_job"
+
+cvat:
+  url: "http://localhost:8080"
+  username: ""  # or set FIFTYONE_CVAT_USERNAME env var
+  password: ""  # or set FIFTYONE_CVAT_PASSWORD env var
+
+dataset:
+  dir: "/path/to/yolo/dataset"
+  name: null  # defaults to anno_key
+  split: "train"  # train/val/test or null for all
+  label_field: "detections"
+
+task:
+  project_name: null
+  task_size: 100
+  segment_size: null
+  task_assignee: null
+  job_assignees: null
+  classes: null  # auto-inferred if null
+
+export:
+  output_dir: "./output"
+  split: "annotated"
+  include_confidence: true
+  unexpected: "keep"  # keep/ignore/prompt
+  cleanup: false

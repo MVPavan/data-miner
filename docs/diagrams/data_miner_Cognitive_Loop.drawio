@@ -1,0 +1,165 @@
+<mxfile host="65bd71144e">
+    <diagram name="Cognitive Validation Loop" id="cognitive-validation-loop">
+        <mxGraphModel dx="1194" dy="779" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" background="#1a1a2e" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <!-- Participant boxes with colors -->
+                <mxCell id="orch-top" value="Orchestrator" style="rounded=0;whiteSpace=wrap;fillColor=#a8c686;strokeColor=#88a666;fontSize=12;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="200" y="40" width="120" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="det-top" value="Efficient Detector" style="rounded=0;whiteSpace=wrap;fillColor=#7a9a8a;strokeColor=#5a7a6a;fontSize=12;align=center;verticalAlign=middle;fontColor=#e8dcc8;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="40" width="130" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="judge-top" value="Cognitive Judge (VLM)" style="rounded=0;whiteSpace=wrap;fillColor=#c9a07a;strokeColor=#a98060;fontSize=12;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="680" y="40" width="150" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="db-top" value="Dataset Registry" style="rounded=0;whiteSpace=wrap;fillColor=#b8a88a;strokeColor=#98886a;fontSize=12;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="920" y="40" width="120" height="40" as="geometry"/>
+                </mxCell>
+                <!-- Lifelines with matching colors -->
+                <mxCell id="ll-orch" value="" style="endArrow=none;dashed=1;html=1;dashPattern=1 3;strokeWidth=1;strokeColor=#a8c686;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="260" y="80" as="sourcePoint"/>
+                        <mxPoint x="260" y="700" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ll-det" value="" style="endArrow=none;dashed=1;html=1;dashPattern=1 3;strokeWidth=1;strokeColor=#7a9a8a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="515" y="80" as="sourcePoint"/>
+                        <mxPoint x="515" y="700" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ll-judge" value="" style="endArrow=none;dashed=1;html=1;dashPattern=1 3;strokeWidth=1;strokeColor=#c9a07a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="755" y="80" as="sourcePoint"/>
+                        <mxPoint x="755" y="700" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ll-db" value="" style="endArrow=none;dashed=1;html=1;dashPattern=1 3;strokeWidth=1;strokeColor=#b8a88a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="980" y="80" as="sourcePoint"/>
+                        <mxPoint x="980" y="700" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <!-- Message 1: Input Image I - Green -->
+                <mxCell id="msg1" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#a8c686;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="260" y="120" as="sourcePoint"/>
+                        <mxPoint x="515" y="120" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg1-label" value="Input Image I" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#a8c686;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="340" y="100" width="100" height="20" as="geometry"/>
+                </mxCell>
+                <!-- Message 2: Propose Bounding Box B - Teal -->
+                <mxCell id="msg2" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#7a9a8a;dashed=1;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="515" y="160" as="sourcePoint"/>
+                        <mxPoint x="260" y="160" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg2-label" value="Propose Bounding Box B (Conf 0.9)" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#7a9a8a;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="300" y="140" width="220" height="20" as="geometry"/>
+                </mxCell>
+                <!-- Note: Standard pipelines stop here -->
+                <mxCell id="note1" value="&quot;Standard pipelines stop here.\nWe proceed to Cognitive QA.&quot;" style="shape=note;whiteSpace=wrap;backgroundOutline=1;size=12;fillColor=#c9a86c;strokeColor=#a98850;fontSize=10;align=left;verticalAlign=middle;fontColor=#1a1a2e;spacingLeft=5;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="180" width="230" height="45" as="geometry"/>
+                </mxCell>
+                <!-- Message 3: Crop Region C (self-loop) - Green -->
+                <mxCell id="msg3-label" value="Crop Region C from Image I based on B" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#a8c686;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="150" y="240" width="250" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="msg3-loop1" value="" style="endArrow=none;strokeWidth=2;strokeColor=#a8c686;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="260" y="270" as="sourcePoint"/>
+                        <mxPoint x="300" y="270" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg3-loop2" value="" style="endArrow=none;strokeWidth=2;strokeColor=#a8c686;curved=1;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="300" y="270" as="sourcePoint"/>
+                        <mxPoint x="300" y="295" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="320" y="270"/>
+                            <mxPoint x="320" y="295"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg3-loop3" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#a8c686;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="300" y="295" as="sourcePoint"/>
+                        <mxPoint x="260" y="295" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <!-- Par Fragment Box - Gold border -->
+                <mxCell id="par-box" value="" style="rounded=0;whiteSpace=wrap;fillColor=none;strokeColor=#c9a07a;strokeWidth=2;dashed=1;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="320" width="540" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="par-label" value="par" style="text;strokeColor=none;fillColor=#c9a07a;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="320" width="30" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="par-title" value="[Cognitive Check]" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#c9a07a;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="320" width="130" height="20" as="geometry"/>
+                </mxCell>
+                <!-- Message 4: PROMPT Is C strictly - Gold -->
+                <mxCell id="msg4" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#c9a07a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="260" y="380" as="sourcePoint"/>
+                        <mxPoint x="755" y="380" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg4-label" value="PROMPT: &quot;Is C strictly a {Target_Class}?&quot;" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#c9a07a;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="358" width="250" height="20" as="geometry"/>
+                </mxCell>
+                <!-- Message 5: PROMPT Explain why - Gold -->
+                <mxCell id="msg5" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#c9a07a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="260" y="430" as="sourcePoint"/>
+                        <mxPoint x="755" y="430" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg5-label" value="PROMPT: &quot;Explain why/why not.&quot;" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#c9a07a;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="408" width="200" height="20" as="geometry"/>
+                </mxCell>
+                <!-- Message 6: JSON Response - Gold dashed -->
+                <mxCell id="msg6" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#c9a07a;dashed=1;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="755" y="480" as="sourcePoint"/>
+                        <mxPoint x="260" y="480" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg6-label" value="JSON: {Verd: &quot;REJECT&quot;, Rsn: &quot;Reflection&quot;}" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#c9a07a;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="458" width="260" height="20" as="geometry"/>
+                </mxCell>
+                <!-- Message 7: Discard Candidate - Tan -->
+                <mxCell id="msg7" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#b8a88a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="260" y="560" as="sourcePoint"/>
+                        <mxPoint x="980" y="560" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="msg7-label" value="Discard Candidate (Reason: Reflection)" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontColor=#b8a88a;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="538" width="250" height="20" as="geometry"/>
+                </mxCell>
+                <!-- Note: Dataset remains clean -->
+                <mxCell id="note2" value="&quot;Dataset remains clean.&quot;" style="shape=note;whiteSpace=wrap;backgroundOutline=1;size=12;fillColor=#7a9a8a;strokeColor=#5a7a6a;fontSize=10;align=center;verticalAlign=middle;fontColor=#e8dcc8;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="890" y="590" width="150" height="35" as="geometry"/>
+                </mxCell>
+                <!-- Bottom Participant Boxes with colors -->
+                <mxCell id="orch-bot" value="Orchestrator" style="rounded=0;whiteSpace=wrap;fillColor=#a8c686;strokeColor=#88a666;fontSize=12;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="200" y="700" width="120" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="det-bot" value="Efficient Detector" style="rounded=0;whiteSpace=wrap;fillColor=#7a9a8a;strokeColor=#5a7a6a;fontSize=12;align=center;verticalAlign=middle;fontColor=#e8dcc8;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="700" width="130" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="judge-bot" value="Cognitive Judge (VLM)" style="rounded=0;whiteSpace=wrap;fillColor=#c9a07a;strokeColor=#a98060;fontSize=12;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="680" y="700" width="150" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="db-bot" value="Dataset Registry" style="rounded=0;whiteSpace=wrap;fillColor=#b8a88a;strokeColor=#98886a;fontSize=12;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="920" y="700" width="120" height="40" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

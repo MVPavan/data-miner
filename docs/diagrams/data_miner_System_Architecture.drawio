@@ -1,0 +1,170 @@
+<mxfile host="65bd71144e">
+    <diagram name="System Architecture" id="system-arch-001">
+        <mxGraphModel dx="954" dy="779" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" background="#1a1a2e" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title-001" value="Cognitive Visual Mining Engine - System Architecture" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=22;fontStyle=1;fontColor=#e8d5b7;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="15" width="600" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="ingestion-box-001" value="" style="rounded=1;whiteSpace=wrap;fillColor=#8b9a71;fillOpacity=15;strokeColor=#8b9a71;strokeWidth=2;dashed=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="70" width="380" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="ingestion-label-001" value="AUTONOMOUS INGESTION LAYER" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1;fontColor=#a8c686;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="75" width="200" height="15" as="geometry"/>
+                </mxCell>
+                <mxCell id="sources-001" value="Web &amp; Visual&#xa;Sources" style="shape=cylinder3;whiteSpace=wrap;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#8b9a71;strokeColor=#6b7a51;fontSize=11;align=center;verticalAlign=middle;fontColor=#e8dcc8;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="120" width="90" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="crawler-001" value="Distributed&#xa;Crawler" style="rounded=1;whiteSpace=wrap;fillColor=#a8c686;strokeColor=#88a666;fontSize=11;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="180" y="130" width="100" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="extractor-001" value="Keyframe&#xa;Extractor" style="rounded=1;whiteSpace=wrap;fillColor=#a8c686;strokeColor=#88a666;fontSize=11;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="300" y="130" width="100" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="arr-src-crawl-001" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#a8c686;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="150" y="155" as="sourcePoint"/>
+                        <mxPoint x="180" y="155" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arr-crawl-ext-001" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#a8c686;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="280" y="155" as="sourcePoint"/>
+                        <mxPoint x="300" y="155" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="core-box-001" value="" style="rounded=1;whiteSpace=wrap;fillColor=#5a7a6a;fillOpacity=12;strokeColor=#5a7a6a;strokeWidth=2;dashed=1;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="70" width="700" height="360" as="geometry"/>
+                </mxCell>
+                <mxCell id="core-label-001" value="COGNITIVE PROCESSING CORE" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1;fontColor=#7a9a8a;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="75" width="200" height="15" as="geometry"/>
+                </mxCell>
+                <mxCell id="filter-001" value="Semantic Gatekeeper&#xa;(Tri-State Filter)" style="rounded=1;whiteSpace=wrap;fillColor=#7a9a8a;strokeColor=#5a7a6a;fontSize=11;align=center;verticalAlign=middle;fontColor=#e8dcc8;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="110" width="130" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="dedup-001" value="Vector Deduplication&#xa;(Aspect-Weighted)" style="rounded=1;whiteSpace=wrap;fillColor=#7a9a8a;strokeColor=#5a7a6a;fontSize=11;align=center;verticalAlign=middle;fontColor=#e8dcc8;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="640" y="110" width="140" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="ensemble-box-001" value="" style="rounded=1;whiteSpace=wrap;fillColor=#c9a86c;fillOpacity=18;strokeColor=#a98850;strokeWidth=1;dashed=1;" parent="1" vertex="1">
+                    <mxGeometry x="470" y="190" width="350" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="ensemble-label-001" value="HETEROGENEOUS DETECTION ENSEMBLE" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=1;fontColor=#c9a86c;" parent="1" vertex="1">
+                    <mxGeometry x="530" y="195" width="230" height="12" as="geometry"/>
+                </mxCell>
+                <mxCell id="modA-001" value="Text-Prompted&#xa;Detector" style="rounded=1;whiteSpace=wrap;fillColor=#d4c4a8;strokeColor=#b4a488;fontSize=10;align=center;verticalAlign=middle;fontColor=#2d2d44;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="485" y="220" width="95" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="modB-001" value="Visual-Prompted&#xa;Detector" style="rounded=1;whiteSpace=wrap;fillColor=#d4c4a8;strokeColor=#b4a488;fontSize=10;align=center;verticalAlign=middle;fontColor=#2d2d44;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="595" y="220" width="100" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="modC-001" value="Segmentation&#xa;Proposer" style="rounded=1;whiteSpace=wrap;fillColor=#d4c4a8;strokeColor=#b4a488;fontSize=10;align=center;verticalAlign=middle;fontColor=#2d2d44;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="710" y="220" width="95" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="fusion-001" value="Geometric-Semantic&#xa;Fusion Engine" style="rounded=1;whiteSpace=wrap;fillColor=#7a9a8a;strokeColor=#5a7a6a;fontSize=11;align=center;verticalAlign=middle;fontColor=#e8dcc8;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="860" y="220" width="130" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="judge-001" value="Cognitive Validator&#xa;(VLM Reasoner)" style="rounded=1;whiteSpace=wrap;fillColor=#c9a07a;strokeColor=#a98060;fontSize=11;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="1010" y="220" width="120" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="arr-ext-filt-001" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#7a9a8a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="400" y="155" as="sourcePoint"/>
+                        <mxPoint x="480" y="137" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="440" y="155"/>
+                            <mxPoint x="440" y="137"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arr-filt-ded-001" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#7a9a8a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="610" y="137" as="sourcePoint"/>
+                        <mxPoint x="640" y="137" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arr-ded-ens-001" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#c9a86c;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="710" y="165" as="sourcePoint"/>
+                        <mxPoint x="645" y="220" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="710" y="190"/>
+                            <mxPoint x="645" y="190"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arr-ens-fus-001" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#7a9a8a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="820" y="245" as="sourcePoint"/>
+                        <mxPoint x="860" y="245" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arr-fus-jdg-001" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#c9a07a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="990" y="247" as="sourcePoint"/>
+                        <mxPoint x="1010" y="247" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="storage-box-001" value="" style="rounded=1;whiteSpace=wrap;fillColor=#c9a07a;fillOpacity=15;strokeColor=#a98060;strokeWidth=2;dashed=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="280" width="380" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="storage-label-001" value="UNIFIED STATE FABRIC" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1;fontColor=#c9a07a;" parent="1" vertex="1">
+                    <mxGeometry x="150" y="285" width="150" height="15" as="geometry"/>
+                </mxCell>
+                <mxCell id="statedb-001" value="Atomic State Registry&#xa;(PostgreSQL)" style="shape=cylinder3;whiteSpace=wrap;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#c9a07a;strokeColor=#a98060;fontSize=11;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="70" y="330" width="140" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="globalstore-001" value="Distributed Global Namespace&#xa;(SeaweedFS)" style="shape=cylinder3;whiteSpace=wrap;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#c9a07a;strokeColor=#a98060;fontSize=11;align=center;verticalAlign=middle;fontColor=#1a1a2e;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="240" y="330" width="160" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="arr-crawl-db-001" value="" style="endArrow=classic;startArrow=classic;strokeWidth=1;strokeColor=#c9a07a;dashed=1;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="230" y="185" as="sourcePoint"/>
+                        <mxPoint x="140" y="330" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="230" y="270"/>
+                            <mxPoint x="140" y="270"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arr-filter-db-001" value="" style="endArrow=classic;startArrow=classic;strokeWidth=1;strokeColor=#c9a07a;dashed=1;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="480" y="155" as="sourcePoint"/>
+                        <mxPoint x="140" y="330" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="430" y="155"/>
+                            <mxPoint x="430" y="310"/>
+                            <mxPoint x="140" y="310"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arr-judge-db-001" value="" style="endArrow=classic;startArrow=classic;strokeWidth=1;strokeColor=#c9a07a;dashed=1;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1070" y="275" as="sourcePoint"/>
+                        <mxPoint x="140" y="410" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="1070" y="450"/>
+                            <mxPoint x="140" y="450"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="arr-judge-store-001" value="" style="endArrow=classic;strokeWidth=2;strokeColor=#c9a07a;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="1070" y="275" as="sourcePoint"/>
+                        <mxPoint x="320" y="410" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="1070" y="480"/>
+                            <mxPoint x="320" y="480"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="flow-label1-001" value="claim/release" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;fontColor=#c9b896;" parent="1" vertex="1">
+                    <mxGeometry x="175" y="255" width="60" height="15" as="geometry"/>
+                </mxCell>
+                <mxCell id="flow-label2-001" value="final output" style="text;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=8;fontColor=#c9b896;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="460" width="60" height="15" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>
