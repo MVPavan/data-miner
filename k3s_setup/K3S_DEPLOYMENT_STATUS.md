@@ -10,8 +10,8 @@
 | Node | IP | Role | GPU | Status |
 |---|---|---|---|---|
 | pavanjci | 10.96.122.9 | Master (control-plane) | GPU=1 | Ready |
-| manthana | 10.96.122.14 | Worker | none | Ready |
-| arsenal | 10.96.122.132 | Worker | none | Ready |
+| manthana | 10.96.122.132 | Worker | none | Ready |
+| arsenal | 10.96.122.14 | Worker | none | Ready |
 
 - **K3s version:** v1.31.0+k3s1
 - **SSH user:** `pavanmv` (password in `.env` as `MASTER_PASSWORD`)
@@ -55,9 +55,11 @@ k3s_setup/manifests/
     └── monitor-deployment.yaml             # 1 replica
 ```
 
-### 4. Deployment Script
-- **Script:** `k3s_setup/deploy_manifests.sh`
-- Applies manifests in order: namespace → config → infrastructure → workers
+### 4. Deployment & Orchestration
+- **Script:** `k3s_setup/orchestrate.py`
+- Full teardown/setup orchestrator: `python orchestrate.py {teardown|setup|all} [--wipe-data]`
+- Handles: K3s uninstall/install, SeaweedFS, NVIDIA config, Docker image build, manifest deployment, DB init
+- `--wipe-data` flag optionally deletes SeaweedFS mount data and database dirs (default: preserve)
 
 ### 5. Manifest Fixes (from deployment session)
 - Changed `imagePullPolicy` from `IfNotPresent` → `Never` in all 6 worker manifests (local images, not from a registry)
@@ -141,7 +143,7 @@ kubectl -n data-miner scale deployment extract-worker --replicas=4
 
 | Decision | Rationale |
 |---|---|
-| `DATABASE_URL` & `LOKI_URL` hardcoded in manifests | Internal cluster DNS, not sensitive |
+| `DATABASE_URL` & `LOKI_URL` via ConfigMap `configMapKeyRef` | Single source of truth in `configmap.yaml`, referenced by all workers |
 | `HF_TOKEN` via K8s Secret | Sensitive credential, 12-factor best practice |
 | `python:3.12-slim` (not nvidia/cuda) | PyTorch bundles CUDA runtime; NVIDIA Container Toolkit on host handles GPU |
 | `uv pip install --system` in Dockerfile | Installs to system Python, no venv needed in container |
@@ -168,14 +170,16 @@ kubectl -n data-miner scale deployment extract-worker --replicas=4
 
 | File | Purpose |
 |---|---|
+| `k3s_setup/orchestrate.py` | Main orchestrator — full teardown/setup with `--wipe-data` option |
+| `k3s_setup/k3s.py` | K3s install/uninstall/clean/restart/status (pyinfra) |
 | `k3s_setup/inventory.py` | Pyinfra inventory (all 3 nodes, SSH config, K3s token) |
 | `k3s_setup/data_miner_prep.py` | Node preparation (labels, NVIDIA plugin, storage dirs) |
 | `k3s_setup/docker_build.py` | Build, save, copy, import Docker image |
 | `k3s_setup/Dockerfile` | Container image definition |
-| `k3s_setup/deploy_manifests.sh` | Apply all manifests in order |
-| `k3s_setup/seaweedfs_prep.py` | SeaweedFS setup (separate concern) |
+| `k3s_setup/seaweedfs_prep.py` | SeaweedFS node prep (FUSE, dirs, sysctl) |
+| `k3s_setup/seaweedfs.yaml` | SeaweedFS K8s manifests (master + filer) |
+| `k3s_setup/setup_ssh_keys.py` | SSH key setup utility |
 | `.env` | Contains `HF_TOKEN`, `MASTER_PASSWORD`, `WORKER_PASSWORD` |
-| `k3s_setup/DATA_MINER_K8S_MIGRATION_PLAN.md` | Original migration plan |
 
 ---
 
