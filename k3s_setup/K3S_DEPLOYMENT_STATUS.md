@@ -166,20 +166,58 @@ kubectl -n data-miner scale deployment extract-worker --replicas=4
 
 ---
 
+## Architecture (Two-Phase Design)
+
+| Phase | Tool | Script | What it does |
+|---|---|---|---|
+| 1. Provisioning | pyinfra (SSH) | `provision.py` | K3s install, NVIDIA config, storage dirs, SeaweedFS prep, Docker image build/distribute |
+| 2. Orchestration | kubectl (K8s) | `orchestrate.py` | Generate manifests, deploy, wait, init DB, verify |
+
+```bash
+# Phase 1: Provision all nodes
+pyinfra k3s_setup/inventory.py k3s_setup/provision.py --data action=all
+
+# Phase 2: Deploy to K8s
+python k3s_setup/orchestrate.py setup --run-config run_configs/glass_door.yaml
+```
+
+---
+
 ## File Reference
 
 | File | Purpose |
 |---|---|
-| `k3s_setup/orchestrate.py` | Main orchestrator — full teardown/setup with `--wipe-data` option |
-| `k3s_setup/k3s.py` | K3s install/uninstall/clean/restart/status (pyinfra) |
-| `k3s_setup/inventory.py` | Pyinfra inventory (all 3 nodes, SSH config, K3s token) |
-| `k3s_setup/data_miner_prep.py` | Node preparation (labels, NVIDIA plugin, storage dirs) |
-| `k3s_setup/docker_build.py` | Build, save, copy, import Docker image |
+| `k3s_setup/cluster_config.yaml` | Single source of truth — all infrastructure config |
+| `k3s_setup/cluster.py` | Shared config loader (imported by all scripts) |
+| `k3s_setup/provision.py` | Unified pyinfra script — all SSH/node-level operations |
+| `k3s_setup/inventory.py` | Pyinfra inventory (reads from cluster_config.yaml) |
+| `k3s_setup/generate_manifests.py` | Generates K8s manifests from config |
+| `k3s_setup/orchestrate.py` | K8s orchestrator (kubectl only, no SSH) |
 | `k3s_setup/Dockerfile` | Container image definition |
-| `k3s_setup/seaweedfs_prep.py` | SeaweedFS node prep (FUSE, dirs, sysctl) |
-| `k3s_setup/seaweedfs.yaml` | SeaweedFS K8s manifests (master + filer) |
+| `k3s_setup/manifests/seaweedfs/` | Generated SeaweedFS K8s manifests (7 files) |
 | `k3s_setup/setup_ssh_keys.py` | SSH key setup utility |
+| `run_configs/glass_door.yaml` | Project run config (prompts, thresholds, search queries) |
 | `.env` | Contains `HF_TOKEN`, `MASTER_PASSWORD`, `WORKER_PASSWORD` |
+
+---
+
+## Provision Actions
+
+```bash
+pyinfra k3s_setup/inventory.py k3s_setup/provision.py --data action=<ACTION>
+```
+
+| Action | Runs on | What it does |
+|---|---|---|
+| `k3s` | all nodes | Install K3s master/agent |
+| `nvidia` | master | Write containerd config, generate CDI spec, restart K3s |
+| `storage` | master | Create DB dirs with correct UIDs |
+| `seaweedfs` | all nodes | Install fuse3, create dirs, sysctl tuning |
+| `labels` | master | kubectl label nodes + install NVIDIA device plugin |
+| `docker` | all nodes | Build image, copy tar, import to K3s containerd |
+| `all` | varies | Run all above in order |
+| `clean` | all nodes | Full cleanup: FUSE unmount + SeaweedFS data + images + K3s |
+| `status` | all nodes | Show K3s service status |
 
 ---
 
@@ -187,7 +225,8 @@ kubectl -n data-miner scale deployment extract-worker --replicas=4
 
 - **Sudo password:** Pyinfra prompts for sudo on remote nodes. Password is in `.env` as `MASTER_PASSWORD`.
 - **Docker save is slow:** The image is ~4.8GB. `docker save` takes several minutes.
-- **Lock file:** `docker_build.py` uses `/tmp/data_miner_build.lock`. Delete it if builds get stuck.
+- **Lock file:** `provision.py` uses `/tmp/data-miner_build.lock`. Delete it if builds get stuck.
 - **Image namespace:** Must import with `--namespace k8s.io` for K3s to see the image.
 - **containerd config:** Located at `/var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl` — must include both nvidia runtime AND correct CNI paths.
 - **CDI spec:** Generated at `/etc/cdi/nvidia.yaml` on pavanjci.
+- **Manifest generation:** Worker manifests and ConfigMap are generated from `cluster_config.yaml` + `run_configs/*.yaml`. Infrastructure manifests (postgres, loki, grafana) are static.

@@ -1,0 +1,120 @@
+# =============================================================================
+# K3s Cluster Configuration — Single Source of Truth
+# =============================================================================
+# All infrastructure scripts (provision.py, orchestrate.py, generate_manifests.py)
+# read from this file via cluster.py. Project-specific app config lives in
+# run_configs/*.yaml files.
+# =============================================================================
+
+cluster:
+  namespace: data-miner
+  k3s_version: "v1.31.0+k3s1"
+  ssh_key: "~/.ssh/id_rsa_dm_k3s"
+
+  nodes:
+    pavanjci:
+      ip: "10.96.122.9"
+      role: master
+      ssh_user: pavanmv
+      labels:
+        gpu: "true"
+    manthana:
+      ip: "10.96.122.132"
+      role: worker
+      ssh_user: pavanmv
+    arsenal:
+      ip: "10.96.122.14"
+      role: worker
+      ssh_user: pavan
+
+storage:
+  seaweedfs_mount: /swdfs_mnt/swshared
+  db_path: /data/data_miner_db
+  db_services:
+    postgres: 999
+    loki: 10001
+    grafana: 472
+
+image:
+  name: data-miner
+  tag: latest
+  pull_policy: Never
+
+seaweedfs:
+  namespace: seaweedfs
+  image: chrislusf/seaweedfs:latest
+  data_dir: /data/seaweed
+  schedule_on: master
+
+nvidia:
+  plugin_version: "v0.14.0"
+
+database_url: "postgresql://postgres:postgres@postgres.${cluster.namespace}.svc.cluster.local:5432/data_miner"
+loki_url: "http://loki.${cluster.namespace}.svc.cluster.local:3100/loki/api/v1/push"
+
+# K8s overrides merged on top of default.yaml + run_config when generating ConfigMap
+k3s_app_overrides:
+  output_dir: "${storage.seaweedfs_mount}/data_miner_output"
+  device: "auto"
+  logging:
+    log_dir: "${storage.seaweedfs_mount}/data_miner_output/logs"
+
+resource_presets:
+  small:
+    requests: { cpu: "250m", memory: "512Mi" }
+    limits:   { cpu: "1000m", memory: "2Gi" }
+  medium:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2000m", memory: "4Gi" }
+  gpu:
+    requests: { cpu: "500m", memory: "2Gi" }
+    limits:   { cpu: "2000m", memory: "8Gi" }
+
+workers:
+  download:
+    kind: StatefulSet
+    replicas: 3
+    resources: ${resource_presets.small}
+    schedule_on: all
+    extra_env:
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+    liveness_probe:
+      command: ["test", "-f", "/tmp/healthy"]
+      initial_delay: 60
+      period: 30
+      failure_threshold: 3
+
+  extract:
+    replicas: 2
+    resources: ${resource_presets.medium}
+    schedule_on: master
+    liveness_probe:
+      command: ["test", "-f", "/tmp/healthy"]
+      initial_delay: 60
+      period: 30
+
+  filter:
+    replicas: 1
+    resources: ${resource_presets.gpu}
+    schedule_on: gpu
+    hf_token: true
+
+  dedup:
+    replicas: 1
+    resources: ${resource_presets.gpu}
+    schedule_on: gpu
+    hf_token: true
+
+  detect:
+    replicas: 1
+    resources: ${resource_presets.gpu}
+    schedule_on: gpu
+    hf_token: true
+
+  monitor:
+    replicas: 1
+    resources: ${resource_presets.medium}
+    schedule_on: master
