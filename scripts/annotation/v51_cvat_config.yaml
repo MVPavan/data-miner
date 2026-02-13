@@ -1,25 +1,25 @@
 # CVAT Annotation Job Configuration
-anno_key: "my_annotation_job"
+anno_key: "delivery_pov_v1_feb_9_26"
 
 cvat:
-  url: "http://localhost:8080"
-  username: ""  # or set FIFTYONE_CVAT_USERNAME env var
-  password: ""  # or set FIFTYONE_CVAT_PASSWORD env var
+  url: "http://10.96.122.9:8080"
+  username: "admin"  # or set FIFTYONE_CVAT_USERNAME env var
+  password: "admin"  # or set FIFTYONE_CVAT_PASSWORD env var
 
 dataset:
-  name: "my_dataset"
-  images_dir: "/path/to/images"
-  labels_dir: "/path/to/yolo/labels"  # optional, null for images-only
-  label_field: "ground_truth"
-  overwrite: false
+  name: "delivery_pov_v1"
+  images_dir: "/data/nvidia_local/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup"
+  labels_dir: "/data/nvidia_local/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations_modified"
+  label_field: "ai_labeled"
+  overwrite: true
 
 annotate:
-  project_name: null
-  task_size: 100
-  segment_size: null
+  project_name: "doors_cvat"
+  task_size: 500
+  segment_size: 100
   task_assignee: null
-  job_assignees: null
-  classes: null  # auto-inferred if null (simple mode)
+  job_assignees: ['deepak','raj','pavan','sathish','sree']
+  classes: ['door']  # auto-inferred if null (simple mode)
   
   # Full label schema (advanced mode) - overrides all below if provided
   # See: https://docs.voxel51.com/integrations/cvat.html#label-schema
@@ -48,7 +48,7 @@ annotate:
   use_cache: true
 
 export:
-  output_dir: "./cvat_output"
+  output_dir: "./cvat_output/delivery_pov_v1"
   split: "annotated"
   include_confidence: true
   unexpected: "keep"  # keep/ignore/prompt

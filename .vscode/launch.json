@@ -27,6 +27,23 @@
             },
             "console": "integratedTerminal",
             "justMyCode": false
+        },
+        {
+            "name": "data miner Annotate",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.annotation.annotate",
+            "args": [
+                "upload",
+                "scripts/annotation/v51_cvat_config.yaml",
+                "--dry-run"
+            ],
+            "cwd": "/data/nvidia_local/tycoai/project_helpers/data_miner",
+            "env": {
+                "DATA_MINER_DEBUG": "1"
+            },
+            "console": "integratedTerminal",
+            "justMyCode": false
         }
     ]
 }
