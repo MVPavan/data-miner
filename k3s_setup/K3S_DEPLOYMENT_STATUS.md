@@ -47,7 +47,7 @@ k3s_setup/manifests/
 │   ├── grafana-deployment.yaml             # Grafana (master node)
 │   └── grafana-service.yaml                # NodePort :30300
 └── workers/
-    ├── download-statefulset.yaml           # 9 replicas, spread across nodes
+    ├── download-statefulset.yaml           # 3 replicas (1 per node), spread across nodes
     ├── extract-deployment.yaml             # 2 replicas on master
     ├── filter-deployment.yaml              # 1 replica, GPU, master
     ├── dedup-deployment.yaml               # 1 replica, GPU, master
@@ -84,7 +84,7 @@ kubectl create secret generic hf-secret \
 ```bash
 kubectl get pods -n data-miner -o wide
 ```
-Expected: postgres-0, loki-0, grafana, 9 download-workers, 2 extract-workers, filter/dedup/detect/monitor workers all `Running`.
+Expected: postgres-0, loki-0, grafana, 3 download-workers (1 per node), 2 extract-workers, filter/dedup/detect/monitor workers all `Running`.
 
 ### Step 4: Service Verification
 - Grafana: `http://pavanjci:30300`
