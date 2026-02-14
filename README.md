@@ -39,6 +39,7 @@ The pipeline uses:
 ## 🚀 Quick Start
 
 ```bash
+
 # Creates new .venv and Install in editable mode
 uv sync
 
