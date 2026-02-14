@@ -28,3 +28,4 @@
 *.jpg
 *.png
 **/manifests/*
+.mailmap
