@@ -81,20 +81,11 @@ workers:
         valueFrom:
           fieldRef:
             fieldPath: metadata.name
-    liveness_probe:
-      command: ["test", "-f", "/tmp/healthy"]
-      initial_delay: 60
-      period: 30
-      failure_threshold: 3
 
   extract:
     replicas: 2
     resources: ${resource_presets.medium}
     schedule_on: master
-    liveness_probe:
-      command: ["test", "-f", "/tmp/healthy"]
-      initial_delay: 60
-      period: 30
 
   filter:
     replicas: 1
@@ -103,13 +94,13 @@ workers:
     hf_token: true
 
   dedup:
-    replicas: 1
+    replicas: 0
     resources: ${resource_presets.gpu}
     schedule_on: gpu
     hf_token: true
 
   detect:
-    replicas: 1
+    replicas: 0
     resources: ${resource_presets.gpu}
     schedule_on: gpu
     hf_token: true
@@ -118,3 +109,78 @@ workers:
     replicas: 1
     resources: ${resource_presets.medium}
     schedule_on: master
+
+# =============================================================================
+# Infrastructure Services (postgres, loki, grafana, adminer)
+# =============================================================================
+infrastructure:
+  postgres:
+    kind: StatefulSet
+    image: postgres:16
+    port: 5432
+    service_type: headless
+    schedule_on: master
+    resources:
+      requests: { cpu: "250m", memory: "256Mi" }
+      limits: { cpu: "1000m", memory: "1Gi" }
+    data_dir: ${storage.db_path}/postgres
+    volume_mount: /var/lib/postgresql/data
+    env:
+      - name: POSTGRES_USER
+        value: "postgres"
+      - name: POSTGRES_PASSWORD
+        value: "postgres"
+      - name: POSTGRES_DB
+        value: "data_miner"
+      - name: PGDATA
+        value: "/var/lib/postgresql/data/pgdata"
+    liveness_probe:
+      command: ["pg_isready", "-U", "postgres", "-d", "data_miner"]
+      initial_delay: 30
+      period: 10
+    readiness_probe:
+      command: ["pg_isready", "-U", "postgres", "-d", "data_miner"]
+      initial_delay: 5
+      period: 5
+
+  loki:
+    kind: StatefulSet
+    image: grafana/loki:2.9.0
+    port: 3100
+    service_type: ClusterIP
+    schedule_on: master
+    resources:
+      requests: { cpu: "100m", memory: "256Mi" }
+      limits: { cpu: "500m", memory: "512Mi" }
+    data_dir: ${storage.db_path}/loki
+    volume_mount: /loki
+    args: ["-config.file=/etc/loki/local-config.yaml"]
+
+  grafana:
+    kind: Deployment
+    image: grafana/grafana:10.0.0
+    port: 3000
+    node_port: 30300
+    service_type: NodePort
+    schedule_on: master
+    resources:
+      requests: { cpu: "100m", memory: "128Mi" }
+      limits: { cpu: "500m", memory: "256Mi" }
+    data_dir: ${storage.db_path}/grafana
+    volume_mount: /var/lib/grafana
+    env:
+      - name: GF_AUTH_ANONYMOUS_ENABLED
+        value: "true"
+      - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+        value: "Admin"
+
+  adminer:
+    kind: Deployment
+    image: adminer:latest
+    port: 8080
+    node_port: 30080
+    service_type: NodePort
+    schedule_on: master
+    resources:
+      requests: { cpu: "50m", memory: "64Mi" }
+      limits: { cpu: "500m", memory: "256Mi" }

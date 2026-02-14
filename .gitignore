@@ -27,3 +27,4 @@
 *.sql
 *.jpg
 *.png
+**/manifests/*
