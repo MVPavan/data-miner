@@ -38,6 +38,7 @@ cluster:
     #   role: worker
     #   ssh_user: pavan
     #   storage_only: true
+    #   data_dir: /mnt/large_disk/seaweed   # Custom path for this node
     #   disk_limit_mb: 500000   # 500GB
 
 storage:

@@ -15,7 +15,7 @@ from omegaconf import OmegaConf
 
 # Ensure k3s_setup is importable
 sys.path.insert(0, str(Path(__file__).parent))
-from cluster import cfg, resolve_schedule, master_hostname, storage_nodes, get_node_disk_limit
+from cluster import cfg, resolve_schedule, master_hostname, storage_nodes, get_node_disk_limit, get_node_data_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MANIFESTS_DIR = Path(__file__).resolve().parent / "manifests"
@@ -384,9 +384,10 @@ def generate_seaweedfs():
         },
     ]
 
-    # Generate per-node volume StatefulSets with configurable disk limits
+    # Generate per-node volume StatefulSets with configurable disk limits and data dirs
     for hostname in storage_nodes().keys():
         disk_limit = get_node_disk_limit(hostname)
+        node_data_dir = get_node_data_dir(hostname)
         volume_doc = {
             "apiVersion": "apps/v1",
             "kind": "StatefulSet",
@@ -410,7 +411,7 @@ def generate_seaweedfs():
                             "ports": [{"containerPort": 8080}, {"containerPort": 18080}],
                             "volumeMounts": [{"name": "data", "mountPath": "/data"}],
                         }],
-                        "volumes": [{"name": "data", "hostPath": {"path": f"{data_dir}/volume"}}],
+                        "volumes": [{"name": "data", "hostPath": {"path": f"{node_data_dir}/volume"}}],
                     },
                 },
             },

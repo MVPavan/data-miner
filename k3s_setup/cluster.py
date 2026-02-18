@@ -62,6 +62,16 @@ def get_node_disk_limit(hostname: str) -> int:
     return node.get("disk_limit_mb", default_limit)
 
 
+def get_node_data_dir(hostname: str) -> str:
+    """Get SeaweedFS data directory for a specific node.
+
+    Falls back to seaweedfs.data_dir if not specified per-node.
+    """
+    node = nodes().get(hostname, {})
+    default_dir = cfg().seaweedfs.data_dir
+    return node.get("data_dir", default_dir)
+
+
 def resolve_schedule(schedule_on):
     """Convert schedule_on string to K8s scheduling spec.
 
