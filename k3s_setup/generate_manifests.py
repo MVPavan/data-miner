@@ -15,7 +15,7 @@ from omegaconf import OmegaConf
 
 # Ensure k3s_setup is importable
 sys.path.insert(0, str(Path(__file__).parent))
-from cluster import cfg, resolve_schedule, master_hostname
+from cluster import cfg, resolve_schedule, master_hostname, storage_nodes, get_node_disk_limit
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MANIFESTS_DIR = Path(__file__).resolve().parent / "manifests"
@@ -120,6 +120,21 @@ def build_worker_manifest(name, worker_cfg):
                 "labelSelector": {"matchLabels": {"app": app_name}},
             }
         ]
+        # Restrict to compute nodes only (exclude storage-only nodes)
+        if "allowed_nodes" in schedule:
+            pod_spec["affinity"] = {
+                "nodeAffinity": {
+                    "requiredDuringSchedulingIgnoredDuringExecution": {
+                        "nodeSelectorTerms": [{
+                            "matchExpressions": [{
+                                "key": "kubernetes.io/hostname",
+                                "operator": "In",
+                                "values": schedule["allowed_nodes"],
+                            }]
+                        }]
+                    }
+                }
+            }
 
     # Build manifest
     manifest = {
@@ -335,32 +350,6 @@ def generate_seaweedfs():
                 ],
             },
         },
-        # Volume DaemonSet
-        {
-            "apiVersion": "apps/v1",
-            "kind": "DaemonSet",
-            "metadata": {"name": "volume", "namespace": namespace},
-            "spec": {
-                "selector": {"matchLabels": {"app": "seaweedfs", "component": "volume"}},
-                "template": {
-                    "metadata": {"labels": {"app": "seaweedfs", "component": "volume"}},
-                    "spec": {
-                        "containers": [{
-                            "name": "volume",
-                            "image": image,
-                            "args": [
-                                "volume", "-mserver=master:9333", "-ip=$(POD_IP)",
-                                "-port=8080", "-dir=/data", "-max=0",
-                            ],
-                            "env": [{"name": "POD_IP", "valueFrom": {"fieldRef": {"fieldPath": "status.podIP"}}}],
-                            "ports": [{"containerPort": 8080}, {"containerPort": 18080}],
-                            "volumeMounts": [{"name": "data", "mountPath": "/data"}],
-                        }],
-                        "volumes": [{"name": "data", "hostPath": {"path": f"{data_dir}/volume"}}],
-                    },
-                },
-            },
-        },
         # Mount DaemonSet
         {
             "apiVersion": "apps/v1",
@@ -394,6 +383,39 @@ def generate_seaweedfs():
             },
         },
     ]
+
+    # Generate per-node volume StatefulSets with configurable disk limits
+    for hostname in storage_nodes().keys():
+        disk_limit = get_node_disk_limit(hostname)
+        volume_doc = {
+            "apiVersion": "apps/v1",
+            "kind": "StatefulSet",
+            "metadata": {"name": f"volume-{hostname}", "namespace": namespace},
+            "spec": {
+                "serviceName": f"volume-{hostname}",
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": "seaweedfs", "component": "volume", "node": hostname}},
+                "template": {
+                    "metadata": {"labels": {"app": "seaweedfs", "component": "volume", "node": hostname}},
+                    "spec": {
+                        "nodeSelector": {"kubernetes.io/hostname": hostname},
+                        "containers": [{
+                            "name": "volume",
+                            "image": image,
+                            "args": [
+                                "volume", "-mserver=master:9333", "-ip=$(POD_IP)",
+                                "-port=8080", "-dir=/data", f"-max={disk_limit}",
+                            ],
+                            "env": [{"name": "POD_IP", "valueFrom": {"fieldRef": {"fieldPath": "status.podIP"}}}],
+                            "ports": [{"containerPort": 8080}, {"containerPort": 18080}],
+                            "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+                        }],
+                        "volumes": [{"name": "data", "hostPath": {"path": f"{data_dir}/volume"}}],
+                    },
+                },
+            },
+        }
+        documents.append(volume_doc)
 
     # Write one file per K8s object (matching infrastructure/ pattern)
     seaweedfs_dir = MANIFESTS_DIR / "seaweedfs"

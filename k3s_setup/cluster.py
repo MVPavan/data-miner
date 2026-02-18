@@ -42,18 +42,40 @@ def master_ip():
     return str(master()[1].ip)
 
 
+def compute_nodes():
+    """Return nodes that should run data-miner workers (excludes storage_only)."""
+    return {k: v for k, v in nodes().items() if not v.get("storage_only", False)}
+
+
+def storage_nodes():
+    """Return all nodes that run SeaweedFS volume servers (all nodes)."""
+    return nodes()
+
+
+def get_node_disk_limit(hostname: str) -> int:
+    """Get SeaweedFS disk limit in MB for a specific node.
+
+    Returns 0 for unlimited if no limit is configured.
+    """
+    node = nodes().get(hostname, {})
+    default_limit = cfg().seaweedfs.get("default_disk_limit_mb", 0)
+    return node.get("disk_limit_mb", default_limit)
+
+
 def resolve_schedule(schedule_on):
     """Convert schedule_on string to K8s scheduling spec.
 
     Returns dict with either 'topology_spread' or 'node_selector' key.
+    Storage-only nodes are excluded from worker scheduling.
     """
     if schedule_on == "all":
-        return {"topology_spread": True}
+        # Only schedule on compute nodes (exclude storage_only)
+        return {"topology_spread": True, "allowed_nodes": list(compute_nodes().keys())}
     if schedule_on == "master":
         return {"node_selector": {"kubernetes.io/hostname": master_hostname()}}
     if schedule_on == "gpu":
         gpu_nodes = {
-            k: v for k, v in nodes().items()
+            k: v for k, v in compute_nodes().items()
             if v.get("labels", {}).get("gpu") == "true"
         }
         hostname = next(iter(gpu_nodes))

@@ -18,14 +18,27 @@ cluster:
       ssh_user: pavanmv
       labels:
         gpu: "true"
+      disk_limit_mb: 50000    # 50GB - limit on GPU node to reserve space
     manthana:
       ip: "10.96.122.132"
       role: worker
       ssh_user: pavanmv
+      disk_limit_mb: 100000   # 100GB
     arsenal:
       ip: "10.96.122.14"
       role: worker
       ssh_user: pavan
+      disk_limit_mb: 100000   # 100GB
+    # -------------------------------------------------------------------------
+    # Storage-only nodes (template - fill in when machines are available)
+    # These nodes only run SeaweedFS volume servers, not data-miner workers
+    # -------------------------------------------------------------------------
+    # storage1:
+    #   ip: "10.96.122.XXX"
+    #   role: worker
+    #   ssh_user: pavan
+    #   storage_only: true
+    #   disk_limit_mb: 500000   # 500GB
 
 storage:
   seaweedfs_mount: /swdfs_mnt/swshared
@@ -45,6 +58,7 @@ seaweedfs:
   image: chrislusf/seaweedfs:latest
   data_dir: /data/seaweed
   schedule_on: master
+  default_disk_limit_mb: 0    # 0 = unlimited (fallback if node has no disk_limit_mb)
 
 nvidia:
   plugin_version: "v0.14.0"
