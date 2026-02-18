@@ -7,7 +7,7 @@ separately by provision.py via pyinfra.
 
 Usage:
     python k3s_setup/orchestrate.py setup --run-config run_configs/glass_door.yaml
-    python k3s_setup/orchestrate.py teardown [--wipe-data]
+    python k3s_setup/orchestrate.py teardown [--wipe-seaweedfs] [--wipe-db] [--wipe-data]
     python k3s_setup/orchestrate.py all --run-config run_configs/glass_door.yaml [--wipe-data]
 
 Full workflow:
@@ -159,9 +159,14 @@ def wait_for_pods(namespace: str, timeout: int = 300, min_pods: int = 1):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def teardown(wipe_data: bool = False):
-    if wipe_data:
-        banner("TEARDOWN — Full Clean Slate (INCLUDING project data)")
+def teardown(wipe_seaweedfs: bool = False, wipe_db: bool = False):
+    if wipe_seaweedfs or wipe_db:
+        parts = []
+        if wipe_seaweedfs:
+            parts.append("SeaweedFS")
+        if wipe_db:
+            parts.append("DB")
+        banner(f"TEARDOWN — Clean Slate (wiping {' + '.join(parts)})")
     else:
         banner("TEARDOWN — Clean Slate (preserving project data)")
 
@@ -195,20 +200,30 @@ def teardown(wipe_data: bool = False):
     else:
         warn("K3s not running — skipping namespace/label cleanup (steps 1-4)")
 
-    if wipe_data:
-        step(5, "WIPE: Call provision.py for node cleanup")
+    step_num = 5
+    if wipe_seaweedfs:
+        step(step_num, "WIPE: SeaweedFS data (via provision.py)")
+        # provision.py will prompt for DELETE confirmation
         run(
             f"cd {K3S_SETUP_DIR} && uv run pyinfra inventory.py provision.py -y "
             f"--data action=clean_seaweedfs",
             check=False, timeout=300,
         )
         ok()
+        step_num += 1
 
-        step(6, "WIPE: Database dirs on master")
-        db_path = cfg().storage.db_path
-        run(f"sudo rm -rf {db_path}/postgres {db_path}/loki {db_path}/grafana", check=False)
-        ok("DB dirs wiped")
-    else:
+    if wipe_db:
+        step(step_num, "WIPE: Database dirs (via provision.py)")
+        # provision.py will prompt for DELETE confirmation
+        run(
+            f"cd {K3S_SETUP_DIR} && uv run pyinfra inventory.py provision.py -y "
+            f"--data action=clean_db",
+            check=False, timeout=60,
+        )
+        ok()
+        step_num += 1
+
+    if not wipe_seaweedfs and not wipe_db:
         step(5, "SKIP: Preserving project data")
         ok()
 
@@ -361,9 +376,19 @@ Full workflow:
         help="teardown: destroy K8s resources | setup: deploy | all: teardown + setup",
     )
     parser.add_argument(
+        "--wipe-seaweedfs",
+        action="store_true",
+        help="Delete SeaweedFS data on all nodes. Requires typing DELETE to confirm.",
+    )
+    parser.add_argument(
+        "--wipe-db",
+        action="store_true",
+        help="Delete database dirs (postgres, loki, grafana) on master. Requires typing DELETE to confirm.",
+    )
+    parser.add_argument(
         "--wipe-data",
         action="store_true",
-        help="Also delete project data (SeaweedFS files + database dirs)",
+        help="Delete ALL data (SeaweedFS + DB). Shorthand for --wipe-seaweedfs --wipe-db.",
     )
     parser.add_argument(
         "--run-config",
@@ -372,12 +397,16 @@ Full workflow:
     )
     args = parser.parse_args()
 
+    # --wipe-data is shorthand for both
+    wipe_seaweedfs = args.wipe_seaweedfs or args.wipe_data
+    wipe_db = args.wipe_db or args.wipe_data
+
     if args.command == "teardown":
-        teardown(wipe_data=args.wipe_data)
+        teardown(wipe_seaweedfs=wipe_seaweedfs, wipe_db=wipe_db)
     elif args.command == "setup":
         setup(run_config=args.run_config)
     elif args.command == "all":
-        teardown(wipe_data=args.wipe_data)
+        teardown(wipe_seaweedfs=wipe_seaweedfs, wipe_db=wipe_db)
         setup(run_config=args.run_config)
 
 

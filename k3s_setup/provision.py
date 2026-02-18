@@ -14,7 +14,9 @@
 #   pyinfra inventory.py provision.py --data action=clean     # Full cleanup
 #   pyinfra inventory.py provision.py --data action=clean_k3s
 #   pyinfra inventory.py provision.py --data action=clean_images
-#   pyinfra inventory.py provision.py --data action=clean_seaweedfs
+#   pyinfra inventory.py provision.py --data action=clean_seaweedfs  # Requires DELETE confirmation
+#   pyinfra inventory.py provision.py --data action=clean_db         # Requires DELETE confirmation
+#   pyinfra inventory.py provision.py --data action=clean_data       # Both SeaweedFS + DB
 
 import os
 import sys
@@ -27,7 +29,32 @@ from pyinfra.facts.server import Which
 from pyinfra.facts.files import File
 
 sys.path.insert(0, os.path.dirname(__file__))
-from cluster import cfg, master_hostname, master_ip
+from cluster import cfg, master_hostname, master_ip, get_node_data_dir
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DELETE Confirmation Helper
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_delete_confirmed = False
+
+
+def confirm_delete(what: str):
+    """Require user to type DELETE to confirm destructive action.
+
+    Aborts with sys.exit(1) if user doesn't type DELETE.
+    """
+    global _delete_confirmed
+    if _delete_confirmed:
+        return  # Already confirmed in this run
+
+    print(f"\n⚠️  WARNING: This will permanently delete {what}!")
+    print("Type DELETE to confirm: ", end="", flush=True)
+    response = input().strip()
+    if response != "DELETE":
+        print("Aborted. You must type DELETE to proceed.")
+        sys.exit(1)
+    _delete_confirmed = True
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # State
@@ -337,13 +364,41 @@ def clean_images():
 
 
 def clean_seaweedfs():
-    """Unmount FUSE and remove SeaweedFS metadata."""
+    """Unmount FUSE and remove SeaweedFS data for this node."""
+    confirm_delete("SeaweedFS data on this node")
+
+    hostname = host.data.hostname
+    node_data_dir = get_node_data_dir(hostname)
+
     server.shell(name="Unmount FUSE", commands=[
         f"umount -f {SEAWEED_MOUNT} 2>/dev/null; true",
     ], _sudo=True)
-    server.shell(name="Clean SeaweedFS metadata", commands=[
-        f"rm -rf {SEAWEED_DATA}/master {SEAWEED_DATA}/filer {SEAWEED_DATA}/volume",
+    server.shell(name="Clean SeaweedFS data", commands=[
+        f"rm -rf {node_data_dir}/master {node_data_dir}/filer {node_data_dir}/volume",
     ], _sudo=True)
+
+
+def clean_db():
+    """Remove database directories (postgres, loki, grafana). Master only."""
+    if host.data.role != "master":
+        return
+
+    confirm_delete("database directories (postgres, loki, grafana)")
+
+    db_path = cfg().storage.db_path
+    server.shell(name="Clean DB data", commands=[
+        f"rm -rf {db_path}/postgres {db_path}/loki {db_path}/grafana",
+    ], _sudo=True)
+
+
+def clean_data():
+    """Clean all data: SeaweedFS + DB."""
+    confirm_delete("ALL data (SeaweedFS + database)")
+    # Skip individual confirmations since we already confirmed
+    global _delete_confirmed
+    _delete_confirmed = True
+    clean_seaweedfs()
+    clean_db()
 
 
 def clean_all():
@@ -398,6 +453,8 @@ ACTIONS = {
     "clean_k3s": clean_k3s,
     "clean_images": clean_images,
     "clean_seaweedfs": clean_seaweedfs,
+    "clean_db": clean_db,
+    "clean_data": clean_data,
     # Utilities (compat with old k3s.py actions)
     "status": k3s_status,
     "restart": k3s_restart,
