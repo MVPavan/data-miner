@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "PostgreSQL-based multi-process video data mining pipeline"
 requires-python = ">=3.12"
 dependencies = [
+    # Core dependencies (download/extract workers)
     "sqlmodel>=0.0.22",
     "psycopg2-binary>=2.9.9",
     "pydantic>=2.0",
@@ -14,19 +15,30 @@ dependencies = [
     "yt-dlp>=2024.0",
     "av>=12.0",
     "pillow>=10.0",
-    "torch>=2.0",
-    "transformers>=4.40",
     "numpy>=1.26",
-    "scikit-learn>=1.4",
     "tqdm>=4.66",
-    "faiss-cpu>=1.7",
     "opencv-python-headless>=4.5",
     "python-logging-loki>=0.3.1",
     "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+gpu = [
+    # ML dependencies (filter/dedup/detect workers)
+    "torch>=2.0",
     "torchvision>=0.24.1",
+    "transformers>=4.40",
     "accelerate>=1.12.0",
+    "scikit-learn>=1.4",
+    "faiss-cpu>=1.7",
+]
+dev = [
+    # Development/visualization tools
     "fiftyone>=1.11.1",
     "pyinfra>=3.6",
+]
+all = [
+    "data_miner[gpu,dev]",
 ]
 
 [project.scripts]

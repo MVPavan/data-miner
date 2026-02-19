@@ -12,23 +12,54 @@ cluster:
   ssh_key: "~/.ssh/id_rsa_dm_k3s"
 
   nodes:
-    pavanjci:
-      ip: "10.96.122.9"
+    blrlambdav:
+      ip: "10.96.122.8"
       role: master
-      ssh_user: pavanmv
+      ssh_user: pavan
+      no_storage: true
+      image: gpu          # GPU node: runs all workers including ML
       labels:
         gpu: "true"
-      disk_limit_mb: 50000    # 50GB - limit on GPU node to reserve space
-    manthana:
-      ip: "10.96.122.132"
-      role: worker
-      ssh_user: pavanmv
-      disk_limit_mb: 100000   # 100GB
+    
     arsenal:
       ip: "10.96.122.14"
       role: worker
       ssh_user: pavan
-      disk_limit_mb: 100000   # 100GB
+      image: base         # Only runs download workers
+
+    moshe:
+      ip: "10.164.45.5"
+      role: worker
+      ssh_user: pavan
+      no_storage: true
+      image: base         # Only runs download workers
+    
+    belfast:
+      ip: "10.160.105.65"
+      role: worker
+      ssh_user: pavan
+      no_storage: true
+      image: base         # Only runs download workers
+
+    manu:
+      ip: "10.96.122.5"
+      role: worker
+      ssh_user: pavan
+      storage_only: true  # No image needed (storage only)
+    
+    jay:
+      ip: "10.96.122.131"
+      role: worker
+      ssh_user: pavan
+      storage_only: true  # No image needed (storage only)
+      data_dir: /data-sourabh/seaweed
+    
+    manthana:
+      ip: "10.96.122.132"
+      role: worker
+      ssh_user: pavanmv
+      storage_only: true  # No image needed (storage only)
+    
     # -------------------------------------------------------------------------
     # Storage-only nodes (template - fill in when machines are available)
     # These nodes only run SeaweedFS volume servers, not data-miner workers
@@ -40,6 +71,8 @@ cluster:
     #   storage_only: true
     #   data_dir: /mnt/large_disk/seaweed   # Custom path for this node
     #   disk_limit_mb: 500000   # 500GB
+    #   labels:
+    #     gpu: "true"
 
 storage:
   seaweedfs_mount: /swdfs_mnt/swshared
@@ -49,9 +82,15 @@ storage:
     loki: 10001
     grafana: 472
 
-image:
-  name: data-miner
-  tag: latest
+images:
+  base:
+    name: data-miner-base
+    tag: latest
+    dockerfile: Dockerfile.base
+  gpu:
+    name: data-miner-gpu
+    tag: latest
+    dockerfile: Dockerfile.gpu
   pull_policy: Never
 
 seaweedfs:
@@ -82,14 +121,14 @@ resource_presets:
     requests: { cpu: "500m", memory: "1Gi" }
     limits:   { cpu: "2000m", memory: "4Gi" }
   gpu:
-    requests: { cpu: "500m", memory: "2Gi" }
-    limits:   { cpu: "2000m", memory: "8Gi" }
+    requests: { cpu: "500m", memory: "4Gi" }
+    limits:   { cpu: "2000m", memory: "16Gi" }
 
 workers:
   download:
     kind: StatefulSet
-    replicas: 3
-    resources: ${resource_presets.small}
+    replicas: 12
+    resources: ${resource_presets.medium}
     schedule_on: all
     extra_env:
       - name: POD_NAME
@@ -103,7 +142,7 @@ workers:
       failure_threshold: 3
 
   extract:
-    replicas: 2
+    replicas: 3
     resources: ${resource_presets.medium}
     schedule_on: master
     liveness_probe:
@@ -112,19 +151,19 @@ workers:
       period: 30
 
   filter:
-    replicas: 1
+    replicas: 0
     resources: ${resource_presets.gpu}
     schedule_on: gpu
     hf_token: true
 
   dedup:
-    replicas: 1
+    replicas: 0
     resources: ${resource_presets.gpu}
     schedule_on: gpu
     hf_token: true
 
   detect:
-    replicas: 1
+    replicas: 0
     resources: ${resource_presets.gpu}
     schedule_on: gpu
     hf_token: true

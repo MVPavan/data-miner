@@ -29,7 +29,7 @@ from pyinfra.facts.server import Which
 from pyinfra.facts.files import File
 
 sys.path.insert(0, os.path.dirname(__file__))
-from cluster import cfg, master_hostname, master_ip, get_node_data_dir
+from cluster import cfg, master_hostname, master_ip, get_node_data_dir, get_node_image_type, get_image_config
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -72,11 +72,7 @@ service = "k3s" if is_master else "k3s-agent"
 NVIDIA_PLUGIN_VERSION = cfg().nvidia.plugin_version
 NVIDIA_PLUGIN_URL = f"https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/{NVIDIA_PLUGIN_VERSION}/nvidia-device-plugin.yml"
 
-IMAGE_NAME = cfg().image.name
-IMAGE_TAG = cfg().image.tag
-FULL_IMAGE = f"{IMAGE_NAME}:{IMAGE_TAG}"
-TAR_PATH = f"/tmp/{IMAGE_NAME}.tar"
-
+# Image paths are now per-image-type, computed in build_and_distribute()
 DB_PATH = cfg().storage.db_path
 SEAWEED_DATA = cfg().seaweedfs.data_dir
 SEAWEED_MOUNT = cfg().storage.seaweedfs_mount
@@ -283,13 +279,38 @@ def apply_labels():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def build_and_distribute():
+    """Build and distribute the appropriate Docker image to this node.
+
+    - Skips storage_only nodes (they don't run data-miner workers)
+    - Builds base or gpu image based on node's 'image' config
+    - Uses file lock to ensure image is built only once per type
+    """
+    hostname = host.data.hostname
+
+    # Skip storage-only nodes — they don't run data-miner workers
+    if host.data.get("storage_only", False):
+        print(f"[{hostname}] Skipping — storage_only node, no image needed")
+        return
+
+    # Determine which image this node needs
+    image_type = get_node_image_type(hostname)
+    if not image_type:
+        print(f"[{hostname}] Skipping — no image configured")
+        return
+
+    img_cfg = get_image_config(image_type)
+    image_name = img_cfg["name"]
+    full_image = img_cfg["full_name"]
+    dockerfile = img_cfg["dockerfile"]
+    tar_path = f"/tmp/{image_name}.tar"
+
     force = os.environ.get("FORCE", "false").lower() == "true"
-    lock_file = f"/tmp/{IMAGE_NAME}_build.lock"
-    dockerfile = os.path.join(os.path.dirname(__file__), "Dockerfile")
+    lock_file = f"/tmp/{image_name}_build.lock"
+    dockerfile_path = os.path.join(os.path.dirname(__file__), dockerfile)
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Build locally (once, with file lock)
-    built = os.path.exists(TAR_PATH)
+    # Build locally (once per image type, with file lock)
+    built = os.path.exists(tar_path)
     if force:
         built = False
 
@@ -297,40 +318,40 @@ def build_and_distribute():
         fcntl.flock(lock_f, fcntl.LOCK_EX)
         try:
             if not built:
-                print(f"[{host.name}] Building Docker Image: {FULL_IMAGE}...")
+                print(f"[{hostname}] Building Docker Image: {full_image}...")
                 subprocess.check_call(
-                    f"docker build -f {dockerfile} -t {FULL_IMAGE} {project_root}",
+                    f"docker build -f {dockerfile_path} -t {full_image} {project_root}",
                     shell=True,
                 )
-                print(f"[{host.name}] Saving Image to {TAR_PATH}...")
+                print(f"[{hostname}] Saving Image to {tar_path}...")
                 subprocess.check_call(
-                    f"docker save {FULL_IMAGE} -o {TAR_PATH}",
+                    f"docker save {full_image} -o {tar_path}",
                     shell=True,
                 )
                 built = True
         except Exception as e:
-            print(f"[{host.name}] Error during build: {e}")
+            print(f"[{hostname}] Error during build: {e}")
             fcntl.flock(lock_f, fcntl.LOCK_UN)
             sys.exit(1)
         finally:
             fcntl.flock(lock_f, fcntl.LOCK_UN)
             if not built:
-                print(f"[{host.name}] Build failed.")
+                print(f"[{hostname}] Build failed.")
                 sys.exit(1)
 
     # Copy to node
-    remote_file = host.get_fact(File, path=TAR_PATH)
+    remote_file = host.get_fact(File, path=tar_path)
     if force or not remote_file:
         files.put(
-            name="Copy image tar to node",
-            src=TAR_PATH,
-            dest=TAR_PATH,
+            name=f"Copy {image_type} image tar to node",
+            src=tar_path,
+            dest=tar_path,
         )
 
     # Import into K3s containerd
     server.shell(
-        name="Import image to K3s",
-        commands=[f"k3s ctr images import {TAR_PATH} --namespace k8s.io"],
+        name=f"Import {image_type} image to K3s",
+        commands=[f"k3s ctr images import {tar_path} --namespace k8s.io"],
         _sudo=True,
     )
 
@@ -355,10 +376,20 @@ def clean_k3s():
 
 
 def clean_images():
-    """Remove Docker image from K3s containerd."""
+    """Remove Docker images from K3s containerd for this node."""
+    hostname = host.data.hostname
+    image_type = get_node_image_type(hostname)
+
+    if not image_type:
+        print(f"[{hostname}] Skipping — storage_only node, no images to remove")
+        return
+
+    img_cfg = get_image_config(image_type)
+    full_image = img_cfg["full_name"]
+
     server.shell(
-        name="Remove Docker image",
-        commands=[f"k3s ctr -n k8s.io images rm docker.io/library/{FULL_IMAGE} 2>/dev/null; true"],
+        name=f"Remove {image_type} Docker image",
+        commands=[f"k3s ctr -n k8s.io images rm docker.io/library/{full_image} 2>/dev/null; true"],
         _sudo=True,
     )
 

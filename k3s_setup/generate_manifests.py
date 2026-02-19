@@ -15,7 +15,7 @@ from omegaconf import OmegaConf
 
 # Ensure k3s_setup is importable
 sys.path.insert(0, str(Path(__file__).parent))
-from cluster import cfg, resolve_schedule, master_hostname, storage_nodes, get_node_disk_limit, get_node_data_dir
+from cluster import cfg, resolve_schedule, master_hostname, storage_nodes, get_node_disk_limit, get_node_data_dir, get_worker_image
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MANIFESTS_DIR = Path(__file__).resolve().parent / "manifests"
@@ -31,7 +31,7 @@ def build_worker_manifest(name, worker_cfg):
     kind = OmegaConf.to_container(worker_cfg).get("kind", "Deployment")
     app_name = f"{name}-worker"
     namespace = cfg().cluster.namespace
-    image = f"{cfg().image.name}:{cfg().image.tag}"
+    image = get_worker_image(worker_cfg.schedule_on)
     replicas = worker_cfg.replicas
     schedule = resolve_schedule(worker_cfg.schedule_on)
 
@@ -72,7 +72,7 @@ def build_worker_manifest(name, worker_cfg):
     container = {
         "name": app_name,
         "image": image,
-        "imagePullPolicy": cfg().image.pull_policy,
+        "imagePullPolicy": cfg().images.pull_policy,
         "command": ["python", "-m", f"data_miner.workers.{name}"],
         "env": env,
         "volumeMounts": [

@@ -126,25 +126,30 @@ filter:
   batch_size: 32
   
   # Thresholds
-  threshold: 0.25           # Min score for positive prompts
-  margin_threshold: 0.05    # Positive must beat negative by this margin
+  positive_thr: 0.3           # Min score for positive prompts
+  negative_thr: 0.3           # Max score for negative prompts
+  pos_neg_margin_thr: 0.1     # Positive must beat negative by this margin
+  zoom_thr: 0.3               # Zoom threshold
+  pos_zoom_margin_thr: 0.1    # Positive must beat zoom by this margin
   
-  # Positive prompts - frame must match at least one
+  # Positive prompts - full view emphasis
   positive_prompts:
-    - "a glass door"
-    - "a french door"
-    - "a patio door"
-    - "a photo of a glass door"
-    - "a glass entrance door"
-    - "a glass entrance door with handles"
-    - "commercial double glass doors"
-    - "a sliding glass door entrance"
+    - "a full glass door"
+    - "a glass door fully visible"
+    - "a french door fully visible"
+    - "a patio door fully visible"
+    - "a glass entrance door fully visible"
+    - "commercial double glass doors fully visible"
+    - "a sliding glass door with the full door visible"
     - "a storefront entrance with a glass door"
     - "a building entrance with a glass door"
-    - "framed glass door clearly visible"
-    - "a push bar on a glass door"
+    - "the entire glass door is in the frame"
+    - "a framed glass door fully visible"
+    - "a wide shot of a glass door"
+    - "a wide shot of an entrance with a glass door"
+    - "a glass door with surrounding context visible"
   
-  # Negative prompts - optional, filters out false positives
+  # Negative prompts - not-a-door / low-quality
   negative_prompts:
     - "a glass wall"
     - "a fixed glass window"
@@ -161,6 +166,20 @@ filter:
     - "a video game screenshot"
     - "blurry out of focus image"
     - "dark grainy night shot"
+  
+  # Zoom prompts - close-up / cropped views to reject
+  zoom_prompts:
+    - "a close-up of a glass door"
+    - "an extreme close-up of a glass door"
+    - "a zoomed-in photo of a glass door"
+    - "a tightly cropped glass door"
+    - "only part of a glass door is visible"
+    - "a partial view of a glass door"
+    - "a close-up of a door handle"
+    - "a close-up of a glass door handle"
+    - "a close-up of a push bar"
+    - "a close-up of a door frame"
+    - "a close-up of a door hinge"
 
 # -----------------------------------------------------------------------------
 # Dedup Stage (FAISS + DINOv2/SigLIP)

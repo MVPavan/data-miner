@@ -48,8 +48,8 @@ def compute_nodes():
 
 
 def storage_nodes():
-    """Return all nodes that run SeaweedFS volume servers (all nodes)."""
-    return nodes()
+    """Return nodes that run SeaweedFS volume servers (excludes no_storage nodes)."""
+    return {k: v for k, v in nodes().items() if not v.get("no_storage", False)}
 
 
 def get_node_disk_limit(hostname: str) -> int:
@@ -92,3 +92,80 @@ def resolve_schedule(schedule_on):
         return {"node_selector": {"kubernetes.io/hostname": hostname, "gpu": "true"}}
     # Treat as explicit hostname
     return {"node_selector": {"kubernetes.io/hostname": schedule_on}}
+
+
+# =============================================================================
+# Image Management
+# =============================================================================
+
+
+def get_node_image_type(hostname: str) -> str | None:
+    """Get the image type (base/gpu) for a node.
+
+    Returns None for storage_only nodes that don't need an image.
+    """
+    node = nodes().get(hostname, {})
+    if node.get("storage_only", False):
+        return None
+    return node.get("image", "base")  # Default to base if not specified
+
+
+def get_image_config(image_type: str) -> dict:
+    """Get image configuration (name, tag, dockerfile) for an image type.
+
+    Args:
+        image_type: "base" or "gpu"
+
+    Returns:
+        Dict with name, tag, dockerfile, full_name keys
+    """
+    img_cfg = cfg().images.get(image_type)
+    if not img_cfg:
+        raise ValueError(f"Unknown image type: {image_type}")
+    return {
+        "name": img_cfg.name,
+        "tag": img_cfg.tag,
+        "dockerfile": img_cfg.dockerfile,
+        "full_name": f"{img_cfg.name}:{img_cfg.tag}",
+    }
+
+
+def get_required_images() -> dict[str, list[str]]:
+    """Get which images need to be built and which nodes need them.
+
+    Returns:
+        Dict mapping image_type -> list of hostnames that need it
+    """
+    result = {}
+    for hostname, node_cfg in compute_nodes().items():
+        image_type = node_cfg.get("image", "base")
+        if image_type not in result:
+            result[image_type] = []
+        result[image_type].append(hostname)
+    return result
+
+
+def get_worker_image(schedule_on: str) -> str:
+    """Get the full image name for a worker based on its schedule.
+
+    Workers inherit the image from the node they're scheduled on.
+    For 'all' scheduling, uses the most capable image (gpu if any node has it).
+    """
+    if schedule_on == "all":
+        # Use gpu image if any compute node has it, else base
+        for node_cfg in compute_nodes().values():
+            if node_cfg.get("image") == "gpu":
+                return get_image_config("gpu")["full_name"]
+        return get_image_config("base")["full_name"]
+    elif schedule_on == "master":
+        master_cfg = master()[1]
+        image_type = master_cfg.get("image", "base")
+        return get_image_config(image_type)["full_name"]
+    elif schedule_on == "gpu":
+        # GPU workers always use gpu image
+        return get_image_config("gpu")["full_name"]
+    else:
+        # Explicit hostname
+        node_cfg = nodes().get(schedule_on, {})
+        image_type = node_cfg.get("image", "base")
+        return get_image_config(image_type)["full_name"]

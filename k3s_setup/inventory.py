@@ -39,4 +39,7 @@ for name, node in nodes().items():
         "master_ip": master_ip(),
         "k3s_token": K3S_TOKEN,
         "labels": dict(node.get("labels", {})),
+        "storage_only": node.get("storage_only", False),
+        "no_storage": node.get("no_storage", False),
+        "image": node.get("image"),  # base, gpu, or None for storage_only
     }))
