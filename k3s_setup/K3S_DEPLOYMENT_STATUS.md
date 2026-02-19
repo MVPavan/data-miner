@@ -1,19 +1,20 @@
-# K3s Data Miner Deployment — Status & Handoff
+# K3s Data Miner Deployment Guide
 
-> **Last updated:** 2026-02-14
-> **Status:** DEPLOYED & RUNNING
+> **Version:** 2.0 (Multi-Image Architecture)
 
 ---
 
 ## Cluster Overview
 
-| Node | IP | Role | GPU | Status |
-|---|---|---|---|---|
-| pavanjci | 10.96.122.9 | Master (control-plane) | GPU=1 | Ready |
-| manthana | 10.96.122.132 | Worker | none | Ready |
-| arsenal | 10.96.122.14 | Worker | none | Ready |
+The cluster consists of nodes with different roles:
 
-- **K3s version:** v1.31.0+k3s1
+| Role | Description | Image | SeaweedFS |
+|------|-------------|-------|-----------|
+| Master (GPU) | Control plane + GPU workers | `data-miner-gpu` | Mount only (`no_storage: true`) |
+| Worker (Compute) | Download workers | `data-miner-base` | Mount only or contribute storage |
+| Worker (Storage) | SeaweedFS volume servers | None | Contribute storage (`storage_only: true`) |
+
+- **K3s version:** Configured in `cluster_config.yaml`
 - **SSH key:** `~/.ssh/id_rsa_dm_k3s`
 - **Inventory:** `k3s_setup/inventory.py`
 
@@ -31,8 +32,21 @@
 pyinfra k3s_setup/inventory.py k3s_setup/provision.py --data action=all
 
 # Phase 2: Deploy to K8s
-python k3s_setup/orchestrate.py setup --run-config run_configs/glass_door.yaml
+python k3s_setup/orchestrate.py setup --run-config run_configs/<your_config>.yaml
 ```
+
+---
+
+## Multi-Image Architecture
+
+Two Docker images are built and distributed based on node configuration:
+
+| Image | Dockerfile | Size | Contents | Nodes |
+|-------|------------|------|----------|-------|
+| `data-miner-base` | `Dockerfile.base` | ~500MB | Core deps (yt-dlp, av, opencv) | Compute workers |
+| `data-miner-gpu` | `Dockerfile.gpu` | ~5GB | Core + ML (torch, transformers) | GPU nodes |
+
+Nodes with `storage_only: true` receive no image (they only run SeaweedFS).
 
 ---
 
@@ -81,30 +95,48 @@ merged = merge(base, run, k8s)
 
 ---
 
-## Current Pod Distribution
+## Worker Distribution
 
-| Pod | Node | Status | Notes |
-|---|---|---|---|
-| postgres-0 | pavanjci | Running | Database |
-| loki-0 | pavanjci | Running | Log aggregation |
-| grafana | pavanjci | Running | Dashboard at :30300 |
-| adminer | pavanjci | Running | DB admin at :30080 |
-| monitor-worker | pavanjci | Running | Project monitoring |
-| filter-worker | pavanjci | Running | GPU, SigLIP filtering |
-| dedup-worker | pavanjci | Running | GPU, deduplication |
-| detect-worker | pavanjci | Running | GPU, object detection |
-| extract-worker (x2) | pavanjci | Running | Frame extraction |
-| download-worker-0 | manthana | Running | Video download |
-| download-worker-1 | arsenal | Running | Video download |
-| download-worker-2 | pavanjci | Running | Video download |
+Workers are scheduled based on `schedule_on` in `cluster_config.yaml`:
+
+| Worker | Schedule | Image | Description |
+|--------|----------|-------|-----------|
+| download | `all` | Per-node | Spread across all compute nodes |
+| extract | `master` | Per-node | On master node |
+| filter | `gpu` | GPU | GPU node, requires HF token |
+| dedup | `gpu` | GPU | GPU node, requires HF token |
+| detect | `gpu` | GPU | GPU node, requires HF token |
+| monitor | `master` | Per-node | On master node |
 
 ### SeaweedFS Pods (seaweedfs namespace)
-| Pod | Node | Status |
-|---|---|---|
-| master-0 | pavanjci | Running |
-| filer-0 | pavanjci | Running |
-| volume (DaemonSet) | all nodes | Running |
-| mount (DaemonSet) | all nodes | Running |
+| Pod | Scheduling | Description |
+|-----|------------|-----------|
+| master-0 | Master node | Metadata server |
+| filer-0 | Master node | File interface |
+| volume-{hostname} | Per storage node | One per node with storage |
+| mount (DaemonSet) | All nodes | FUSE mount client |
+
+### Infrastructure Pods (data-miner namespace)
+| Pod | Kind | Scheduling | Storage | Port |
+|-----|------|------------|---------|------|
+| postgres-0 | StatefulSet | Master node | hostPath: `${storage.db_path}/postgres` | 5432 |
+| loki-0 | StatefulSet | Master node | hostPath: `${storage.db_path}/loki` | 3100 |
+| grafana | Deployment | Master node | None (ephemeral) | 3000 → NodePort 30300 |
+| adminer | Deployment | Master node | None | 8080 → NodePort 30080 |
+
+#### PostgreSQL Details
+- **Image:** `postgres:16`
+- **Database:** `data_miner`
+- **Credentials:** `postgres` / `postgres`
+- **Access from pods:** `postgres.data-miner.svc.cluster.local:5432`
+- **DATABASE_URL:** `postgresql://postgres:postgres@postgres.data-miner.svc.cluster.local:5432/data_miner`
+- **Storage:** Persistent via hostPath on master node
+
+#### Loki Details
+- **Image:** `grafana/loki:2.9.0`
+- **Access from pods:** `http://loki.data-miner.svc.cluster.local:3100`
+- **Storage:** Persistent via hostPath on master node
+- **Python logging:** Uses `python-logging-loki` handler
 
 ---
 
@@ -112,8 +144,8 @@ merged = merge(base, run, k8s)
 
 | Service | URL | Purpose |
 |---|---|---|
-| Grafana | `http://pavanjci:30300` | Monitoring dashboard |
-| Adminer | `http://pavanjci:30080` | PostgreSQL web admin |
+| Grafana | `http://<master>:30300` | Monitoring dashboard |
+| Adminer | `http://<master>:30080` | PostgreSQL web admin |
 | Loki | Internal only | Log aggregation (query via Grafana) |
 
 ### Adminer Connection Details
@@ -139,55 +171,109 @@ merged = merge(base, run, k8s)
 cluster:
   namespace: data-miner
   k3s_version: v1.31.0+k3s1
+  ssh_key: "~/.ssh/id_rsa_dm_k3s"
   nodes:
-    pavanjci:
-      ip: "10.96.122.9"
+    # GPU/Master node
+    master_node:
+      ip: "10.x.x.x"
       role: master
-      disk_limit_mb: 50000    # 50GB SeaweedFS limit on GPU node
-    manthana:
-      ip: "10.96.122.132"
+      ssh_user: user
+      no_storage: true        # Mount only, no volume server
+      image: gpu              # GPU image for ML workers
+      labels:
+        gpu: "true"
+    
+    # Compute worker (runs download workers)
+    compute_node:
+      ip: "10.x.x.x"
       role: worker
-      disk_limit_mb: 100000   # 100GB
-    arsenal:
-      ip: "10.96.122.14"
+      ssh_user: user
+      image: base             # Lightweight image
+    
+    # Storage-only worker
+    storage_node:
+      ip: "10.x.x.x"
       role: worker
-      disk_limit_mb: 100000   # 100GB
-    # Storage-only nodes (template):
-    # storage1:
-    #   ip: "10.96.122.XXX"
-    #   role: worker
-    #   storage_only: true     # Only runs SeaweedFS, no data-miner workers
-    #   disk_limit_mb: 500000  # 500GB
+      ssh_user: user
+      storage_only: true      # No image, only SeaweedFS
+      disk_limit_mb: 500000   # 500GB
 
 storage:
   seaweedfs_mount: /swdfs_mnt/swshared
   db_path: /data/data_miner_db
 
-image:
-  name: data-miner
-  tag: latest
+images:
+  base:
+    name: data-miner-base
+    tag: latest
+    dockerfile: Dockerfile.base
+  gpu:
+    name: data-miner-gpu
+    tag: latest
+    dockerfile: Dockerfile.gpu
   pull_policy: Never
 
 seaweedfs:
   namespace: seaweedfs
   image: chrislusf/seaweedfs:latest
   data_dir: /data/seaweed
-  default_disk_limit_mb: 0    # 0 = unlimited (fallback)
+  schedule_on: master
+  default_disk_limit_mb: 0    # 0 = unlimited
+
+services:
+  postgres:
+    kind: StatefulSet
+    image: postgres:16
+    port: 5432
+    storage: hostPath         # Uses ${storage.db_path}/postgres
+    env:
+      POSTGRES_DB: data_miner
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+  loki:
+    kind: StatefulSet
+    image: grafana/loki:2.9.0
+    port: 3100
+    storage: hostPath         # Uses ${storage.db_path}/loki
+  grafana:
+    kind: Deployment
+    image: grafana/grafana:10.0.0
+    node_port: 30300
+  adminer:
+    kind: Deployment
+    image: adminer:latest
+    node_port: 30080
 
 resource_presets:
-  small:  { cpu: 250m-1000m, memory: 512Mi-2Gi }
-  medium: { cpu: 500m-2000m, memory: 1Gi-4Gi }
-  gpu:    { cpu: 500m-2000m, memory: 2Gi-8Gi }
+  small:  { requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: 1000m, memory: 2Gi} }
+  medium: { requests: {cpu: 500m, memory: 1Gi}, limits: {cpu: 2000m, memory: 4Gi} }
+  gpu:    { requests: {cpu: 500m, memory: 4Gi}, limits: {cpu: 2000m, memory: 16Gi} }
 
 workers:
-  download:  { kind: StatefulSet, replicas: 3, schedule_on: all }
-  extract:   { replicas: 2, schedule_on: master }
-  filter:    { replicas: 1, schedule_on: gpu, hf_token: true }
-  dedup:     { replicas: 1, schedule_on: gpu, hf_token: true }
-  detect:    { replicas: 1, schedule_on: gpu, hf_token: true }
-  monitor:   { replicas: 1, schedule_on: master }
+  download:  { kind: StatefulSet, replicas: 4, schedule_on: all, resources: ${resource_presets.medium} }
+  extract:   { replicas: 3, schedule_on: master, resources: ${resource_presets.medium} }
+  filter:    { replicas: 1, schedule_on: gpu, hf_token: true, resources: ${resource_presets.gpu} }
+  dedup:     { replicas: 1, schedule_on: gpu, hf_token: true, resources: ${resource_presets.gpu} }
+  detect:    { replicas: 1, schedule_on: gpu, hf_token: true, resources: ${resource_presets.gpu} }
+  monitor:   { replicas: 1, schedule_on: master, resources: ${resource_presets.medium} }
 
-infrastructure:
+k3s_app_overrides:
+  output_dir: ${storage.seaweedfs_mount}/data_miner_output
+  device: auto
+```
+
+---
+
+## Node Configuration Options
+
+| Option | Description | Effect |
+|--------|-------------|--------|
+| `image: base` | Use lightweight image | Download/extract workers only |
+| `image: gpu` | Use ML image | All workers including filter/dedup/detect |
+| `no_storage: true` | Don't contribute storage | Gets FUSE mount, no volume server |
+| `storage_only: true` | Storage node only | No image, no workers, only SeaweedFS |
+| `disk_limit_mb: N` | SeaweedFS disk limit | Limits storage contribution per node |
+| `data_dir: /path` | Custom SeaweedFS data path | Per-node override of `seaweedfs.data_dir` |:
   postgres:  { kind: StatefulSet, image: postgres:16, port: 5432 }
   loki:      { kind: StatefulSet, image: grafana/loki:2.9.0, port: 3100 }
   grafana:   { kind: Deployment, image: grafana/grafana:10.0.0, node_port: 30300 }

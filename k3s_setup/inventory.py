@@ -7,9 +7,13 @@
 # For passwordless sudo on master:
 #   sudo visudo → add: pavanmv ALL=(ALL) NOPASSWD: ALL
 
+import os
+import sys
 import subprocess
 from pathlib import Path
 
+# Add k3s_setup dir to path so cluster.py can be imported from project root
+sys.path.insert(0, os.path.dirname(__file__))
 from cluster import cfg, nodes, master_ip
 
 ssh_key = str(Path(cfg().cluster.ssh_key).expanduser())

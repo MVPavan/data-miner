@@ -73,6 +73,9 @@ NVIDIA_PLUGIN_VERSION = cfg().nvidia.plugin_version
 NVIDIA_PLUGIN_URL = f"https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/{NVIDIA_PLUGIN_VERSION}/nvidia-device-plugin.yml"
 
 # Image paths are now per-image-type, computed in build_and_distribute()
+# Track which images have been built in this pyinfra run (avoids deadlock)
+_images_built = set()
+
 DB_PATH = cfg().storage.db_path
 SEAWEED_DATA = cfg().seaweedfs.data_dir
 SEAWEED_MOUNT = cfg().storage.seaweedfs_mount
@@ -130,8 +133,27 @@ def deploy_k3s():
             "cat /var/lib/rancher/k3s/server/node-token"
         ], _sudo=True)
     elif token:
+        # Copy k3s binary from master (local) instead of downloading
+        files.put(
+            name="Copy k3s binary from master",
+            src="/usr/local/bin/k3s",
+            dest="/tmp/k3s",
+            mode="755",
+            _sudo=True,
+        )
+        files.put(
+            name="Copy k3s install script from master",
+            src="/tmp/k3s-install.sh",
+            dest="/tmp/k3s-install.sh",
+            mode="755",
+            _sudo=True, 
+        )
+        # Download install script and run with pre-copied binary
         server.shell(name="Install K3s agent", commands=[
-            f"curl -sfL https://get.k3s.io | K3S_URL=https://{host_master_ip}:6443 K3S_TOKEN={token} sh -s - agent"
+            "chmod +x /tmp/k3s-install.sh && "
+            "cp /tmp/k3s /usr/local/bin/k3s && "
+            f"INSTALL_K3S_SKIP_DOWNLOAD=true K3S_URL=https://{host_master_ip}:6443 K3S_TOKEN={token} "
+            "/tmp/k3s-install.sh agent"
         ], _sudo=True)
     else:
         server.shell(name="Skip — no token", commands=[
@@ -266,10 +288,16 @@ def apply_labels():
                 _sudo=True,
             )
 
-    # Install NVIDIA device plugin
+    # Install NVIDIA device plugin (only on GPU nodes via nodeSelector)
     server.shell(
         name="Install NVIDIA Device Plugin",
-        commands=[f"kubectl create -f {NVIDIA_PLUGIN_URL} || true"],
+        commands=[
+            f"kubectl create -f {NVIDIA_PLUGIN_URL} 2>/dev/null || true",
+            # Patch to only run on gpu=true nodes
+            'kubectl patch daemonset nvidia-device-plugin-daemonset -n kube-system '
+            '--type=json -p=\'[{"op": "add", "path": "/spec/template/spec/nodeSelector", '
+            '"value": {"gpu": "true"}}]\' 2>/dev/null || true',
+        ],
         _sudo=True,
     )
 
@@ -305,39 +333,28 @@ def build_and_distribute():
     tar_path = f"/tmp/{image_name}.tar"
 
     force = os.environ.get("FORCE", "false").lower() == "true"
-    lock_file = f"/tmp/{image_name}_build.lock"
     dockerfile_path = os.path.join(os.path.dirname(__file__), dockerfile)
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Build locally (once per image type, with file lock)
-    built = os.path.exists(tar_path)
-    if force:
-        built = False
-
-    with open(lock_file, "w") as lock_f:
-        fcntl.flock(lock_f, fcntl.LOCK_EX)
-        try:
-            if not built:
-                print(f"[{hostname}] Building Docker Image: {full_image}...")
-                subprocess.check_call(
-                    f"docker build -f {dockerfile_path} -t {full_image} {project_root}",
-                    shell=True,
-                )
-                print(f"[{hostname}] Saving Image to {tar_path}...")
-                subprocess.check_call(
-                    f"docker save {full_image} -o {tar_path}",
-                    shell=True,
-                )
-                built = True
-        except Exception as e:
-            print(f"[{hostname}] Error during build: {e}")
-            fcntl.flock(lock_f, fcntl.LOCK_UN)
-            sys.exit(1)
-        finally:
-            fcntl.flock(lock_f, fcntl.LOCK_UN)
-            if not built:
-                print(f"[{hostname}] Build failed.")
-                sys.exit(1)
+    # Build image if not already built in this run
+    if image_type in _images_built:
+        print(f"[{hostname}] Image already built in this run: {full_image}")
+    elif os.path.exists(tar_path) and not force:
+        print(f"[{hostname}] Image tar already exists: {tar_path}")
+        _images_built.add(image_type)
+    else:
+        print(f"[{hostname}] Building Docker Image: {full_image}...")
+        subprocess.check_call(
+            f"docker build -f {dockerfile_path} -t {full_image} {project_root}",
+            shell=True,
+        )
+        print(f"[{hostname}] Saving Image to {tar_path}...")
+        subprocess.check_call(
+            f"docker save {full_image} -o {tar_path}",
+            shell=True,
+        )
+        print(f"[{hostname}] Image saved successfully")
+        _images_built.add(image_type)
 
     # Copy to node
     remote_file = host.get_fact(File, path=tar_path)
@@ -402,7 +419,7 @@ def clean_seaweedfs():
     node_data_dir = get_node_data_dir(hostname)
 
     server.shell(name="Unmount FUSE", commands=[
-        f"umount -f {SEAWEED_MOUNT} 2>/dev/null; true",
+        f"umount -l {SEAWEED_MOUNT} 2>/dev/null; true",
     ], _sudo=True)
     server.shell(name="Clean SeaweedFS data", commands=[
         f"rm -rf {node_data_dir}/master {node_data_dir}/filer {node_data_dir}/volume",

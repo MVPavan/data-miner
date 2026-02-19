@@ -129,8 +129,8 @@ filter:
   positive_thr: 0.3           # Min score for positive prompts
   negative_thr: 0.3           # Max score for negative prompts
   pos_neg_margin_thr: 0.1     # Positive must beat negative by this margin
-  zoom_thr: 0.3               # Zoom threshold
-  pos_zoom_margin_thr: 0.1    # Positive must beat zoom by this margin
+  junk_thr: 0.3               # junk threshold
+  pos_junk_margin_thr: 0.1    # Positive must beat junk by this margin
   
   # Positive prompts - full view emphasis
   positive_prompts:
@@ -167,11 +167,11 @@ filter:
     - "blurry out of focus image"
     - "dark grainy night shot"
   
-  # Zoom prompts - close-up / cropped views to reject
-  zoom_prompts:
+  # junk prompts - close-up / cropped views to reject
+  junk_prompts:
     - "a close-up of a glass door"
     - "an extreme close-up of a glass door"
-    - "a zoomed-in photo of a glass door"
+    - "a junked-in photo of a glass door"
     - "a tightly cropped glass door"
     - "only part of a glass door is visible"
     - "a partial view of a glass door"

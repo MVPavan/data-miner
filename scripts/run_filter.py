@@ -6,8 +6,8 @@ from data_miner.modules.frame_filter import FrameFilter
 # threshold=0.35,
 # negative_threshold=0.45,
 # margin_threshold=0.12,
-# zoom_threshold=0.4,
-# zoom_margin_threshold=0.1,
+# junk_threshold=0.4,
+# junk_margin_threshold=0.1,
 
 # Category 1: want to KEEP (full/usable views for detection training)
 full_view_positive_prompts = [
@@ -27,11 +27,11 @@ full_view_positive_prompts = [
     "a glass door with surrounding context visible",
 ]
 
-# Category 2: close-up / zoomed / cropped (want to REJECT)
+# Category 2: close-up / junked / cropped (want to REJECT)
 closeup_negative_prompts = [
     "a close-up of a glass door",
     "an extreme close-up of a glass door",
-    "a zoomed-in photo of a glass door",
+    "a junked-in photo of a glass door",
     "a tightly cropped glass door",
     "only part of a glass door is visible",
     "a partial view of a glass door",
@@ -69,12 +69,12 @@ filter_conf = FilterConfig(
     batch_size=8,
     positive_prompts=full_view_positive_prompts,
     negative_prompts=non_door_or_bad_negative_prompts,
-    zoom_prompts=closeup_negative_prompts,
+    junk_prompts=closeup_negative_prompts,
     positive_thr=0.3,
     negative_thr=0.3,
     pos_neg_margin_thr=0.1,
-    zoom_thr=0.3,
-    pos_zoom_margin_thr=0.1,
+    junk_thr=0.3,
+    pos_junk_margin_thr=0.1,
 )
 
 # glob recursively for jpg and png files

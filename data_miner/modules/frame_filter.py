@@ -104,18 +104,18 @@ class FrameFilter:
             _idx = frame_dict.get(video_id)
             _pp = positive_prompts[np.argmax(pos_scores[_idx])]
             _np = negative_prompts[np.argmax(neg_scores[_idx])] if negative_prompts else 'N/A'
-            _zp = zoom_prompts[np.argmax(zoom_scores[_idx])] if zoom_prompts else 'N/A'
+            _zp = junk_prompts[np.argmax(junk_scores[_idx])] if junk_prompts else 'N/A'
             _pm = pos_max[_idx]
             _nm = neg_max[_idx] if negative_prompts else 0.0
-            _zm = zoom_max[_idx] if zoom_prompts else 0.0
+            _zm = junk_max[_idx] if junk_prompts else 0.0
 
             print(
                 f"DEBUG: Frame '{video_id}': \n"
                 f"{_pm:.3f} - Pos='{_pp}', \n"
                 f"{_nm:.3f} - Neg='{_np}', \n"
-                f"{_zm:.3f} - Zoom='{_zp}', \n"
+                f"{_zm:.3f} - junk='{_zp}', \n"
                 f"{_pm - _nm:.3f} margin Pos-Neg, \n"
-                f"{_pm - _zm:.3f} margin Pos-Zoom"
+                f"{_pm - _zm:.3f} margin Pos-junk"
             )
             ###############################
 
@@ -125,11 +125,11 @@ class FrameFilter:
         frame_paths = sorted(frame_paths)
         positive_prompts = self.config.positive_prompts
         negative_prompts = self.config.negative_prompts or []
-        zoom_prompts = self.config.zoom_prompts or []
-        all_prompts = positive_prompts + negative_prompts + zoom_prompts
+        junk_prompts = self.config.junk_prompts or []
+        all_prompts = positive_prompts + negative_prompts + junk_prompts
         num_positive = len(positive_prompts)
         num_negative = len(negative_prompts)
-        num_zoom = len(zoom_prompts)
+        num_junk = len(junk_prompts)
         
         logger.info(
             f"Filtering {len(frame_paths)} frames "
@@ -152,7 +152,7 @@ class FrameFilter:
         pos_max = pos_scores.max(axis=1)
         pos_mask = pos_max > self.config.positive_thr
         neg_mask = np.ones_like(pos_mask, dtype=bool)
-        zoom_mask = np.ones_like(pos_mask, dtype=bool)
+        junk_mask = np.ones_like(pos_mask, dtype=bool)
         # Determine which frames pass
         if negative_prompts:
             # Positive + Negative mode: positive must beat negative by margin
@@ -162,13 +162,13 @@ class FrameFilter:
             neg_mask = (neg_max < self.config.negative_thr) & (pos_neg_margin > self.config.pos_neg_margin_thr)
         
         
-        if zoom_prompts:
-            zoom_scores = scores[:, num_positive+num_negative:]
-            zoom_max = zoom_scores.max(axis=1)
-            pos_zoom_margin = pos_max - zoom_max
-            zoom_mask = (zoom_max < self.config.zoom_thr) & (pos_zoom_margin > self.config.pos_zoom_margin_thr)
+        if junk_prompts:
+            junk_scores = scores[:, num_positive+num_negative:]
+            junk_max = junk_scores.max(axis=1)
+            pos_junk_margin = pos_max - junk_max
+            junk_mask = (junk_max < self.config.junk_thr) & (pos_junk_margin > self.config.pos_junk_margin_thr)
         
-        mask = pos_mask & neg_mask & zoom_mask
+        mask = pos_mask & neg_mask & junk_mask
         
         valid_frame_ids = np.where(mask)[0].tolist()
         

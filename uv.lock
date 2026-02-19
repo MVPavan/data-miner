@@ -691,57 +691,75 @@ name = "data-miner"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "accelerate" },
     { name = "av" },
     { name = "click" },
-    { name = "faiss-cpu" },
-    { name = "fiftyone" },
     { name = "numpy" },
     { name = "omegaconf" },
     { name = "opencv-python-headless" },
     { name = "pillow" },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
-    { name = "pyinfra" },
     { name = "python-dotenv" },
     { name = "python-logging-loki" },
     { name = "pyyaml" },
     { name = "rich" },
-    { name = "scikit-learn" },
     { name = "sqlmodel" },
+    { name = "tqdm" },
+    { name = "yt-dlp" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "accelerate" },
+    { name = "faiss-cpu" },
+    { name = "fiftyone" },
+    { name = "pyinfra" },
+    { name = "scikit-learn" },
     { name = "torch" },
     { name = "torchvision" },
-    { name = "tqdm" },
     { name = "transformers" },
-    { name = "yt-dlp" },
+]
+dev = [
+    { name = "fiftyone" },
+    { name = "pyinfra" },
+]
+gpu = [
+    { name = "accelerate" },
+    { name = "faiss-cpu" },
+    { name = "scikit-learn" },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "transformers" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", specifier = ">=1.12.0" },
+    { name = "accelerate", marker = "extra == 'gpu'", specifier = ">=1.12.0" },
     { name = "av", specifier = ">=12.0" },
     { name = "click", specifier = ">=8.0" },
-    { name = "faiss-cpu", specifier = ">=1.7" },
-    { name = "fiftyone", specifier = ">=1.11.1" },
+    { name = "data-miner", extras = ["gpu", "dev"], marker = "extra == 'all'" },
+    { name = "faiss-cpu", marker = "extra == 'gpu'", specifier = ">=1.7" },
+    { name = "fiftyone", marker = "extra == 'dev'", specifier = ">=1.11.1" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "omegaconf", specifier = ">=2.3" },
     { name = "opencv-python-headless", specifier = ">=4.5" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.9" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "pyinfra", specifier = ">=3.6" },
+    { name = "pyinfra", marker = "extra == 'dev'", specifier = ">=3.6" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "python-logging-loki", specifier = ">=0.3.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.0" },
-    { name = "scikit-learn", specifier = ">=1.4" },
+    { name = "scikit-learn", marker = "extra == 'gpu'", specifier = ">=1.4" },
     { name = "sqlmodel", specifier = ">=0.0.22" },
-    { name = "torch", specifier = ">=2.0" },
-    { name = "torchvision", specifier = ">=0.24.1" },
+    { name = "torch", marker = "extra == 'gpu'", specifier = ">=2.0" },
+    { name = "torchvision", marker = "extra == 'gpu'", specifier = ">=0.24.1" },
     { name = "tqdm", specifier = ">=4.66" },
-    { name = "transformers", specifier = ">=4.40" },
+    { name = "transformers", marker = "extra == 'gpu'", specifier = ">=4.40" },
     { name = "yt-dlp", specifier = ">=2024.0" },
 ]
+provides-extras = ["gpu", "dev", "all"]
 
 [[package]]
 name = "deprecated"

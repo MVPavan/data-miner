@@ -9,11 +9,11 @@
 cluster:
   namespace: data-miner
   k3s_version: "v1.31.0+k3s1"
-  ssh_key: "~/.ssh/id_rsa_dm_k3s"
+  ssh_key: "~/.ssh/id_rsa_dm_k3s_blrlambdav.pem" # add master name for avoiding clash with other clusters
 
   nodes:
     blrlambdav:
-      ip: "10.96.122.8"
+      ip: "10.96.122.130"
       role: master
       ssh_user: pavan
       no_storage: true
@@ -21,33 +21,42 @@ cluster:
       labels:
         gpu: "true"
     
-    arsenal:
-      ip: "10.96.122.14"
+    pavanjci:
+      ip: "10.96.122.9"
       role: worker
-      ssh_user: pavan
-      image: base         # Only runs download workers
-
-    moshe:
-      ip: "10.164.45.5"
-      role: worker
-      ssh_user: pavan
+      ssh_user: pavanmv
       no_storage: true
-      image: base         # Only runs download workers
-    
-    belfast:
-      ip: "10.160.105.65"
-      role: worker
-      ssh_user: pavan
-      no_storage: true
-      image: base         # Only runs download workers
-
+      image: base
+        
     manu:
       ip: "10.96.122.5"
       role: worker
       ssh_user: pavan
+      image: base
+      # storage_only: true  # No image needed (storage only)
+
+    
+    # moshe:
+    #   ip: "10.164.45.5"
+    #   role: worker
+    #   ssh_user: pavan
+    #   no_storage: true
+    #   image: base         # Only runs download workers
+    
+    # belfast:
+    #   ip: "10.160.105.65"
+    #   role: worker
+    #   ssh_user: pavan
+    #   no_storage: true
+    #   image: base         # Only runs download workers
+    
+    arsenal:
+      ip: "10.96.122.14"
+      role: worker
+      ssh_user: pavan
       storage_only: true  # No image needed (storage only)
     
-    jay:
+    jayakrishna-pc:
       ip: "10.96.122.131"
       role: worker
       ssh_user: pavan
@@ -127,7 +136,7 @@ resource_presets:
 workers:
   download:
     kind: StatefulSet
-    replicas: 12
+    replicas: 3
     resources: ${resource_presets.medium}
     schedule_on: all
     extra_env:
@@ -142,7 +151,7 @@ workers:
       failure_threshold: 3
 
   extract:
-    replicas: 3
+    replicas: 1
     resources: ${resource_presets.medium}
     schedule_on: master
     liveness_probe:
