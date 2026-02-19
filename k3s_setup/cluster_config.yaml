@@ -83,14 +83,6 @@ cluster:
     #   labels:
     #     gpu: "true"
 
-storage:
-  seaweedfs_mount: /swdfs_mnt/swshared
-  db_path: /data/data_miner_db
-  db_services:
-    postgres: 999
-    loki: 10001
-    grafana: 472
-
 images:
   base:
     name: data-miner-base
@@ -106,6 +98,7 @@ seaweedfs:
   namespace: seaweedfs
   image: chrislusf/seaweedfs:latest
   data_dir: /data/seaweed
+  mount_path: /swdfs_mnt/swshared
   schedule_on: master
   default_disk_limit_mb: 0    # 0 = unlimited (fallback if node has no disk_limit_mb)
 
@@ -115,12 +108,42 @@ nvidia:
 database_url: "postgresql://postgres:postgres@postgres.${cluster.namespace}.svc.cluster.local:5432/data_miner"
 loki_url: "http://loki.${cluster.namespace}.svc.cluster.local:3100/loki/api/v1/push"
 
+services:
+  postgres:
+    kind: StatefulSet
+    image: postgres:16
+    port: 5432
+    data_path: /data/data_miner_db/postgres
+    run_as_user: 999
+    env:
+      POSTGRES_DB: data_miner
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+  loki:
+    kind: StatefulSet
+    image: grafana/loki:2.9.0
+    port: 3100
+    data_path: /data/data_miner_db/loki
+    run_as_user: 10001
+  grafana:
+    kind: Deployment
+    image: grafana/grafana:10.0.0
+    port: 3000
+    node_port: 30300
+    data_path: /data/data_miner_db/grafana
+    run_as_user: 472
+  adminer:
+    kind: Deployment
+    image: adminer:latest
+    port: 8080
+    node_port: 30080
+
 # K8s overrides merged on top of default.yaml + run_config when generating ConfigMap
 k3s_app_overrides:
-  output_dir: "${storage.seaweedfs_mount}/data_miner_output"
+  output_dir: "${seaweedfs.mount_path}/data_miner_output"
   device: "auto"
   logging:
-    log_dir: "${storage.seaweedfs_mount}/data_miner_output/logs"
+    log_dir: "${seaweedfs.mount_path}/data_miner_output/logs"
 
 resource_presets:
   small:

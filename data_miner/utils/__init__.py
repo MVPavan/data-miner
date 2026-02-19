@@ -1,6 +1,11 @@
 """Video Miner v3 - Utilities package."""
 
-from .device import resolve_device, get_model_device, clear_gpu_cache
+try:
+    from .device import resolve_device, get_model_device, clear_gpu_cache
+    _device_available = True
+except ImportError:
+    _device_available = False
+
 from .io import save_json, load_json, ensure_dir, get_video_id
 from .validators import validate_youtube_url, validate_image_path
 

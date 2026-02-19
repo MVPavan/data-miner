@@ -77,7 +77,7 @@ def build_worker_manifest(name, worker_cfg):
         "env": env,
         "volumeMounts": [
             {"name": "config", "mountPath": "/config"},
-            {"name": "seaweedfs", "mountPath": cfg().storage.seaweedfs_mount},
+            {"name": "seaweedfs", "mountPath": cfg().seaweedfs.mount_path},
         ],
         "resources": resources,
     }
@@ -101,7 +101,7 @@ def build_worker_manifest(name, worker_cfg):
             {
                 "name": "seaweedfs",
                 "hostPath": {
-                    "path": cfg().storage.seaweedfs_mount,
+                    "path": cfg().seaweedfs.mount_path,
                     "type": "Directory",
                 },
             },
@@ -189,7 +189,7 @@ def generate_configmap(run_config_path):
     base = OmegaConf.load(default_config)
     run = OmegaConf.load(run_config_path)
 
-    # k3s_app_overrides — resolve storage.seaweedfs_mount but keep app-level
+    # k3s_app_overrides — resolve seaweedfs.mount_path but keep app-level
     # ${var} interpolations unresolved (they resolve at runtime in the app)
     k3s_overrides = OmegaConf.to_container(cfg().k3s_app_overrides, resolve=True)
     k8s = OmegaConf.create(k3s_overrides)
@@ -246,6 +246,117 @@ def generate_namespace():
 
 
 # =============================================================================
+# Infrastructure Generation (Postgres, Loki, Grafana, Adminer)
+# =============================================================================
+
+
+def generate_infrastructure():
+    """Generate infrastructure manifests: Postgres, Loki, Grafana, Adminer."""
+    infra_dir = MANIFESTS_DIR / "infrastructure"
+    infra_dir.mkdir(parents=True, exist_ok=True)
+
+    namespace = cfg().cluster.namespace
+    master = master_hostname()
+
+    for svc_name, svc_cfg in cfg().services.items():
+        svc_cfg = OmegaConf.to_container(svc_cfg, resolve=True)
+        kind = svc_cfg.get("kind", "Deployment")
+        image = svc_cfg["image"]
+        port = svc_cfg["port"]
+        node_port = svc_cfg.get("node_port")
+        uid = svc_cfg.get("run_as_user")
+        data_path = svc_cfg.get("data_path")
+
+        # --- Pod spec ---
+        container = {
+            "name": svc_name,
+            "image": image,
+            "ports": [{"containerPort": port}],
+        }
+
+        # Env vars (postgres needs creds)
+        if svc_cfg.get("env"):
+            container["env"] = [
+                {"name": k, "value": str(v)} for k, v in svc_cfg["env"].items()
+            ]
+
+        # VolumeMounts for services with persistent hostPath storage
+        volumes = []
+        if data_path:
+            mount_path = {
+                "postgres": "/var/lib/postgresql/data",
+                "loki": "/loki",
+                "grafana": "/var/lib/grafana",
+            }.get(svc_name, "/data")
+            container["volumeMounts"] = [{"name": "data", "mountPath": mount_path}]
+            volumes = [{
+                "name": "data",
+                "hostPath": {
+                    "path": data_path,
+                    "type": "DirectoryOrCreate",
+                },
+            }]
+
+        pod_spec = {
+            "nodeSelector": {"kubernetes.io/hostname": master},
+            "containers": [container],
+        }
+        if volumes:
+            pod_spec["volumes"] = volumes
+        if uid is not None:
+            pod_spec["securityContext"] = {"runAsUser": uid, "fsGroup": uid}
+
+        # --- Workload manifest ---
+        workload = {
+            "apiVersion": "apps/v1",
+            "kind": kind,
+            "metadata": {"name": svc_name, "namespace": namespace},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": svc_name}},
+                "template": {
+                    "metadata": {"labels": {"app": svc_name}},
+                    "spec": pod_spec,
+                },
+            },
+        }
+        if kind == "StatefulSet":
+            workload["spec"]["serviceName"] = svc_name
+
+        kind_str = kind.lower()
+        out_path = infra_dir / f"{svc_name}-{kind_str}.yaml"
+        with open(out_path, "w") as f:
+            yaml.dump(workload, f, default_flow_style=False, sort_keys=False)
+        print(f"  Generated {out_path.relative_to(MANIFESTS_DIR.parent)}")
+
+        # --- Service manifest ---
+        svc_type = "NodePort" if node_port else "ClusterIP"
+        svc_port = {"port": port, "targetPort": port}
+        if node_port:
+            svc_port["nodePort"] = node_port
+
+        # Headless for StatefulSets so pod DNS works (postgres-0, loki-0)
+        svc_manifest = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {"name": svc_name, "namespace": namespace},
+            "spec": {
+                "type": svc_type,
+                "selector": {"app": svc_name},
+                "ports": [svc_port],
+            },
+        }
+        if kind == "StatefulSet":
+            svc_manifest["spec"]["clusterIP"] = "None"
+            del svc_manifest["spec"]["type"]
+
+        out_path = infra_dir / f"{svc_name}-service.yaml"
+        with open(out_path, "w") as f:
+            yaml.dump(svc_manifest, f, default_flow_style=False, sort_keys=False)
+        print(f"  Generated {out_path.relative_to(MANIFESTS_DIR.parent)}")
+
+
+# =============================================================================
 # SeaweedFS Generation
 # =============================================================================
 
@@ -257,7 +368,7 @@ def generate_seaweedfs():
     node_selector = schedule.get("node_selector", {})
     image = sw.image
     data_dir = sw.data_dir
-    mount_path = cfg().storage.seaweedfs_mount
+    mount_path = cfg().seaweedfs.mount_path
     mount_parent = str(Path(mount_path).parent)
     namespace = sw.namespace
 
@@ -454,6 +565,7 @@ def main():
     print("Generating K8s manifests...")
     generate_namespace()
     generate_configmap(run_config)
+    generate_infrastructure()
     generate_workers()
     generate_seaweedfs()
     print("Done.")

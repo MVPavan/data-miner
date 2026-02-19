@@ -76,9 +76,8 @@ NVIDIA_PLUGIN_URL = f"https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin
 # Track which images have been built in this pyinfra run (avoids deadlock)
 _images_built = set()
 
-DB_PATH = cfg().storage.db_path
 SEAWEED_DATA = cfg().seaweedfs.data_dir
-SEAWEED_MOUNT = cfg().storage.seaweedfs_mount
+SEAWEED_MOUNT = cfg().seaweedfs.mount_path
 MOUNT_PARENT = str(os.path.dirname(SEAWEED_MOUNT))
 
 # Containerd config template — NVIDIA runtime + CNI paths (critical for node Ready)
@@ -208,11 +207,14 @@ def setup_storage():
     if not is_master:
         return
 
-    for svc_name, uid in cfg().storage.db_services.items():
-        full_path = f"{DB_PATH}/{svc_name}"
+    for svc_name, svc_cfg in cfg().services.items():
+        uid = svc_cfg.get("run_as_user")
+        data_path = svc_cfg.get("data_path")
+        if uid is None or data_path is None:
+            continue
         files.directory(
             name=f"Create {svc_name} storage",
-            path=full_path,
+            path=data_path,
             user=str(uid),
             group=str(uid),
             mode="755",
@@ -433,9 +435,13 @@ def clean_db():
 
     confirm_delete("database directories (postgres, loki, grafana)")
 
-    db_path = cfg().storage.db_path
+    paths = [
+        svc_cfg.data_path
+        for svc_cfg in cfg().services.values()
+        if svc_cfg.get("data_path")
+    ]
     server.shell(name="Clean DB data", commands=[
-        f"rm -rf {db_path}/postgres {db_path}/loki {db_path}/grafana",
+        f"rm -rf {' '.join(paths)}",
     ], _sudo=True)
 
 

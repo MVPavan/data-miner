@@ -152,11 +152,16 @@ def get_worker_image(schedule_on: str) -> str:
     For 'all' scheduling, uses the most capable image (gpu if any node has it).
     """
     if schedule_on == "all":
-        # Use gpu image if any compute node has it, else base
-        for node_cfg in compute_nodes().values():
-            if node_cfg.get("image") == "gpu":
-                return get_image_config("gpu")["full_name"]
-        return get_image_config("base")["full_name"]
+        # Use base image if any compute node has base — lowest common denominator
+        # so the image is available on every node the pod might be scheduled on.
+        # Only use gpu if ALL compute nodes have gpu.
+        has_base = any(
+            node_cfg.get("image", "base") == "base"
+            for node_cfg in compute_nodes().values()
+        )
+        if has_base:
+            return get_image_config("base")["full_name"]
+        return get_image_config("gpu")["full_name"]
     elif schedule_on == "master":
         master_cfg = master()[1]
         image_type = master_cfg.get("image", "base")

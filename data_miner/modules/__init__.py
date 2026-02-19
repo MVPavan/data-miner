@@ -2,9 +2,14 @@
 
 from .downloader import YouTubeDownloader, DownloadResult
 from .frame_extractor import FrameExtractor, ExtractionResult
-from .frame_filter import FrameFilter, FilterResult
-from .deduplicator import Deduplicator, DeduplicationResult
-from .detector import ObjectDetector, DetectionBatchResult
+
+try:
+    from .frame_filter import FrameFilter, FilterResult
+    from .deduplicator import Deduplicator, DeduplicationResult
+    from .detector import ObjectDetector, DetectionBatchResult
+    _ml_available = True
+except ImportError:
+    _ml_available = False
 
 __all__ = [
     "YouTubeDownloader",

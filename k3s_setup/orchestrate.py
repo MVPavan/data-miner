@@ -257,7 +257,7 @@ def setup(run_config: str):
 
     # ── Step 4: Verify FUSE mount ────────────────────────────────────────
     step(4, "Verify FUSE mount via pod exec")
-    mount_path = cfg().storage.seaweedfs_mount
+    mount_path = cfg().seaweedfs.mount_path
     retries = 12
     for attempt in range(retries):
         result = kubectl(
