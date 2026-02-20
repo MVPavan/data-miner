@@ -393,6 +393,14 @@ python k3s_setup/orchestrate.py teardown
 
 # Full teardown (wipes all data)
 python k3s_setup/orchestrate.py teardown --wipe-data
+
+# port-forward Grafana
+kubectl port-forward -n data-miner deploy/grafana 30300:3000
+# port-forward Adminer
+kubectl port-forward -n data-miner deploy/adminer 30080:8080
+# port-forward PostgreSQL
+kubectl port-forward -n data-miner statefulset/postgres 5432:543
+kubectl port-forward -n data-miner svc/postgres 5432:5432
 ```
 
 ---
