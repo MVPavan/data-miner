@@ -353,6 +353,13 @@ def docker_deploy():
     else:
         print(f"[{hostname}] Image already built in this run: {full_image}")
 
+    # Capture local image ID (docker image ID == sha256 of config JSON == containerd config digest)
+    local_id = subprocess.check_output(
+        f"docker image inspect {full_image} --format '{{{{.Id}}}}'",
+        shell=True,
+    ).decode().strip()
+    print(f"[{hostname}] Local image ID: {local_id}")
+
     # Copy to node (pyinfra skips if MD5 matches — no manual force needed)
     files.put(
         name=f"Copy {image_type} image tar to node",
@@ -374,10 +381,19 @@ def docker_deploy():
         _sudo=True,
     )
 
-    # Verify — print name + digest of imported image
+    # Verify — compare containerd config digest against local docker image ID
+    # Chain: images ls -> manifest digest -> content get -> config.digest == docker image ID
     server.shell(
-        name=f"Verify {image_type} image in K3s",
-        commands=[f"k3s ctr -n k8s.io images ls | grep '{image_name}' | awk '{{print $1, $3}}'"],
+        name=f"Verify {image_type} image digest in K3s",
+        commands=[
+            f"MANIFEST=$(k3s ctr -n k8s.io images ls | grep '{full_image}' | awk '{{print $3}}') && "
+            f"CONFIG=$(k3s ctr -n k8s.io content get $MANIFEST | python3 -c \"import sys,json; print(json.load(sys.stdin)['config']['digest'])\") && "
+            f"if [ \"$CONFIG\" = \"{local_id}\" ]; then "
+            f"  echo 'OK: digest match '$CONFIG; "
+            f"else "
+            f"  echo \"DIGEST MISMATCH! expected={local_id} got=$CONFIG\" && exit 1; "
+            f"fi"
+        ],
         _sudo=True,
     )
 
