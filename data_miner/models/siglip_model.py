@@ -57,9 +57,9 @@ class SigLIPModel(BaseModel):
         logger.info(f"Loading SigLIP model: {self.model_id}")
         
         try:
-            from transformers import AutoModel, AutoProcessor
-            
-            self.processor = AutoProcessor.from_pretrained(self.model_id)
+            from transformers import AutoModel, Siglip2Processor
+
+            self.processor = Siglip2Processor.from_pretrained(self.model_id)
             if self.device_map == "auto" and torch.cuda.is_available():
                 self.device_map = "cuda"
             self.model = AutoModel.from_pretrained(
@@ -102,8 +102,9 @@ class SigLIPModel(BaseModel):
         
         # Precompute text features (done once for all images)
         text_inputs = self.processor(
-            text=texts,
+            text=[t.lower() for t in texts],
             padding="max_length",
+            max_length=64,
             return_tensors="pt",
         )
         text_inputs = {k: v.to(device) for k, v in text_inputs.items()}

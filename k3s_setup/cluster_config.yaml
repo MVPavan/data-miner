@@ -159,7 +159,7 @@ resource_presets:
 workers:
   download:
     kind: StatefulSet
-    replicas: 3
+    replicas: 9
     resources: ${resource_presets.medium}
     schedule_on: all
     extra_env:
