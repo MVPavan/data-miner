@@ -65,9 +65,22 @@ def populate_cmd(config: Optional[str], dry_run: bool):
     
     # 1. YouTube Search Queries (if enabled)
     search_enabled = input_cfg.get("search_enabled", True)
-    search_queries = input_cfg.get("search_queries", [])
+    search_queries = list(input_cfg.get("search_queries", []))
     max_results = input_cfg.get("max_results_per_query", 50)
-    
+
+    # Load additional queries from YAML file (top-level 'queries' list)
+    search_queries_file = input_cfg.get("search_queries_file")
+    if search_queries_file:
+        sqf_path = Path(search_queries_file)
+        if sqf_path.exists():
+            from omegaconf import OmegaConf
+            sqf_cfg = OmegaConf.to_container(OmegaConf.load(sqf_path), resolve=True)
+            file_queries = sqf_cfg.get("queries", [])
+            search_queries.extend(file_queries)
+            click.echo(f"Loaded {len(file_queries)} queries from {sqf_path}")
+        else:
+            click.echo(f"Warning: search_queries_file not found: {sqf_path}", err=True)
+
     if search_enabled and search_queries:
         for query in search_queries:
             click.echo(f"Searching: {query}...")

@@ -10,13 +10,18 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy project files
+# Copy dependency specs only
 COPY pyproject.toml uv.lock README.md ./
+
+# Install uv and all dependencies (cached unless deps change)
+RUN pip install uv && \
+    uv pip install --system --no-cache-dir --no-install-project -e .
+
+# Copy source code (layer busts on code changes, but deps layer above stays cached)
 COPY data_miner/ ./data_miner/
 
-# Install uv and dependencies
-RUN pip install uv && \
-    uv pip install --system --no-cache-dir -e .
+# Register the package and data-miner entry point (fast, deps already installed)
+RUN uv pip install --system --no-cache-dir -e .
 
 # Create non-root user
 RUN useradd -m -u 1000 dataminer

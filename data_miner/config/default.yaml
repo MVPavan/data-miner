@@ -30,12 +30,13 @@ input:
   search_queries: []
   #   - "glass door installation"
   #   - "sliding glass door"
+  search_queries_file: null  # Path to YAML file with a top-level 'queries' list
   max_results_per_query: 50
-  
+
   # Direct URLs
   urls: []
   #   - "https://www.youtube.com/watch?v=abc123"
-  
+
   # URL file (one URL per line)
   url_file: null  # e.g., "urls.txt"
 
