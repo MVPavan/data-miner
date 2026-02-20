@@ -297,6 +297,47 @@ def generate_infrastructure():
                 },
             }]
 
+        # Grafana: generate datasource provisioning ConfigMap and wire it in
+        if svc_name == "grafana":
+            loki_base_url = f"http://loki.{namespace}.svc.cluster.local:3100"
+            datasources_content = yaml.dump(
+                {
+                    "apiVersion": 1,
+                    "datasources": [
+                        {
+                            "name": "Loki",
+                            "type": "loki",
+                            "access": "proxy",
+                            "url": loki_base_url,
+                            "isDefault": True,
+                            "version": 1,
+                            "editable": False,
+                        }
+                    ],
+                },
+                default_flow_style=False,
+                sort_keys=False,
+            )
+            ds_cm = {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "grafana-datasources", "namespace": namespace},
+                "data": {"datasources.yaml": datasources_content},
+            }
+            cm_path = infra_dir / "grafana-datasources-configmap.yaml"
+            with open(cm_path, "w") as f:
+                yaml.dump(ds_cm, f, default_flow_style=False, sort_keys=False)
+            print(f"  Generated {cm_path.relative_to(MANIFESTS_DIR.parent)}")
+
+            if "volumeMounts" not in container:
+                container["volumeMounts"] = []
+            container["volumeMounts"].append(
+                {"name": "provisioning", "mountPath": "/etc/grafana/provisioning/datasources"}
+            )
+            volumes.append(
+                {"name": "provisioning", "configMap": {"name": "grafana-datasources"}}
+            )
+
         pod_spec = {
             "nodeSelector": {"kubernetes.io/hostname": master},
             "containers": [container],

@@ -12,6 +12,7 @@ import time
 import threading
 import uuid
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Optional, Union
 
 from ..config import (
@@ -59,6 +60,9 @@ class _BaseWorker(ABC):
         # Signal handlers
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         signal.signal(signal.SIGINT, self._handle_shutdown)
+
+        # Liveness probe marker — K8s checks for this file
+        Path("/tmp/healthy").touch()
     
     def _init_project(self):
         """Resolve project_id from config at startup."""

@@ -8,7 +8,7 @@ Guidelines for contributing to Data Miner.
 
 ```bash
 # Clone and install in dev mode
-git clone https://github.com/tycoai/data_miner.git
+git clone https://github.com/MVPavan/data_miner.git
 cd data_miner
 pip install -e ".[dev]"
 

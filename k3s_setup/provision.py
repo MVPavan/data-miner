@@ -10,7 +10,7 @@
 #   pyinfra inventory.py provision.py --data action=storage   # DB storage dirs
 #   pyinfra inventory.py provision.py --data action=seaweedfs # SeaweedFS node prep
 #   pyinfra inventory.py provision.py --data action=labels    # Node labels
-#   pyinfra inventory.py provision.py --data action=docker    # Build & distribute image
+#   pyinfra inventory.py provision.py --data action=docker    # Build, deploy, and verify image on nodes
 #   pyinfra inventory.py provision.py --data action=clean     # Full cleanup
 #   pyinfra inventory.py provision.py --data action=clean_k3s
 #   pyinfra inventory.py provision.py --data action=clean_images
@@ -72,7 +72,7 @@ service = "k3s" if is_master else "k3s-agent"
 NVIDIA_PLUGIN_VERSION = cfg().nvidia.plugin_version
 NVIDIA_PLUGIN_URL = f"https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/{NVIDIA_PLUGIN_VERSION}/nvidia-device-plugin.yml"
 
-# Image paths are now per-image-type, computed in build_and_distribute()
+# Image paths are now per-image-type, computed in docker_deploy()
 # Track which images have been built in this pyinfra run (avoids deadlock)
 _images_built = set()
 
@@ -305,24 +305,24 @@ def apply_labels():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Docker Image Build & Distribute
+# Docker Image Build & Deploy
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_and_distribute():
-    """Build and distribute the appropriate Docker image to this node.
+def docker_deploy():
+    """Build and deploy the appropriate Docker image to this node.
 
     - Skips storage_only nodes (they don't run data-miner workers)
-    - Builds base or gpu image based on node's 'image' config
-    - Uses file lock to ensure image is built only once per type
+    - Builds base or gpu image (docker layer cache makes this fast)
+    - Copies tar only if content changed (pyinfra MD5 comparison)
+    - Removes old image from k3s containerd before importing
+    - Imports fresh tar and verifies digest
     """
     hostname = host.data.hostname
 
-    # Skip storage-only nodes — they don't run data-miner workers
     if host.data.get("storage_only", False):
         print(f"[{hostname}] Skipping — storage_only node, no image needed")
         return
 
-    # Determine which image this node needs
     image_type = get_node_image_type(hostname)
     if not image_type:
         print(f"[{hostname}] Skipping — no image configured")
@@ -333,44 +333,51 @@ def build_and_distribute():
     full_image = img_cfg["full_name"]
     dockerfile = img_cfg["dockerfile"]
     tar_path = f"/tmp/{image_name}.tar"
-
-    force = os.environ.get("FORCE", "false").lower() == "true"
     dockerfile_path = os.path.join(os.path.dirname(__file__), dockerfile)
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    # Build image if not already built in this run
-    if image_type in _images_built:
-        print(f"[{hostname}] Image already built in this run: {full_image}")
-    elif os.path.exists(tar_path) and not force:
-        print(f"[{hostname}] Image tar already exists: {tar_path}")
-        _images_built.add(image_type)
-    else:
-        print(f"[{hostname}] Building Docker Image: {full_image}...")
+    # Build + save tar (docker layer cache makes this fast when nothing changed)
+    if image_type not in _images_built:
+        print(f"[{hostname}] Building Docker image: {full_image}...")
         subprocess.check_call(
             f"docker build -f {dockerfile_path} -t {full_image} {project_root}",
             shell=True,
         )
-        print(f"[{hostname}] Saving Image to {tar_path}...")
+        print(f"[{hostname}] Saving image to {tar_path}...")
         subprocess.check_call(
             f"docker save {full_image} -o {tar_path}",
             shell=True,
         )
         print(f"[{hostname}] Image saved successfully")
         _images_built.add(image_type)
+    else:
+        print(f"[{hostname}] Image already built in this run: {full_image}")
 
-    # Copy to node
-    remote_file = host.get_fact(File, path=tar_path)
-    if force or not remote_file:
-        files.put(
-            name=f"Copy {image_type} image tar to node",
-            src=tar_path,
-            dest=tar_path,
-        )
+    # Copy to node (pyinfra skips if MD5 matches — no manual force needed)
+    files.put(
+        name=f"Copy {image_type} image tar to node",
+        src=tar_path,
+        dest=tar_path,
+    )
 
-    # Import into K3s containerd
+    # Remove old image from k3s containerd (safe no-op if not present)
+    server.shell(
+        name=f"Remove old {image_type} image from K3s",
+        commands=[f"k3s ctr -n k8s.io images rm docker.io/library/{full_image} 2>/dev/null; true"],
+        _sudo=True,
+    )
+
+    # Import fresh tar
     server.shell(
         name=f"Import {image_type} image to K3s",
-        commands=[f"k3s ctr images import {tar_path} --namespace k8s.io"],
+        commands=[f"k3s ctr -n k8s.io images import {tar_path}"],
+        _sudo=True,
+    )
+
+    # Verify — print name + digest of imported image
+    server.shell(
+        name=f"Verify {image_type} image in K3s",
+        commands=[f"k3s ctr -n k8s.io images ls | grep '{image_name}' | awk '{{print $1, $3}}'"],
         _sudo=True,
     )
 
@@ -499,9 +506,9 @@ ACTIONS = {
     "storage": setup_storage,
     "seaweedfs": setup_seaweedfs,
     "labels": apply_labels,
-    "docker": build_and_distribute,
+    "docker": docker_deploy,
     "all": lambda: [f() for f in [deploy_k3s, setup_nvidia, setup_storage,
-                                    setup_seaweedfs, apply_labels, build_and_distribute]],
+                                    setup_seaweedfs, apply_labels, docker_deploy]],
     # Cleanup
     "clean": clean_all,
     "clean_k3s": clean_k3s,

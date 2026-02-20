@@ -64,7 +64,8 @@ k3s_setup/manifests/
 │   ├── postgres-service.yaml               # Headless service
 │   ├── loki-statefulset.yaml               # Loki logging (master node)
 │   ├── loki-service.yaml                   # ClusterIP
-│   ├── grafana-deployment.yaml             # Grafana (master node)
+│   ├── grafana-datasources-configmap.yaml  # Loki datasource auto-provisioning
+│   ├── grafana-deployment.yaml             # Grafana (master node, hostPath + provisioning mount)
 │   ├── grafana-service.yaml                # NodePort :30300
 │   ├── adminer-deployment.yaml             # Adminer DB admin (master node)
 │   └── adminer-service.yaml                # NodePort :30080
@@ -119,9 +120,9 @@ Workers are scheduled based on `schedule_on` in `cluster_config.yaml`:
 ### Infrastructure Pods (data-miner namespace)
 | Pod | Kind | Scheduling | Storage | Port |
 |-----|------|------------|---------|------|
-| postgres-0 | StatefulSet | Master node | hostPath: `${storage.db_path}/postgres` | 5432 |
-| loki-0 | StatefulSet | Master node | hostPath: `${storage.db_path}/loki` | 3100 |
-| grafana | Deployment | Master node | None (ephemeral) | 3000 → NodePort 30300 |
+| postgres-0 | StatefulSet | Master node | hostPath: `/data/data_miner_db/postgres` | 5432 |
+| loki-0 | StatefulSet | Master node | hostPath: `/data/data_miner_db/loki` | 3100 |
+| grafana | Deployment | Master node | hostPath: `/data/data_miner_db/grafana` | 3000 → NodePort 30300 |
 | adminer | Deployment | Master node | None | 8080 → NodePort 30080 |
 
 #### PostgreSQL Details
@@ -131,6 +132,13 @@ Workers are scheduled based on `schedule_on` in `cluster_config.yaml`:
 - **Access from pods:** `postgres.data-miner.svc.cluster.local:5432`
 - **DATABASE_URL:** `postgresql://postgres:postgres@postgres.data-miner.svc.cluster.local:5432/data_miner`
 - **Storage:** Persistent via hostPath on master node
+
+#### Grafana Details
+- **Image:** `grafana/grafana:10.0.0`
+- **Credentials:** `admin` / `admin`
+- **Access:** `http://<any-node-ip>:30300` — NodePort is accessible from all node IPs
+- **Storage:** Persistent via hostPath on master node (`/data/data_miner_db/grafana`)
+- **Loki datasource:** Auto-provisioned via `grafana-datasources` ConfigMap mounted at `/etc/grafana/provisioning/datasources` — no manual setup needed
 
 #### Loki Details
 - **Image:** `grafana/loki:2.9.0`
@@ -144,9 +152,11 @@ Workers are scheduled based on `schedule_on` in `cluster_config.yaml`:
 
 | Service | URL | Purpose |
 |---|---|---|
-| Grafana | `http://<master>:30300` | Monitoring dashboard |
-| Adminer | `http://<master>:30080` | PostgreSQL web admin |
+| Grafana | `http://<any-node-ip>:30300` | Monitoring dashboard (admin/admin) |
+| Adminer | `http://<any-node-ip>:30080` | PostgreSQL web admin |
 | Loki | Internal only | Log aggregation (query via Grafana) |
+
+NodePort services are reachable from **any node's IP** — not just master.
 
 ### Adminer Connection Details
 - System: PostgreSQL
@@ -273,16 +283,7 @@ k3s_app_overrides:
 | `no_storage: true` | Don't contribute storage | Gets FUSE mount, no volume server |
 | `storage_only: true` | Storage node only | No image, no workers, only SeaweedFS |
 | `disk_limit_mb: N` | SeaweedFS disk limit | Limits storage contribution per node |
-| `data_dir: /path` | Custom SeaweedFS data path | Per-node override of `seaweedfs.data_dir` |:
-  postgres:  { kind: StatefulSet, image: postgres:16, port: 5432 }
-  loki:      { kind: StatefulSet, image: grafana/loki:2.9.0, port: 3100 }
-  grafana:   { kind: Deployment, image: grafana/grafana:10.0.0, node_port: 30300 }
-  adminer:   { kind: Deployment, image: adminer:latest, node_port: 30080 }
-
-k3s_app_overrides:
-  output_dir: ${storage.seaweedfs_mount}/data_miner_output
-  device: auto
-```
+| `data_dir: /path` | Custom SeaweedFS data path | Per-node override of `seaweedfs.data_dir` |
 
 ---
 
@@ -299,11 +300,18 @@ pyinfra k3s_setup/inventory.py k3s_setup/provision.py --data action=<ACTION>
 | `storage` | master | Create DB dirs with correct UIDs |
 | `seaweedfs` | all nodes | Install fuse3, create dirs, sysctl tuning |
 | `labels` | master | kubectl label nodes + install NVIDIA device plugin |
-| `docker` | all nodes | Build image, copy tar, import to K3s containerd |
+| `docker` | all nodes | Build image, save tar, copy to node (skips if unchanged), remove old k3s image, import fresh tar, verify digest |
 | `all` | varies | Run all above in order |
 | `clean` | all nodes | Full cleanup: FUSE unmount + SeaweedFS data + images + K3s |
+| `clean_k3s` | all nodes | Uninstall K3s only |
+| `clean_images` | all nodes | Remove Docker images + k3s containerd images |
 | `clean_seaweedfs` | all nodes | Unmount FUSE, remove SeaweedFS data |
+| `clean_db` | master | Remove DB data dirs |
+| `clean_data` | master | Remove application data dirs |
 | `status` | all nodes | Show K3s service status |
+| `restart` | all nodes | Restart K3s service |
+| `stop` | all nodes | Stop K3s service |
+| `uninstall` | all nodes | Uninstall K3s (k3s-uninstall.sh / k3s-agent-uninstall.sh) |
 
 ---
 
@@ -328,10 +336,10 @@ pyinfra k3s_setup/inventory.py k3s_setup/provision.py --data action=<ACTION>
 
 | Issue | Root Cause | Resolution |
 |---|---|---|
-| Download workers crashing (CrashLoopBackOff) | Liveness probe checking `/tmp/healthy` but workers never create it | Removed liveness probes from download/extract workers |
+| Download workers crashing (CrashLoopBackOff) | Liveness probe checking `/tmp/healthy` but workers never created it | Added `Path("/tmp/healthy").touch()` in `_BaseWorker.__init__()` — all worker types inherit this fix |
 | Filter worker failing with `'NoneType' object has no attribute 'replace'` | Transformers 5.x bug with SigLIP2 AutoProcessor | Use `SiglipImageProcessor` + `GemmaTokenizerFast` directly instead of `AutoProcessor` |
 | `blocked_hashtag_patterns` error "Is a directory: '.'" | Empty string `''` in run_config coerced to `Path('.')` | Removed override from run_config, uses default from `default.yaml` |
-| Grafana Loki datasource not showing labels | Loki datasource URL was empty | Updated via Grafana API to correct URL |
+| Grafana Loki datasource not configured | No provisioning — had to be added manually via UI each time | Auto-provisioned via `grafana-datasources` ConfigMap mounted at `/etc/grafana/provisioning/datasources` — generated by `generate_manifests.py` |
 | pavanjci went `NotReady` after containerd config | Missing CNI `bin_dir`/`conf_dir` in config.toml.tmpl | Added proper CNI paths alongside nvidia runtime config |
 | GPU pods stuck `Pending` with `nvidia.com/gpu` limits | Only 1 physical GPU, multiple pods requesting 1 GPU each | Removed limits; using nvidia as default runtime for time-sharing |
 
