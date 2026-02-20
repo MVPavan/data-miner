@@ -8,8 +8,8 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Use system Python (no virtualenv)
-ENV UV_SYSTEM_PYTHON=1
+# Use .venv Python in container
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy dependency specs only
 COPY pyproject.toml uv.lock README.md ./

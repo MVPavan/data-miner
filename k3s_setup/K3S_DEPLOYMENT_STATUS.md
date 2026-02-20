@@ -385,6 +385,8 @@ kubectl apply -f k3s_setup/manifests/infrastructure/
 pyinfra k3s_setup/inventory.py k3s_setup/provision.py -y --data action=docker
 kubectl rollout restart deployment -n data-miner
 kubectl rollout restart statefulset -n data-miner
+kubectl -n data-miner rollout restart daemonsets,deployments,statefulsets
+kubectl delete pods --all -n data-miner
 
 # Full teardown (preserves data)
 python k3s_setup/orchestrate.py teardown

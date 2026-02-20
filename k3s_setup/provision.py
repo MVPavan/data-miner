@@ -308,33 +308,15 @@ def apply_labels():
 # Docker Image Build & Deploy
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def docker_deploy():
-    """Build and deploy the appropriate Docker image to this node.
-
-    - Skips storage_only nodes (they don't run data-miner workers)
-    - Builds base or gpu image (docker layer cache makes this fast)
-    - Copies tar only if content changed (pyinfra MD5 comparison)
-    - Removes old image from k3s containerd before importing
-    - Imports fresh tar and verifies digest
-    """
-    hostname = host.data.hostname
-
-    if host.data.get("storage_only", False):
-        print(f"[{hostname}] Skipping — storage_only node, no image needed")
-        return
-
-    image_type = get_node_image_type(hostname)
-    if not image_type:
-        print(f"[{hostname}] Skipping — no image configured")
-        return
-
+def _deploy_single_image(image_type: str, hostname: str):
+    """Build, copy, import and verify one image on the current host."""
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     img_cfg = get_image_config(image_type)
     image_name = img_cfg["name"]
     full_image = img_cfg["full_name"]
     dockerfile = img_cfg["dockerfile"]
     tar_path = f"/tmp/{image_name}.tar"
     dockerfile_path = os.path.join(os.path.dirname(__file__), dockerfile)
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     # Build + save tar (docker layer cache makes this fast when nothing changed)
     if image_type not in _images_built:
@@ -396,6 +378,35 @@ def docker_deploy():
         ],
         _sudo=True,
     )
+
+
+def docker_deploy():
+    """Build and deploy Docker image(s) to this node.
+
+    - Skips storage_only nodes (they don't run data-miner workers)
+    - GPU nodes get both base + gpu: download workers (schedule_on: all) land
+      on GPU nodes too and use data-miner-base, so both images are required
+    - Copies tar only if content changed (pyinfra MD5 comparison)
+    - Removes old image from k3s containerd before importing
+    - Imports fresh tar and verifies digest
+    """
+    hostname = host.data.hostname
+
+    if host.data.get("storage_only", False):
+        print(f"[{hostname}] Skipping — storage_only node, no image needed")
+        return
+
+    image_type = get_node_image_type(hostname)
+    if not image_type:
+        print(f"[{hostname}] Skipping — no image configured")
+        return
+
+    # GPU nodes also need base image: download workers (schedule_on: all) land here
+    # and their manifest uses data-miner-base as the lowest common denominator image.
+    if image_type == "gpu":
+        _deploy_single_image("base", hostname)
+
+    _deploy_single_image(image_type, hostname)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
