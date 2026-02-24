@@ -159,7 +159,7 @@ resource_presets:
 workers:
   download:
     kind: StatefulSet
-    replicas: 9
+    replicas: 3
     resources: ${resource_presets.medium}
     schedule_on: all
     extra_env:
@@ -183,22 +183,34 @@ workers:
       period: 30
 
   filter:
-    replicas: 0
+    replicas: 1
     resources: ${resource_presets.gpu}
     schedule_on: gpu
     hf_token: true
+    runtime_class: nvidia
+    extra_env:
+      - name: NVIDIA_VISIBLE_DEVICES
+        value: all
 
   dedup:
-    replicas: 0
+    replicas: 1
     resources: ${resource_presets.gpu}
     schedule_on: gpu
     hf_token: true
+    runtime_class: nvidia
+    extra_env:
+      - name: NVIDIA_VISIBLE_DEVICES
+        value: all
 
   detect:
     replicas: 0
     resources: ${resource_presets.gpu}
     schedule_on: gpu
     hf_token: true
+    runtime_class: nvidia
+    extra_env:
+      - name: NVIDIA_VISIBLE_DEVICES
+        value: all
 
   monitor:
     replicas: 1

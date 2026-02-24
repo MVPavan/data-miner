@@ -80,21 +80,9 @@ SEAWEED_DATA = cfg().seaweedfs.data_dir
 SEAWEED_MOUNT = cfg().seaweedfs.mount_path
 MOUNT_PARENT = str(os.path.dirname(SEAWEED_MOUNT))
 
-# Containerd config template — NVIDIA runtime + CNI paths (critical for node Ready)
-CONTAINERD_CONFIG_TOML_TMPL = """\
-[plugins."io.containerd.grpc.v1.cri".cni]
-  bin_dir = "/opt/cni/bin"
-  conf_dir = "/var/lib/rancher/k3s/agent/etc/cni/net.d"
-
-[plugins."io.containerd.grpc.v1.cri".containerd]
-  default_runtime_name = "nvidia"
-
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."nvidia"]
-  runtime_type = "io.containerd.runc.v2"
-
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."nvidia".options]
-  BinaryName = "/usr/bin/nvidia-container-runtime"
-"""
+# NOTE: K3s v1.31 auto-detects nvidia-container-runtime and configures the nvidia
+# runtime (with BinaryName) in config.toml automatically. No config.toml.tmpl is needed.
+# GPU pods use runtimeClassName: nvidia + NVIDIA_VISIBLE_DEVICES=all env var instead.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -168,24 +156,8 @@ def setup_nvidia():
     if not is_master:
         return
 
-    # Create containerd config directory
-    files.directory(
-        name="Create containerd config dir",
-        path="/var/lib/rancher/k3s/agent/etc/containerd",
-        _sudo=True,
-    )
-
-    # Write config.toml.tmpl
-    server.shell(
-        name="Write containerd config.toml.tmpl",
-        commands=[
-            f"cat > /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl << 'ENDOFCONFIG'\n"
-            f"{CONTAINERD_CONFIG_TOML_TMPL}ENDOFCONFIG"
-        ],
-        _sudo=True,
-    )
-
-    # Generate CDI spec
+    # K3s v1.31 auto-detects nvidia-container-runtime and configures the nvidia
+    # runtime in containerd config.toml. Only regenerate the CDI spec here.
     server.shell(
         name="Generate CDI spec",
         commands=[
@@ -194,9 +166,6 @@ def setup_nvidia():
         ],
         _sudo=True,
     )
-
-    # Restart K3s to pick up config
-    systemd.service(name="Restart K3s", service="k3s", restarted=True, _sudo=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -108,6 +108,10 @@ def build_worker_manifest(name, worker_cfg):
         ],
     }
 
+    # Runtime class (e.g. nvidia for GPU pods)
+    if worker_cfg.get("runtime_class"):
+        pod_spec["runtimeClassName"] = worker_cfg.runtime_class
+
     # Scheduling
     if "node_selector" in schedule:
         pod_spec["nodeSelector"] = schedule["node_selector"]

@@ -57,9 +57,9 @@ class SigLIPModel(BaseModel):
         logger.info(f"Loading SigLIP model: {self.model_id}")
         
         try:
-            from transformers import AutoModel, Siglip2Processor
+            from transformers import AutoModel, AutoProcessor
 
-            self.processor = Siglip2Processor.from_pretrained(self.model_id)
+            self.processor = AutoProcessor.from_pretrained(self.model_id)
             if self.device_map == "auto" and torch.cuda.is_available():
                 self.device_map = "cuda"
             self.model = AutoModel.from_pretrained(

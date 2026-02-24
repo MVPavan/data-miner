@@ -365,12 +365,24 @@ pyinfra k3s_setup/inventory.py k3s_setup/provision.py --data action=<ACTION>
 ## CLI Commands
 
 ```bash
+# Phase 1: Provision all nodes
+pyinfra k3s_setup/inventory.py k3s_setup/provision.py --data action=all
+
+# Phase 2: Deploy to K8s
+python k3s_setup/orchestrate.py setup --run-config run_configs/<your_config>.yaml
+or 
+python k3s_setup/generate_manifests.py --run-config run_configs/<your_config>.yaml
+
 # Check pipeline status
 kubectl exec -n data-miner deploy/monitor-worker -- python -m data_miner.cli status
+kubectl exec -it -n data-miner deploy/monitor-worker -- watch "python -m data_miner.cli status"
+kubectl exec -it -n data-miner deploy/monitor-worker -- watch "python -m data_miner.cli status --project forklift_palletjack_v1"
 
 # View worker logs
 kubectl logs -n data-miner -l app=download-worker --tail=50
 kubectl logs -n data-miner deploy/filter-worker --tail=50
+# Follows logs from ALL filter-worker pods
+kubectl logs -n data-miner -l app=filter-worker -f --max-log-requests=10
 
 # Scale workers
 kubectl -n data-miner scale statefulset download-worker --replicas=6
