@@ -9,17 +9,13 @@ Usage:
     python setup_ssh_keys.py --test       # Test SSH connectivity to all nodes
     python setup_ssh_keys.py --clean      # Delete existing key + clean known_hosts entries
     python setup_ssh_keys.py --regenerate # Delete, regenerate, and copy to all nodes
-    python setup_ssh_keys.py --sudo       # Configure passwordless sudo on all nodes
 """
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-# Add k3s_setup dir to path so cluster.py can be imported from project root
-sys.path.insert(0, os.path.dirname(__file__))
 from cluster import cfg, nodes
 
 
@@ -30,10 +26,7 @@ def ssh_key_path():
 
 def host_list():
     """Return [(ip, user, hostname), ...] from cluster config."""
-    return [
-        (str(n.ip), n.ssh_user, name)
-        for name, n in nodes().items()
-    ]
+    return [(str(n.ip), n.ssh_user, name) for name, n in nodes().items()]
 
 
 def generate_key(key_path):
@@ -99,7 +92,14 @@ def copy_keys(key_path, hosts):
     for ip, user, hostname in hosts:
         print(f"[{hostname} / {ip}] copying key...")
         r = subprocess.run(
-            ["ssh-copy-id", "-i", pub_key, "-o", "StrictHostKeyChecking=no", f"{user}@{ip}"],
+            [
+                "ssh-copy-id",
+                "-i",
+                pub_key,
+                "-o",
+                "StrictHostKeyChecking=no",
+                f"{user}@{ip}",
+            ],
         )
         if r.returncode != 0:
             print(f"[{hostname} / {ip}] FAILED")
@@ -114,8 +114,17 @@ def test_connectivity(key_path, hosts):
     failed = []
     for ip, user, hostname in hosts:
         r = subprocess.run(
-            ["ssh", "-i", str(key_path), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-             f"{user}@{ip}", "echo OK"],
+            [
+                "ssh",
+                "-i",
+                str(key_path),
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                f"{user}@{ip}",
+                "echo OK",
+            ],
             capture_output=True,
         )
         status = "OK" if r.returncode == 0 else "FAILED"
@@ -125,35 +134,21 @@ def test_connectivity(key_path, hosts):
     return failed
 
 
-def setup_passwordless_sudo(key_path, hosts):
-    """Configure passwordless sudo on all cluster nodes.
-
-    Requires SSH key access. Will prompt for sudo password once per node.
-    """
-    failed = []
-    cmd = 'echo "$USER ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/$USER && sudo chmod 440 /etc/sudoers.d/$USER'
-
-    for ip, user, hostname in hosts:
-        print(f"[{hostname} / {ip}] configuring passwordless sudo...")
-        r = subprocess.run(
-            ["ssh", "-i", str(key_path), "-t", f"{user}@{ip}", cmd],
-        )
-        if r.returncode != 0:
-            print(f"[{hostname} / {ip}] FAILED")
-            failed.append(hostname)
-        else:
-            print(f"[{hostname} / {ip}] OK")
-    return failed
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Setup SSH keys for K3s cluster nodes (reads from cluster_config.yaml)",
     )
-    parser.add_argument("--test", action="store_true", help="Test SSH connectivity only")
-    parser.add_argument("--clean", action="store_true", help="Delete existing key and clean known_hosts")
-    parser.add_argument("--regenerate", action="store_true", help="Delete existing key and regenerate + copy")
-    parser.add_argument("--sudo", action="store_true", help="Configure passwordless sudo on all nodes")
+    parser.add_argument(
+        "--test", action="store_true", help="Test SSH connectivity only"
+    )
+    parser.add_argument(
+        "--clean", action="store_true", help="Delete existing key and clean known_hosts"
+    )
+    parser.add_argument(
+        "--regenerate",
+        action="store_true",
+        help="Delete existing key and regenerate + copy",
+    )
     args = parser.parse_args()
 
     key_path = ssh_key_path()
@@ -167,12 +162,6 @@ def main():
         delete_key(key_path)
         clean_known_hosts(hosts)
         print("\nCleanup complete.")
-    elif args.sudo:
-        failed = setup_passwordless_sudo(key_path, hosts)
-        if failed:
-            print(f"\nFailed: {', '.join(failed)}")
-            sys.exit(1)
-        print("\nPasswordless sudo configured on all nodes.")
     elif args.test:
         failed = test_connectivity(key_path, hosts)
         if failed:
