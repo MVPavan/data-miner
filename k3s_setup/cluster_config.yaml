@@ -105,6 +105,11 @@ seaweedfs:
 nvidia:
   plugin_version: "v0.14.0"
 
+# HuggingFace model cache — shared across all GPU workers via hostPath.
+# Models are downloaded once and reused across pod restarts.
+hf_cache:
+  host_path: /data/all_cache/hf_home
+
 database_url: "postgresql://postgres:postgres@postgres.${cluster.namespace}.svc.cluster.local:5432/data_miner"
 loki_url: "http://loki.${cluster.namespace}.svc.cluster.local:3100/loki/api/v1/push"
 
@@ -193,7 +198,7 @@ workers:
         value: all
 
   dedup:
-    replicas: 1
+    replicas: 0
     resources: ${resource_presets.gpu}
     schedule_on: gpu
     hf_token: true

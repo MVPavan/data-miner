@@ -390,6 +390,7 @@ kubectl -n data-miner scale deployment extract-worker --replicas=4
 
 # Regenerate manifests after config change
 python k3s_setup/generate_manifests.py --run-config run_configs/glass_door.yaml
+kubectl apply -f k3s_setup/manifests/config/configmap.yaml
 kubectl apply -f k3s_setup/manifests/workers/
 kubectl apply -f k3s_setup/manifests/infrastructure/
 

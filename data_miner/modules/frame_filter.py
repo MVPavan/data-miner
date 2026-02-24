@@ -119,6 +119,57 @@ class FrameFilter:
             )
             ###############################
 
+        def debug_frame_paths(frame_paths: list[Path], frame_names: list[str] = []):
+            ###### just for debug ##########
+            print("DEBUG: Frame paths:")
+            fpl = len(frame_paths)
+            assert pos_scores.shape[0] == fpl, f"Expected pos_scores to have {fpl} rows, got {pos_scores.shape[0]}"
+            for i, path in enumerate(frame_paths):
+                _ps = pos_scores[i].max()
+                _pp = positive_prompts[pos_scores[i].argmax()]
+                _ns = neg_scores[i].max() if negative_prompts else 0.0
+                _np = negative_prompts[neg_scores[i].argmax()] if negative_prompts else 'N/A'
+                _js = junk_scores[i].max() if junk_prompts else 0.0
+                _jp = junk_prompts[junk_scores[i].argmax()] if junk_prompts else 'N/A'
+                # if _ps > self.config.positive_thr or _ns > self.config.negative_thr or _js > self.config.junk_thr:
+                if frame_names and path.stem not in frame_names:
+                    continue
+                print(
+                    f"{i}: {path.name} \n"
+                    f"  Pos: {_ps:.3f} - {_pp}, \n"
+                    f"  Neg: {_ns:.3f} - {_np}, \n"
+                    f"  Junk: {_js:.3f} - {_jp}"
+                )
+            ###############################
+        
+        def sorted_scores_prompts(idx:int) -> list[tuple[str, float]]:
+            print("DEBUG: Sorted scores:")
+            sorted_pos = sorted(
+                [(float(pos_scores[idx, i]), positive_prompts[i]) for i in range(len(positive_prompts))],
+                key=lambda x: x[0],
+                reverse=True
+            )
+            sorted_neg = sorted(
+                [(float(neg_scores[idx, i]), negative_prompts[i]) for i in range(len(negative_prompts))],
+                key=lambda x: x[0],
+                reverse=True
+            ) if negative_prompts else []
+            sorted_junk = sorted(
+                [(float(junk_scores[idx, i]), junk_prompts[i]) for i in range(len(junk_prompts))],
+                key=lambda x: x[0],
+                reverse=True
+            ) if junk_prompts else []   
+            
+            for score, prompt in sorted_pos:
+                print('POSITIVE  -', end='')
+                print(f"  {score:.3f} - {prompt}")
+            for score, prompt in sorted_neg:
+                print('NEGATIVE  -', end='')
+                print(f"  {score:.3f} - {prompt}")
+            for score, prompt in sorted_junk:
+                print('JUNK  -', end='')
+                print(f"  {score:.3f} - {prompt}")
+
         if not frame_paths:
             return FilterResult(total_frames=0, passed_frames=0)
         
@@ -133,7 +184,7 @@ class FrameFilter:
         
         logger.info(
             f"Filtering {len(frame_paths)} frames "
-            f"({len(positive_prompts)} positive, {len(negative_prompts)} negative prompts)"
+            f"({len(positive_prompts)} positive, {len(negative_prompts)} negative, {len(junk_prompts)} junk prompts)"
         )
         
         # Load model

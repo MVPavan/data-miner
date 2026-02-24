@@ -174,6 +174,7 @@ def visualize_remote_view_images_multiple(
         if port != 0:
             if dataset is None:
                 dataset = load_dataset(dataset_config)
+                dataset.create_index("filepath")
                 session = fo.launch_app(dataset, address="0.0.0.0", port=port)
             else:
                 session.dataset = load_dataset(dataset_config)
@@ -181,8 +182,8 @@ def visualize_remote_view_images_multiple(
             sessions.append(visualize_remote_view_images(dataset_config, wait=False))
 
     # run in infinite loop
-    # while True:
-    #     time.sleep(10)
+    while True:
+        time.sleep(10)
 
 
 def dataset_config_creator(
@@ -221,16 +222,18 @@ if __name__ == "__main__":
     #     "delivery_filtered_v2_dedup": "/mnt/data_2/pavan/project_helpers/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
     # }
 
-    # dataset_paths = {
-    #     "door_crops": "/data/datasets/intel_datasets/doors_croped/doors_selected_3k_crops",
-    # }
+    dataset_paths = {
+        # "flpj": "/swdfs_mnt/swshared/data_miner_output/frames_raw",
+        "zzyRgnD77t0_filtered": "/data/pavan/tycoai/project_helpers/data_miner/output/temp/zzyRgnD77t0/frames_filtered_v2",
+        "O-D9FiUmzNc_filtered": "/data/pavan/tycoai/project_helpers/data_miner/output/temp/O-D9FiUmzNc/frames_filtered_v2"
+    }
 
     # # visualize_remote_view_images(dataset_config=delivery_videos)
-    # visualize_remote_view_images_multiple(
-    #     dataset_configs=dataset_config_creator(dataset_paths, port_start=7770),
-    #     port=0,  # if port not zero, all datasets will be visualized in same port
-    #     # ignoring individual dataset ports
-    # )
+    visualize_remote_view_images_multiple(
+        dataset_configs=dataset_config_creator(dataset_paths, port_start=7770),
+        port=0,  # if port not zero, all datasets will be visualized in same port
+        # ignoring individual dataset ports
+    )
 
     # delivery_filtered_v2_dedup_md = DatasetConfig(
     #     name="delivery_filtered_v2_dedup",
@@ -285,21 +288,21 @@ if __name__ == "__main__":
     #     port=7774,
     # )
     # visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)
-    modify_yolo_qwen_rater_labels(
-        yolo_pred_folder="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations",
-        output_folder="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations_modified",
-    )
-    delivery_filtered_v2_dedup_md = DatasetConfig(
-        name="delivery_filtered_v2_dedup_qwen_rater",
-        images_dir="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
-        dataset_type="images",
-        yolo_pred_folders=[
-            "/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations_modified",
-        ],
-        prediction_fields=[
-            "qwen3vl_rater",
-        ],
-        overwrite=True,
-        port=7775,
-    )
-    visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)
+    # modify_yolo_qwen_rater_labels(
+    #     yolo_pred_folder="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations",
+    #     output_folder="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations_modified",
+    # )
+    # delivery_filtered_v2_dedup_md = DatasetConfig(
+    #     name="delivery_filtered_v2_dedup_qwen_rater",
+    #     images_dir="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/frames_filtered_v2_dedup",
+    #     dataset_type="images",
+    #     yolo_pred_folders=[
+    #         "/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations_modified",
+    #     ],
+    #     prediction_fields=[
+    #         "qwen3vl_rater",
+    #     ],
+    #     overwrite=True,
+    #     port=7775,
+    # )
+    # visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)

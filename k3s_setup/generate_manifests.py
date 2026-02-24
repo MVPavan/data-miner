@@ -55,7 +55,7 @@ def build_worker_manifest(name, worker_cfg):
         },
     ]
 
-    # HF token (optional)
+    # HF token + model cache (optional, for GPU workers)
     if worker_cfg.get("hf_token", False):
         env.append({
             "name": "HF_TOKEN",
@@ -63,6 +63,7 @@ def build_worker_manifest(name, worker_cfg):
                 "secretKeyRef": {"name": "hf-secret", "key": "token", "optional": True}
             },
         })
+        env.append({"name": "HF_HOME", "value": "/hf_cache"})
 
     # Extra env vars
     if worker_cfg.get("extra_env"):
@@ -78,7 +79,7 @@ def build_worker_manifest(name, worker_cfg):
         "volumeMounts": [
             {"name": "config", "mountPath": "/config"},
             {"name": "seaweedfs", "mountPath": cfg().seaweedfs.mount_path},
-        ],
+        ] + ([{"name": "hf-cache", "mountPath": "/hf_cache"}] if worker_cfg.get("hf_token", False) else []),
         "resources": resources,
     }
 
@@ -105,7 +106,13 @@ def build_worker_manifest(name, worker_cfg):
                     "type": "Directory",
                 },
             },
-        ],
+        ] + ([{
+            "name": "hf-cache",
+            "hostPath": {
+                "path": cfg().hf_cache.host_path,
+                "type": "DirectoryOrCreate",
+            },
+        }] if worker_cfg.get("hf_token", False) else []),
     }
 
     # Runtime class (e.g. nvidia for GPU pods)
