@@ -51,29 +51,13 @@ class DatasetConfig(BaseModel):
         return result
 
 
-class PredictConfig(BaseModel):
-    """Configuration for prediction generation."""
-    model: Optional[str] = None
-    checkpoint: Optional[Path] = None
-    images: Optional[Path] = None
-    output: Path = Path("./predictions.json")
-    threshold: float = 0.001
-    device: str = "cuda"
-
-    @field_validator("checkpoint", "images", "output", mode="before")
-    @classmethod
-    def convert_paths(cls, v):
-        if v is None:
-            return v
-        return Path(v)
-
-
 class EvaluateConfig(BaseModel):
-    """Configuration for evaluation."""
+    """Configuration for evaluation thresholds and class filtering."""
     dataset: DatasetConfig = Field(default_factory=DatasetConfig)
     iou_threshold: float = 0.5
     conf_threshold: float = 0.001
-    classes: List[int] = Field(default_factory=list)
+    class_ids: Optional[List[int]] = None
+    class_names: Optional[List[str]] = None
 
     @field_validator("dataset", mode="before")
     @classmethod
@@ -86,13 +70,15 @@ class EvaluateConfig(BaseModel):
 
 
 class AnalysisConfig(BaseModel):
-    """Configuration for analysis."""
+    """Configuration for analysis reports and visualisation."""
     precision_targets: List[float] = Field(default_factory=lambda: [0.8, 0.85, 0.9])
-    tpfp_conf_thresholds: List[float] = Field(default_factory=lambda: [0.3, 0.4, 0.5, 0.6])
+    conf_thresholds: List[float] = Field(default_factory=lambda: [0.3, 0.4, 0.5, 0.6])
+    vis_conf_threshold: float = 0.5
+    single_pdf: bool = True
 
 
 class OutputConfig(BaseModel):
-    """Configuration for output."""
+    """Configuration for output paths and caching."""
     path: Path = Path("./results")
     overwrite: bool = False
     use_cache: bool = True
@@ -105,22 +91,17 @@ class OutputConfig(BaseModel):
             return v
         return Path(v)
 
+    @property
+    def dir(self) -> Path:
+        """Alias so callers can use .dir instead of .path."""
+        return self.path
+
 
 class FullConfig(BaseModel):
     """Root configuration containing all sub-configs."""
-    predict: Optional[PredictConfig] = None
     evaluate: Optional[EvaluateConfig] = None
     analyze: Optional[AnalysisConfig] = None
     output: OutputConfig = Field(default_factory=OutputConfig)
-
-    @field_validator("predict", mode="before")
-    @classmethod
-    def convert_predict(cls, v):
-        if v is None:
-            return None
-        if isinstance(v, dict):
-            return PredictConfig(**v)
-        return v
 
     @field_validator("evaluate", mode="before")
     @classmethod

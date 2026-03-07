@@ -1,0 +1,23 @@
+# Example config for: detection-metrics evaluate -c example_config.yaml
+# Only override what differs from defaults (see configs/default.yaml)
+
+evaluate:
+  dataset:
+    gt_path: /path/to/coco_gt.json
+    predictions:
+      - path: /path/to/model_a_preds.json
+        name: model_a
+      - path: /path/to/model_b_preds.json
+        name: model_b
+  iou_threshold: 0.5
+  conf_threshold: 0.001
+
+analyze:
+  precision_targets: [0.8, 0.85, 0.9]
+  conf_thresholds: [0.3, 0.4, 0.5, 0.6]
+  vis_conf_threshold: 0.5
+  single_pdf: true                        # false → separate PDF per plot type
+
+output:
+  path: ./results
+  overwrite: false

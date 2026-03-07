@@ -3,7 +3,6 @@
 from detection_metrics.configs.config import (
     FullConfig,
     EvaluateConfig,
-    PredictConfig,
     AnalysisConfig,
     OutputConfig,
     DatasetConfig,
@@ -14,7 +13,6 @@ from detection_metrics.configs.config import (
 __all__ = [
     "FullConfig",
     "EvaluateConfig",
-    "PredictConfig",
     "AnalysisConfig",
     "OutputConfig",
     "DatasetConfig",
