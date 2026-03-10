@@ -1,0 +1,41 @@
+# Auto-annotation model evaluation config
+# Compares auto-annotation detections against manually annotated GT (doors_dmv2_real)
+
+pred_base_dir: /data/pavan/tycoai/project_helpers/data_miner/output/projects/delivery_pov_v1
+
+models:
+  - name: moondream
+    pred_dir: moondream/frames_filtered_v2_dedup/pred_txt_merged_filtered
+  - name: sam3
+    pred_dir: sam3/frames_filtered_v2_dedup/pred_txt
+  - name: gdino
+    pred_dir: gdino/frames_filtered_v2_dedup/pred_txt
+  - name: owlvit
+    pred_dir: owlvit/frames_filtered_v2_dedup/pred_txt
+
+gt:
+  dataset_path: /data/datasets/data_miner_datasets/doors_dmv2_real
+  splits:
+    - train
+    - valid
+    - test
+
+nms:
+  iou_thresholds:
+    - 0.3
+    - 0.4
+    - 0.5
+    - 0.6
+    - 0.7
+
+# Default confidence for models without confidence scores (e.g. moondream)
+default_confidence: 1.0
+
+# Evaluation settings (for detection_metrics)
+evaluate:
+  iou_threshold: 0.5
+  conf_threshold: 0.001
+  class_ids:
+    - 1  # COCO 1-based category ID for "door"
+
+output_dir: eval_results/auto_annotation
