@@ -10,7 +10,7 @@ import matplotlib
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 
-from detection_metrics.evaluator import EvaluationResult
+from detection_metrics.evaluator import EvaluationResult, PyCocoResult
 from detection_metrics.logging import logger
 
 # Use non-interactive backend for server environments
@@ -354,6 +354,96 @@ class Visualizer:
             plt.close(fig)
             logger.info(f"AP comparison saved to {comparison_file}")
 
+    # -- Summary table --------------------------------------------------
+
+    def plot_summary_table(
+        self,
+        results: Dict[str, EvaluationResult],
+        target_class_ids: Optional[List[int]] = None,
+        coco_results: Optional[Dict[str, PyCocoResult]] = None,
+        *,
+        pdf: Optional[PdfPages] = None,
+    ) -> None:
+        """
+        Render a summary comparison table as the first page of the report.
+
+        Columns: Model | AP | mAP@50 | mAP@50:95 | Max F1 @ conf | Prec @ conf | TP | FP | FN | GT
+        One row per model, one sub-row per class + a totals row.
+        """
+        class_ids = _resolve_class_ids(results, target_class_ids)
+
+        # Build header
+        headers = ["Model", "Class", "AP"]
+        has_coco = coco_results and any(v is not None for v in coco_results.values())
+        if has_coco:
+            headers += ["mAP@50", "mAP@50:95"]
+        headers += ["Max F1", "@ conf", "Prec", "TP", "FP", "FN", "GT"]
+
+        rows = []
+        for model_name, ev in results.items():
+            for cid in class_ids:
+                cm = ev.class_metrics.get(cid)
+                if cm is None:
+                    continue
+                label = self._get_label(cid)
+                # Find max-F1 point
+                if cm.f1:
+                    best_idx = int(np.argmax(cm.f1))
+                    best_f1 = f"{cm.f1[best_idx]:.3f}"
+                    best_conf = f"{cm.conf[best_idx]:.3f}"
+                    best_prec = f"{cm.precision[best_idx]:.3f}"
+                else:
+                    best_f1 = best_conf = best_prec = "-"
+
+                row = [model_name, label, f"{cm.ap:.3f}"]
+                if has_coco:
+                    cr = coco_results.get(model_name) if coco_results else None
+                    if cr:
+                        row += [f"{cr.map_50 * 100:.1f}", f"{cr.map_50_95 * 100:.1f}"]
+                    else:
+                        row += ["-", "-"]
+                row += [
+                    best_f1, best_conf, best_prec,
+                    str(cm.total_tp), str(cm.total_fp),
+                    str(cm.total_gt - cm.total_tp), str(cm.total_gt),
+                ]
+                rows.append(row)
+
+        if not rows:
+            return
+
+        # Render as matplotlib table
+        fig, ax = plt.subplots(
+            figsize=(max(14, len(headers) * 1.4), max(3, 1.0 + len(rows) * 0.45))
+        )
+        ax.axis('off')
+        ax.set_title('Evaluation Summary', fontsize=14, fontweight='bold', pad=12)
+
+        table = ax.table(
+            cellText=rows,
+            colLabels=headers,
+            loc='center',
+            cellLoc='center',
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1.0, 1.5)
+
+        # Style header row
+        for j in range(len(headers)):
+            cell = table[0, j]
+            cell.set_facecolor('#4472C4')
+            cell.set_text_props(color='white', fontweight='bold')
+
+        # Alternate row shading
+        for i in range(len(rows)):
+            color = '#F2F2F2' if i % 2 == 0 else 'white'
+            for j in range(len(headers)):
+                table[i + 1, j].set_facecolor(color)
+
+        plt.tight_layout()
+        self._save_fig(fig, pdf)
+
     # -- Consolidated report -------------------------------------------
 
     def generate_report(
@@ -361,6 +451,7 @@ class Visualizer:
         results: Dict[str, EvaluationResult],
         target_class_ids: Optional[List[int]] = None,
         cm_conf_choices: Optional[Dict[str, List[float]]] = None,
+        coco_results: Optional[Dict[str, PyCocoResult]] = None,
     ) -> Path:
         """
         Generate a single consolidated PDF containing all plots.
@@ -376,6 +467,7 @@ class Visualizer:
         self._check_overwrite(self.report_pdf_file)
 
         with PdfPages(self.report_pdf_file) as pdf:
+            self.plot_summary_table(results, target_class_ids, coco_results, pdf=pdf)
             self.plot_pr_curves(results, target_class_ids, pdf=pdf)
             self.plot_f1_curves(results, target_class_ids, pdf=pdf)
             self.plot_precision_curves(results, target_class_ids, pdf=pdf)

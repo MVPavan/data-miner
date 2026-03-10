@@ -293,9 +293,17 @@ class DetectionMetrics:
 
         cm_conf = {name: acfg.conf_thresholds for name in self._detailed_results}
 
+        # Collect COCO metrics for the summary table
+        coco_results = {
+            name: mr.coco_metrics
+            for name, mr in self.results.items()
+            if mr.coco_metrics is not None
+        } or None
+
         if acfg.single_pdf:
             viz.generate_report(
                 self._detailed_results, target_class_ids, cm_conf,
+                coco_results=coco_results,
             )
         else:
             viz.plot_pr_curves(self._detailed_results, target_class_ids)
