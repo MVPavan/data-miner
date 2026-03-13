@@ -141,6 +141,8 @@ class PyCocoEvaluator:
                 coco_eval_cls.params.catIds = [cat_id]
                 coco_eval_cls.evaluate()
                 coco_eval_cls.accumulate()
+                with io.StringIO() as buf, contextlib.redirect_stdout(buf):
+                    coco_eval_cls.summarize()
                 per_class_ap[cat_id] = float(coco_eval_cls.stats[1])  # AP@0.5
         
         return PyCocoResult(

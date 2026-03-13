@@ -1,0 +1,38 @@
+# Combo merge evaluation config
+# Merges filtered model predictions in all 2/3/4-model combinations
+
+# Source: NMS'd predictions from the individual eval (NMS IoU=0.3)
+source_nms_dir: eval_results/auto_annotation/nms
+
+# Best confidence threshold per model (from best-F1 analysis)
+# Predictions below this threshold are discarded before merging
+models:
+  sam3:
+    nms_iou: 0.3
+    conf_threshold: 0.607
+  gdino:
+    nms_iou: 0.3
+    conf_threshold: 0.295
+  owlvit:
+    nms_iou: 0.3
+    conf_threshold: 0.262
+  moondream:
+    nms_iou: 0.3
+    conf_threshold: 0.0   # no confidence scores, keep all
+
+# NMS IoU thresholds applied after merging models (to remove cross-model duplicates)
+merge_nms_iou_thresholds:
+  - 0.3
+  - 0.5
+
+# GT COCO JSON (from the individual eval)
+gt_coco_path: eval_results/auto_annotation/gt/combined_all_splits_coco.json
+
+# Evaluation settings
+evaluate:
+  iou_threshold: 0.5
+  conf_threshold: 0.001
+  class_ids:
+    - 1
+
+output_dir: eval_results/auto_annotation/combos

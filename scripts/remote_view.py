@@ -197,7 +197,7 @@ def dataset_config_creator(
                 name=name,
                 images_dir=path,
                 dataset_type="images",
-                overwrite=True,
+                overwrite=False,
                 port=_port,
             )
         )
@@ -224,8 +224,15 @@ if __name__ == "__main__":
 
     dataset_paths = {
         # "flpj": "/swdfs_mnt/swshared/data_miner_output/frames_raw",
-        "zzyRgnD77t0_filtered": "/data/pavan/tycoai/project_helpers/data_miner/output/temp/zzyRgnD77t0/frames_filtered_v2",
-        "O-D9FiUmzNc_filtered": "/data/pavan/tycoai/project_helpers/data_miner/output/temp/O-D9FiUmzNc/frames_filtered_v2"
+        # "flpj_filtered": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/frames_filtered",
+        "flpj_dedup_mean": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/frames_dedup_v2_mean",
+        # "flpj_dedup_pool": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/frames_dedup_v2_pool",
+        "flpj_dedup_cls": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/frames_dedup_v2_cls",
+        # "O-D9FiUmzNc_filtered": "/data/pavan/tycoai/project_helpers/data_miner/output/temp/O-D9FiUmzNc/frames_filtered_v2"
+        "flpj_md_filter_mean": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/md_filter_mean/images",
+        "flpj_md_filter_mean_failed": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/md_filter_mean/images_failed",
+        "flpj_yvl_filter_mean": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/yvl_filter_mean/images",
+        "flpj_yvl_filter_mean_failed": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/yvl_filter_mean/images_failed"
     }
 
     # # visualize_remote_view_images(dataset_config=delivery_videos)
