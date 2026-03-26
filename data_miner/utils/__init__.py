@@ -8,6 +8,13 @@ except ImportError:
 
 from .io import save_json, load_json, ensure_dir, get_video_id
 from .validators import validate_youtube_url, validate_image_path
+from .embedding_cache import (
+    build_cache_dir,
+    load_cached_embeddings,
+    save_embeddings,
+    assemble_embeddings,
+    get_embeddings_cached,
+)
 
 __all__ = [
     "resolve_device",
@@ -19,5 +26,10 @@ __all__ = [
     "get_video_id",
     "validate_youtube_url",
     "validate_image_path",
+    "build_cache_dir",
+    "load_cached_embeddings",
+    "save_embeddings",
+    "assemble_embeddings",
+    "get_embeddings_cached",
 ]
 

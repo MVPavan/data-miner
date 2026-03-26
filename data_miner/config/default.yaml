@@ -127,6 +127,10 @@ filter:
   model_id: "siglip2-so400m"  # siglip2-so400m or siglip2-giant
   batch_size: 32
   
+  # Embedding cache (cache passed frames' embeddings for re-filtering)
+  cache_embeddings: true
+  ignore_cache: false
+  
   # Thresholds
   positive_thr: 0.3           # Min score for positive prompts
   negative_thr: 0.3           # Max score for negative prompts

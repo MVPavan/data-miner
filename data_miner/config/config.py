@@ -65,6 +65,10 @@ class FilterConfig(BaseModel):
     junk_thr: float = Field(default=0.3, description="junk threshold should be less than this")
     pos_junk_margin_thr: float = Field(default=0.05, description="Positive must beat junk by this margin")
 
+    # Embedding cache
+    cache_embeddings: bool = Field(default=True)
+    ignore_cache: bool = Field(default=False)
+
 class DeduplicationConfig(BaseModel):
     """Deduplication stage config."""
     output_dir: Path = Field(default=Path("./output/frames_dedup"))
