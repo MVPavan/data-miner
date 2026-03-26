@@ -99,28 +99,122 @@ class Deduplicator:
         """Get the embedding model."""
         return self._model
     
+    def _get_cache_dir(self, input_dir: Path) -> Path:
+        """Build cache directory path from model ID and embedding stage."""
+        if self.config.model_type == DedupModelType.SIGLIP:
+            model_name = "siglip"
+        else:
+            # facebook/dinov3-vitg16-pretrain-lvd1689m → dinov3-vitg16-pretrain-lvd1689m
+            model_name = self.config.dino_model_id.split("/")[-1]
+
+        stage_name = self.config.dino_embedding_stage.value if self.config.model_type != DedupModelType.SIGLIP else "image"
+        cache_dir = input_dir.parent / f"{model_name}_{stage_name}_embeddings"
+        return cache_dir
+
     def _get_embeddings(
         self,
         images: list[Path],
         batch_size: int,
         show_progress: bool,
         stage: DinoEmbeddingStage = DinoEmbeddingStage.POOLER,
+        cache_dir: Optional[Path] = None,
+        ignore_cache: bool = False,
     ) -> np.ndarray:
-        """Get embeddings using the configured model."""
-        self._model.load()
-        
-        if self.config.model_type == DedupModelType.SIGLIP:
-            # SigLIP: Use image features only (no text)
-            return self._get_siglip_embeddings(images, batch_size, show_progress)
+        """Get embeddings using the configured model, with optional caching.
+
+        Saves embeddings to cache batch-by-batch for crash resilience.
+        """
+
+        # Try loading from cache
+        if cache_dir and not ignore_cache:
+            cached, missing_indices = self._load_cached_embeddings(images, cache_dir)
+            if not missing_indices:
+                logger.info(f"Loaded all {len(images)} embeddings from cache")
+                return cached
+            logger.info(f"Cache hit: {len(images) - len(missing_indices)}/{len(images)}, computing {len(missing_indices)} missing")
+            missing_images = [images[i] for i in missing_indices]
         else:
-            # DINO: Use standard embeddings
-            return self._model.get_embeddings(
-                images=images,
-                batch_size=batch_size,
-                show_progress=show_progress,
-                normalize=True,
-                stage=stage
-            )
+            cached = None
+            missing_indices = None
+            missing_images = images
+
+        self._model.load()
+
+        # Compute batch-by-batch, saving each batch to cache immediately
+        if cache_dir:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+        all_computed = []
+        iterator = range(0, len(missing_images), batch_size)
+        if show_progress:
+            iterator = tqdm(iterator, desc="Computing embeddings", unit="batch", leave=False)
+
+        for start in iterator:
+            batch_imgs = missing_images[start:start + batch_size]
+
+            if self.config.model_type == DedupModelType.SIGLIP:
+                batch_embeds = self._get_siglip_embeddings(batch_imgs, batch_size, show_progress=False)
+            else:
+                batch_embeds = self._model.get_embeddings(
+                    images=batch_imgs,
+                    batch_size=batch_size,
+                    show_progress=False,
+                    normalize=True,
+                    stage=stage,
+                )
+
+            all_computed.append(batch_embeds)
+
+            # Save this batch to cache immediately
+            if cache_dir:
+                for i, img in enumerate(batch_imgs):
+                    np.save(cache_dir / f"{img.stem}.npy", batch_embeds[i])
+
+        computed = np.vstack(all_computed)
+
+        # Merge cached + computed
+        if cached is not None and missing_indices:
+            for ci, gi in enumerate(missing_indices):
+                cached[gi] = computed[ci]
+            return cached
+
+        return computed
+
+    def _load_cached_embeddings(
+        self,
+        images: list[Path],
+        cache_dir: Path,
+    ) -> tuple[Optional[np.ndarray], list[int]]:
+        """Load cached embeddings, return (array, missing_indices)."""
+        if not cache_dir.exists():
+            return None, list(range(len(images)))
+
+        missing_indices = []
+        first_embed = None
+        embed_dim = None
+
+        # First pass: find embedding dim from any cached file
+        for img in images:
+            cache_file = cache_dir / f"{img.stem}.npy"
+            if cache_file.exists():
+                first_embed = np.load(cache_file)
+                embed_dim = first_embed.shape[0]
+                break
+
+        if embed_dim is None:
+            return None, list(range(len(images)))
+
+        result = np.zeros((len(images), embed_dim), dtype=np.float32)
+
+        for i, img in enumerate(images):
+            cache_file = cache_dir / f"{img.stem}.npy"
+            if cache_file.exists():
+                result[i] = np.load(cache_file)
+            else:
+                missing_indices.append(i)
+
+        return result, missing_indices
+
     
     def _get_siglip_embeddings(
         self,
@@ -249,6 +343,7 @@ class Deduplicator:
         frame_paths: list[Path],
         copy_files: bool = True,
         show_progress: bool = True,
+        input_dir: Optional[Path] = None,
     ) -> DeduplicationResult:
         """
         Deduplicate frames based on visual similarity.
@@ -316,13 +411,18 @@ class Deduplicator:
             )
         
         logger.info(f"Deduplicating {len(frame_paths)} frames using {self.config.model_type.upper()} + FAISS")
-        
+
+        # Build cache dir if caching enabled and input_dir provided
+        cache_dir = self._get_cache_dir(input_dir) if self.config.cache_embeddings and input_dir else None
+
         # Get embeddings using configured model
         embeddings = self._get_embeddings(
             images=frame_paths,
             batch_size=self.config.batch_size,
             show_progress=show_progress,
             stage=self.config.dino_embedding_stage,
+            cache_dir=cache_dir,
+            ignore_cache=self.config.ignore_cache,
         )
         
         # FAISS-based deduplication (scalable to 50k+ frames)
@@ -369,6 +469,7 @@ class Deduplicator:
         self,
         frame_groups: dict[str, list[Path]],  # video_id -> frame_paths
         show_progress: bool = True,
+        input_dir: Optional[Path] = None,
     ) -> DeduplicationResult:
         """
         Deduplicate frames across multiple videos (two-phase FAISS).
@@ -392,29 +493,34 @@ class Deduplicator:
         
         total_input = sum(len(paths) for paths in frame_groups.values())
         logger.info(f"Two-phase FAISS dedup: {total_input} frames from {len(frame_groups)} videos")
-        
+
+        # Build cache dir if caching enabled and input_dir provided
+        cache_dir = self._get_cache_dir(input_dir) if self.config.cache_embeddings and input_dir else None
+
         # Phase 1: Per-video deduplication
         logger.info("Phase 1: Per-video deduplication...")
         phase1_paths = []
         phase1_removed = 0
-        
+
         video_iterator = frame_groups.items()
         if show_progress:
             video_iterator = tqdm(list(video_iterator), desc="Per-video dedup", unit="video")
-        
+
         for video_id, paths in video_iterator:
             if len(paths) <= 1:
                 phase1_paths.extend(paths)
                 continue
-            
+
             # Get embeddings for this video
             embeddings = self._get_embeddings(
                 images=paths,
                 batch_size=self.config.batch_size,
                 show_progress=False,
                 stage=self.config.dino_embedding_stage,
+                cache_dir=cache_dir,
+                ignore_cache=self.config.ignore_cache,
             )
-            
+
             # FAISS dedup within video
             keep_indices = self._faiss_dedup(
                 embeddings, 
@@ -452,12 +558,14 @@ class Deduplicator:
         # Phase 2: Cross-video deduplication
         logger.info(f"Phase 2: Cross-video deduplication ({len(phase1_paths)} frames)...")
         
-        # Get embeddings for all remaining frames
+        # Get embeddings for all remaining frames (cache already populated from phase 1)
         embeddings = self._get_embeddings(
             images=phase1_paths,
             batch_size=self.config.batch_size,
             show_progress=show_progress,
             stage=self.config.dino_embedding_stage,
+            cache_dir=cache_dir,
+            ignore_cache=self.config.ignore_cache,
         )
         
         # FAISS dedup across all

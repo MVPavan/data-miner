@@ -172,7 +172,7 @@ class FrameFilter:
 
         if not frame_paths:
             return FilterResult(total_frames=0, passed_frames=0)
-        
+
         frame_paths = sorted(frame_paths)
         positive_prompts = self.config.positive_prompts
         negative_prompts = self.config.negative_prompts or []

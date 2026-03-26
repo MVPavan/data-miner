@@ -91,35 +91,6 @@ class ResilientLokiHandler(logging.Handler):
         self._loki_handler.setFormatter(fmt)
 
 
-def _check_loki_connectivity(loki_url: str, timeout: float = 2.0) -> bool:
-    """
-    Check if Loki is reachable by making a quick HTTP request.
-    
-    Args:
-        loki_url: The Loki push URL (e.g., http://localhost:3100/loki/api/v1/push)
-        timeout: Connection timeout in seconds
-        
-    Returns:
-        True if Loki is reachable, False otherwise
-    """
-    try:
-        from urllib.parse import urlparse
-        import socket
-        
-        parsed = urlparse(loki_url)
-        host = parsed.hostname or "localhost"
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        
-        # Quick socket connection test
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        result = sock.connect_ex((host, port))
-        sock.close()
-        
-        return result == 0
-    except Exception:
-        return False
-
 
 def _setup_handlers() -> None:
     """Setup all logging handlers (called once on first logger request)."""
@@ -152,30 +123,39 @@ def _setup_handlers() -> None:
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
     
-    # 3. Loki handler (if available and reachable)
+    # 3. Loki handler (only added if library available AND Loki is reachable;
+    #    skips entirely if Loki is down to avoid blocking on HTTP timeouts)
     try:
         import logging_loki
-        
-        # Check if Loki is reachable before adding the handler
-        if _check_loki_connectivity(LOKI_URL):
-            loki_handler = logging_loki.LokiHandler(
-                url=LOKI_URL,
-                tags={"application": "data_miner", "worker": WORKER_ID},
-                version="1",
-            )
-            # Wrap with resilient handler for runtime connection issues
-            resilient_handler = ResilientLokiHandler(loki_handler)
-            root_logger.addHandler(resilient_handler)
-            _loki_available = True
-            root_logger.info(f"Loki logging enabled: {LOKI_URL}")
-        else:
-            root_logger.info(f"Loki not reachable at {LOKI_URL} - using default logging only")
+        from urllib.parse import urlparse
+
+        # Quick connectivity check before adding handler
+        parsed = urlparse(LOKI_URL)
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        try:
+            sock.connect((parsed.hostname, parsed.port or 3100))
+            sock.close()
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            root_logger.info(f"Loki not reachable at {LOKI_URL}, falling back to console/file logging")
+            raise ConnectionError("Loki not reachable")
+
+        loki_handler = logging_loki.LokiHandler(
+            url=LOKI_URL,
+            tags={"application": "data_miner", "worker": WORKER_ID},
+            version="1",
+        )
+        resilient_handler = ResilientLokiHandler(loki_handler)
+        root_logger.addHandler(resilient_handler)
+        _loki_available = True
+        root_logger.info(f"Loki logging enabled: {LOKI_URL}")
     except ImportError:
         # logging_loki not installed - Loki integration disabled
         pass
     except Exception as e:
-        # Failed to initialize Loki handler (e.g., invalid URL format)
-        root_logger.warning(f"Failed to initialize Loki handler: {e}")
+        if not isinstance(e, ConnectionError):
+            root_logger.warning(f"Failed to initialize Loki handler: {e}")
     
     # 4. Capture uncaught exceptions
     def exception_handler(exc_type, exc_value, exc_tb):

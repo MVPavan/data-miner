@@ -389,7 +389,7 @@ kubectl -n data-miner scale statefulset download-worker --replicas=6
 kubectl -n data-miner scale deployment extract-worker --replicas=4
 
 # Regenerate manifests after config change
-python k3s_setup/generate_manifests.py --run-config run_configs/glass_door.yaml
+python k3s_setup/generate_manifests.py --run-config run_configs/doors_all_v2.yaml
 kubectl apply -f k3s_setup/manifests/config/configmap.yaml
 kubectl apply -f k3s_setup/manifests/workers/
 kubectl apply -f k3s_setup/manifests/infrastructure/
@@ -412,7 +412,7 @@ kubectl port-forward -n data-miner deploy/grafana 30300:3000
 # port-forward Adminer
 kubectl port-forward -n data-miner deploy/adminer 30080:8080
 # port-forward PostgreSQL
-kubectl port-forward -n data-miner statefulset/postgres 5432:543
+kubectl port-forward -n data-miner statefulset/postgres 5432:5432
 kubectl port-forward -n data-miner svc/postgres 5432:5432
 ```
 

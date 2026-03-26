@@ -669,6 +669,47 @@ def clear_video_path_db(session: Session, video_id: str) -> bool:
     return (result.rowcount or 0) > 0
 
 
+def get_filtered_videos_for_raw_cleanup(session: Session) -> list[tuple[str, str]]:
+    """
+    Get videos whose raw frames can be deleted.
+
+    A video is eligible when:
+    - frames_dir is not null (raw frames exist)
+    - ALL project_videos for this video are in a terminal status
+      (FILTERED, FILTERED_EMPTY)
+
+    Returns list of (video_id, frames_dir) tuples.
+    """
+    result = session.exec(
+        text("""
+            SELECT v.video_id, v.frames_dir
+            FROM videos v
+            WHERE v.frames_dir IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM project_videos pv WHERE pv.video_id = v.video_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM project_videos pv
+                  WHERE pv.video_id = v.video_id
+                    AND pv.status NOT IN ('FILTERED', 'FILTERED_EMPTY')
+              )
+        """)
+    )
+    return [(row[0], row[1]) for row in result.fetchall()]
+
+
+def clear_frames_dir_db(session: Session, video_id: str) -> bool:
+    """Clear frames_dir after raw frames have been deleted."""
+    result = session.exec(
+        text("""
+            UPDATE videos SET frames_dir = NULL
+            WHERE video_id = :video_id
+        """).bindparams(video_id=video_id)
+    )
+    session.commit()
+    return (result.rowcount or 0) > 0
+
+
 # =============================================================================
 # Backup Operations (called by backup worker)
 # =============================================================================
@@ -681,7 +722,7 @@ def get_videos_ready_for_backup(session: Session) -> list:
     - status = EXTRACTED
     - frames_dir is not null
     - backed_up = False
-    - ALL project_videos for this video are in terminal status (FILTERED, FILTERED_EMPTY, FAILED)
+    - ALL project_videos for this video are in terminal status (FILTERED, FILTERED_EMPTY)
     
     Returns list of Video objects.
     """

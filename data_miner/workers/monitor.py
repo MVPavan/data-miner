@@ -30,6 +30,8 @@ from ..db.operations import (
     get_long_running_project_video_locks,
     get_extracted_videos_for_cleanup,
     clear_video_path_db,
+    get_filtered_videos_for_raw_cleanup,
+    clear_frames_dir_db,
 )
 from ..logging import get_logger
 
@@ -56,6 +58,7 @@ class ProjectMonitorWorker:
         self.stale_threshold_minutes = self.config.stale_threshold_minutes
         self.long_running_threshold_minutes = self.config.long_running_threshold_minutes
         self.cleanup_extracted_videos = self.config.cleanup_extracted_videos
+        self.cleanup_raw_frames = self.config.cleanup_raw_frames
         self.worker_id = f"monitor-{os.getpid()}"
         self._running = False
         # Track warned locks to avoid spamming logs
@@ -112,6 +115,10 @@ class ProjectMonitorWorker:
                     # Cleanup extracted videos (delete source files)
                     if self.cleanup_extracted_videos:
                         self._cleanup_extracted_videos(session)
+
+                    # Cleanup raw frames once all filtering is done
+                    if self.cleanup_raw_frames:
+                        self._cleanup_raw_frames(session)
                         
             except Exception as e:
                 logger.error(f"[{self.worker_id}] Monitor error: {e}")
@@ -171,6 +178,23 @@ class ProjectMonitorWorker:
             except Exception as e:
                 logger.warning(f"[{self.worker_id}] Failed to delete video {video_id}: {e}")
     
+    def _cleanup_raw_frames(self, session: Session):
+        """Delete raw frame directories once all project filtering is done."""
+        import shutil
+        videos = get_filtered_videos_for_raw_cleanup(session)
+
+        for video_id, frames_dir in videos:
+            try:
+                path = Path(frames_dir)
+                if path.exists():
+                    shutil.rmtree(path)
+                    logger.info(f"[{self.worker_id}] Deleted raw frames: {frames_dir}")
+
+                # Clear frames_dir in DB after deletion (or if dir already gone)
+                clear_frames_dir_db(session, video_id)
+            except Exception as e:
+                logger.warning(f"[{self.worker_id}] Failed to delete raw frames for {video_id}: {e}")
+
     def stop(self):
         """Stop the monitor."""
         self._running = False

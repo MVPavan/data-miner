@@ -41,6 +41,7 @@ def build_worker_manifest(name, worker_cfg):
     # Base env vars
     env = [
         {"name": "DATA_MINER_CONFIG", "value": "/config/config.yaml"},
+        {"name": "TZ", "value": "Asia/Kolkata"},
         {
             "name": "DATABASE_URL",
             "valueFrom": {
@@ -568,7 +569,7 @@ def generate_seaweedfs():
                             "image": image,
                             "args": [
                                 "volume", "-mserver=master:9333", "-ip=$(POD_IP)",
-                                "-port=8080", "-dir=/data", f"-max={disk_limit}",
+                                "-port=8080", "-dir=/data", "-minFreeSpacePercent=1",
                             ],
                             "env": [{"name": "POD_IP", "valueFrom": {"fieldRef": {"fieldPath": "status.podIP"}}}],
                             "ports": [{"containerPort": 8080}, {"containerPort": 18080}],
@@ -604,7 +605,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate K8s manifests from cluster config")
     parser.add_argument(
         "--run-config",
-        default=str(PROJECT_ROOT / "run_configs" / "glass_door.yaml"),
+        default=str(PROJECT_ROOT / "run_configs" / "doors_all_v2.yaml"),
         help="Path to run config YAML for ConfigMap generation",
     )
     args = parser.parse_args()

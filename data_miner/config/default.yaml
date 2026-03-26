@@ -70,6 +70,7 @@ monitor:
   stale_threshold_minutes: 2           # Reset locks older than this
   long_running_threshold_minutes: 30   # Warn about locks older than this
   cleanup_extracted_videos: false      # Delete source videos after extraction
+  cleanup_raw_frames: false            # Delete raw frames after all project filtering is done
 
 # -----------------------------------------------------------------------------
 # Backup Settings (sync frames_raw to remote after filtering complete)
