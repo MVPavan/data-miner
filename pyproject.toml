@@ -48,3 +48,6 @@ data-miner = "data_miner.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+link-mode = "hardlink"
