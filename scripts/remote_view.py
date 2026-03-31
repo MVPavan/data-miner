@@ -239,12 +239,12 @@ if __name__ == "__main__":
         "flpj_dedup_cls_80":"/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.8",
     }
 
-    # # # visualize_remote_view_images(dataset_config=delivery_videos)
-    visualize_remote_view_images_multiple(
-        dataset_configs=dataset_config_creator(dataset_paths, port_start=7770),
-        port=0,  # if port not zero, all datasets will be visualized in same port
-        # ignoring individual dataset ports
-    )
+    # # # # visualize_remote_view_images(dataset_config=delivery_videos)
+    # visualize_remote_view_images_multiple(
+    #     dataset_configs=dataset_config_creator(dataset_paths, port_start=7770),
+    #     port=0,  # if port not zero, all datasets will be visualized in same port
+    #     # ignoring individual dataset ports
+    # )
 
     # delivery_filtered_v2_dedup_md = DatasetConfig(
     #     name="delivery_filtered_v2_dedup",
@@ -332,3 +332,25 @@ if __name__ == "__main__":
     #     port=7776,
     # )
     # visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)
+
+    fl_pj = DatasetConfig(
+        name="fl_pj",
+        images_dir="/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.85",
+        dataset_type="images",
+        yolo_pred_folders=[
+            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/sam3/nms_conf",
+            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/grounding_dino/nms_conf",
+            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/owlvit/nms_conf",
+            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/cross_model_nms",
+
+        ],
+        prediction_fields=[
+            "sam3_nms_conf",
+            "grounding_dino_nms_conf",
+            "owlvit_nms_conf",
+            "cross_model_nms",
+        ],
+        overwrite=True,
+        port=7776,
+    )
+    visualize_remote_view_images(dataset_config=fl_pj)

@@ -569,7 +569,7 @@ def generate_seaweedfs():
                             "image": image,
                             "args": [
                                 "volume", "-mserver=master:9333", "-ip=$(POD_IP)",
-                                "-port=8080", "-dir=/data", "-minFreeSpacePercent=1",
+                                "-port=8080", "-dir=/data", "-minFreeSpacePercent=5",
                             ],
                             "env": [{"name": "POD_IP", "valueFrom": {"fieldRef": {"fieldPath": "status.podIP"}}}],
                             "ports": [{"containerPort": 8080}, {"containerPort": 18080}],
