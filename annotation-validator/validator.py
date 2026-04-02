@@ -34,9 +34,9 @@ from tqdm import tqdm
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
+BASE_URL = os.environ.get("LLM_BASE_URL", "http://localhost:8005/v1")
 API_KEY = os.environ.get("LLM_API_KEY", "dummy")
-MODEL = os.environ.get("LLM_MODEL", "Qwen/Qwen3.5-9B")
+MODEL = os.environ.get("LLM_MODEL", "Qwen/Qwen3.5-27B-FP8")
 
 IMG_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 PROMPT_VERSION = "v1"
@@ -44,6 +44,79 @@ PROMPT_VERSION = "v1"
 # Scoring thresholds (3-tier: keep / fix / discard)
 THRESHOLD_DISCARD = 0.4
 THRESHOLD_FIX = 0.75
+
+
+def build_confusion_class_id(expected: str, detected: str, all_classes: list[str]) -> int:
+    """
+    Map (expected_class, detected_class) to a confusion class ID for YOLO labels.
+
+    For N valid classes, generates:
+      0..N-1      : correct matches (expected[i] == detected[i])
+      N..2N-1     : cross-class swaps (expected[i] → detected[j], j != i, both valid)
+      2N..3N-1    : expected[i] → other (not a valid class)
+
+    For forklift(0), pallet_jack(1):
+      0 = forklift → forklift      (correct)
+      1 = pallet_jack → pallet_jack (correct)
+      2 = pallet_jack → forklift    (mislabel swap)
+      3 = forklift → pallet_jack    (mislabel swap)
+      4 = forklift → other          (wrong object)
+      5 = pallet_jack → other       (wrong object)
+    """
+    all_lower = [c.lower().strip() for c in all_classes]
+    exp_lower = expected.lower().strip()
+    det_lower = detected.lower().strip()
+    n = len(all_classes)
+
+    exp_idx = all_lower.index(exp_lower) if exp_lower in all_lower else -1
+    det_idx = all_lower.index(det_lower) if det_lower in all_lower else -1
+
+    if exp_idx < 0:
+        return 2 * n  # unknown expected class, shouldn't happen
+
+    # Correct match
+    if exp_idx == det_idx:
+        return exp_idx
+
+    # Cross-class swap (both valid classes)
+    if det_idx >= 0:
+        swap_id = n
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    if i == exp_idx and j == det_idx:
+                        return swap_id
+                    swap_id += 1
+
+    # Detected is "other" (not a valid class)
+    other_base = n + n * (n - 1)  # after correct + swaps
+    return other_base + exp_idx
+
+
+def build_confusion_class_names(all_classes: list[str]) -> dict[int, str]:
+    """Build class_id -> name mapping for the confusion labels."""
+    n = len(all_classes)
+    names = {}
+
+    # Correct matches
+    for i, cls in enumerate(all_classes):
+        names[i] = f"{cls}_correct"
+
+    # Cross-class swaps
+    idx = n
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                names[idx] = f"{all_classes[i]}_as_{all_classes[j]}"
+                idx += 1
+
+    # Other
+    for i, cls in enumerate(all_classes):
+        names[idx] = f"{cls}_as_other"
+        idx += 1
+
+    return names
+
 
 # Default classes
 DEFAULT_CLASSES = "forklift,pallet_jack"
@@ -69,21 +142,16 @@ def build_rating_prompt(expected_class: str, all_classes: list[str], class_descr
     """Build the rating prompt for a specific expected class."""
     class_names = ", ".join(all_classes)
 
-    return f"""Look at the RED box in this image. What object is inside it?
+    return f"""What is the main object inside the RED box? Answer one of: {class_names}, or "other".
 
-STEP 1: Identify the object inside the red box. Be specific — say exactly what you see (e.g. "person", "shelf", "wall", "{all_classes[0]}", "{all_classes[-1]}").
-STEP 2: Check if it matches the label "{expected_class}".
-STEP 3: Rate how well the red box covers that object.
-
-DEFINITIONS:
 {class_descriptions}
 
-RETURN only this JSON:
-{{"detected_class": "what_is_in_the_box", "class_match": true/false, "bbox_score": 0.XX}}
+Label says "{expected_class}".
 
-- "detected_class": the actual object inside the red box. NOT what you think should be there.
-- "class_match": true only if detected_class is "{expected_class}"
-- "bbox_score": 0.0-0.4 unusable, 0.4-0.75 needs adjustment, 0.75-1.0 good tight coverage"""
+JSON only:
+{{"detected_class": "your_answer", "class_match": true/false, "bbox_score": 0.0-1.0}}
+
+bbox_score: how well the box fits the object (0=bad, 1=perfect)."""
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +283,7 @@ def parse_json_output(text: str) -> dict:
         text = text.replace(prefix, "")
     text = text.strip()
 
-    # Extract first balanced {...} containing "score"
+    # Extract first balanced {...}
     start = text.find("{")
     if start != -1:
         depth, end = 0, start
@@ -228,16 +296,18 @@ def parse_json_output(text: str) -> dict:
                     end = i + 1
                     break
         candidate = text[start:end]
-        if "bbox_score" in candidate or "score" in candidate:
+        # Fix Python-style literals: single quotes, True/False/None
+        fixed = candidate.replace("'", '"')
+        fixed = fixed.replace("True", "true").replace("False", "false").replace("None", "null")
+        for attempt in (candidate, fixed):
             try:
-                data = json.loads(candidate)
-                # Accept both "bbox_score" and "score" keys
+                data = json.loads(attempt)
                 raw_score = data.get("bbox_score", data.get("score", -1))
                 score = float(raw_score)
                 data["bbox_score"] = max(0.0, min(1.0, score)) if score >= 0 else -1
                 return data
             except (json.JSONDecodeError, ValueError):
-                pass
+                continue
 
     # Fallback: regex extraction
     score_match = re.search(r"\"?(?:bbox_)?score\"?\s*[:=]\s*[\"']?([\d.]+)", text)
@@ -254,39 +324,43 @@ def derive_category(
     class_match: bool | None,
     detected_class: str,
     all_classes: list[str],
-) -> str:
+) -> tuple[str, str]:
     """
-    Derive 3-tier category: keep / fix / discard.
+    Derive (category, sub_category).
 
-    Decision matrix:
-      class_match=True  + bbox_score >= 0.75 → keep
-      class_match=True  + bbox_score >= 0.4  → fix  (adjust bbox)
-      class_match=True  + bbox_score <  0.4  → discard (unusable bbox)
-      class_match=False + valid class + bbox_score >= 0.4 → fix (relabel + maybe adjust bbox)
-      class_match=False + valid class + bbox_score <  0.4 → discard (wrong label AND bad bbox)
-      class_match=False + NOT valid class → discard (not our object)
-      bbox_score < 0 (parse error) → discard
+    Returns:
+      ("keep",    "keep")           — correct class, good bbox
+      ("fix",     "relabel")        — good bbox, wrong class (valid class)
+      ("fix",     "adjust_bbox")    — correct class, bbox needs work
+      ("fix",     "relabel+bbox")   — wrong class AND bbox needs work
+      ("discard", "wrong_class")    — not a valid class
+      ("discard", "bad_bbox")       — correct class but unusable bbox
+      ("discard", "bad_label+bbox") — wrong class AND unusable bbox
+      ("discard", "parse_error")    — model output failed to parse
     """
     if bbox_score < 0:
-        return "discard"
+        return "discard", "parse_error"
 
     valid_classes_lower = {c.lower().strip() for c in all_classes}
     detected_lower = detected_class.lower().strip()
 
     if class_match is False:
-        # Not any of our classes → discard
         if detected_lower not in valid_classes_lower:
-            return "discard"
-        # Valid class but wrong label → fix if bbox is usable
-        return "fix" if bbox_score >= THRESHOLD_DISCARD else "discard"
+            return "discard", "wrong_class"
+        if bbox_score >= THRESHOLD_FIX:
+            return "fix", "relabel"
+        elif bbox_score >= THRESHOLD_DISCARD:
+            return "fix", "relabel+bbox"
+        else:
+            return "discard", "bad_label+bbox"
 
     # class_match is True (or None from parse error)
     if bbox_score >= THRESHOLD_FIX:
-        return "keep"
+        return "keep", "keep"
     elif bbox_score >= THRESHOLD_DISCARD:
-        return "fix"
+        return "fix", "adjust_bbox"
     else:
-        return "discard"
+        return "discard", "bad_bbox"
 
 
 # ---------------------------------------------------------------------------
@@ -356,13 +430,14 @@ def validate_annotation(
     class_match = result.get("class_match")
     detected_class = result.get("detected_class", "unknown")
     bbox_score = result.get("bbox_score", -1)
-    category = derive_category(bbox_score, class_match, detected_class, all_classes)
+    category, sub_category = derive_category(bbox_score, class_match, detected_class, all_classes)
 
     return {
         "class_match": class_match,
         "detected_class": detected_class,
         "bbox_score": bbox_score,
         "category": category,
+        "sub_category": sub_category,
         "latency": latency,
     }
 
@@ -413,13 +488,14 @@ def process_folder(
     class_descriptions: str,
     thinking: bool = False,
     max_workers: int = 4,
+    debug_images: bool = False,
 ):
     """Process all images and rate their annotations."""
     output_dir.mkdir(parents=True, exist_ok=True)
     sidecar_dir = output_dir / "sidecar_json"
-    scored_ann_dir = output_dir / "scored_annotations"
+    yolo_dir = output_dir / "yolo_confusion_labels"
     sidecar_dir.mkdir(exist_ok=True)
-    scored_ann_dir.mkdir(exist_ok=True)
+    yolo_dir.mkdir(exist_ok=True)
 
     # Collect image files
     image_files = sorted(
@@ -445,7 +521,7 @@ def process_folder(
     total_annotations = 0
     latencies = []
 
-    debug_img_dir = output_dir / "debug_images"
+    debug_img_dir = (output_dir / "debug_images") if debug_images else None
 
     def _process_one(img_file: Path, ann_path: Path):
         return img_file, process_single_image(img_file, ann_path, all_classes, class_descriptions, thinking, debug_img_dir)
@@ -485,6 +561,7 @@ def process_folder(
                                 "detected_class": r["detected_class"],
                                 "bbox_score": r["bbox_score"],
                                 "category": r["category"],
+                                "sub_category": r["sub_category"],
                             }
                             for r in results
                         ],
@@ -492,14 +569,15 @@ def process_folder(
                     with open(sidecar_dir / f"{img_file.stem}.json", "w") as f:
                         json.dump(sidecar_data, f, indent=2)
 
-                    # Scored annotations (YOLO + bbox_score + category + detected_class)
+                    # YOLO confusion labels for FiftyOne visualization
                     lines = []
                     for r in results:
                         x_c, y_c, w, h = r["bbox"]
+                        conf_cls = build_confusion_class_id(r["expected_class"], r["detected_class"], all_classes)
                         lines.append(
-                            f"{r['class_id']} {x_c:.6f} {y_c:.6f} {w:.6f} {h:.6f} {r['bbox_score']:.3f} {r['category']} {r['detected_class']}"
+                            f"{conf_cls} {x_c:.6f} {y_c:.6f} {w:.6f} {h:.6f} {r['bbox_score']:.3f}"
                         )
-                    with open(scored_ann_dir / f"{img_file.stem}.txt", "w") as f:
+                    with open(yolo_dir / f"{img_file.stem}.txt", "w") as f:
                         f.write("\n".join(lines))
 
                 except Exception as e:
@@ -550,6 +628,209 @@ def print_summary(
 
 
 # ---------------------------------------------------------------------------
+# Recompute / Rerun from sidecar JSONs
+# ---------------------------------------------------------------------------
+
+
+def recompute_categories(output_dir: Path, all_classes: list[str]):
+    """Re-derive category and sub_category from existing sidecar JSONs. No inference."""
+    sidecar_dir = output_dir / "sidecar_json"
+    yolo_dir = output_dir / "yolo_confusion_labels"
+    yolo_dir.mkdir(exist_ok=True)
+
+    json_files = sorted(sidecar_dir.glob("*.json"))
+    if not json_files:
+        print(f"No sidecar JSONs found in {sidecar_dir}")
+        return
+
+    category_counts = {"keep": 0, "fix": 0, "discard": 0}
+    sub_category_counts = {}
+    expected_class_counts = {}   # what the annotation claimed
+    detected_class_counts = {}   # what the model saw
+    per_class_categories = {}    # expected_class -> {keep: N, fix: N, discard: N}
+    total = 0
+
+    for jf in tqdm(json_files, desc="Recomputing"):
+        with open(jf) as f:
+            data = json.load(f)
+
+        for ann in data["annotations"]:
+            cat, sub = derive_category(
+                ann["bbox_score"], ann["class_match"], ann["detected_class"], all_classes,
+            )
+            ann["category"] = cat
+            ann["sub_category"] = sub
+            category_counts[cat] = category_counts.get(cat, 0) + 1
+            sub_category_counts[sub] = sub_category_counts.get(sub, 0) + 1
+            total += 1
+
+            exp = ann.get("expected_class", "unknown")
+            det = ann.get("detected_class", "unknown")
+            expected_class_counts[exp] = expected_class_counts.get(exp, 0) + 1
+            detected_class_counts[det] = detected_class_counts.get(det, 0) + 1
+            if exp not in per_class_categories:
+                per_class_categories[exp] = {"keep": 0, "fix": 0, "discard": 0}
+            per_class_categories[exp][cat] += 1
+
+        with open(jf, "w") as f:
+            json.dump(data, f, indent=2)
+
+        # Rewrite YOLO confusion labels
+        lines = []
+        for ann in data["annotations"]:
+            x_c, y_c, w, h = ann["bbox"]
+            conf_cls = build_confusion_class_id(ann.get("expected_class", ""), ann.get("detected_class", ""), all_classes)
+            lines.append(f"{conf_cls} {x_c:.6f} {y_c:.6f} {w:.6f} {h:.6f} {ann['bbox_score']:.3f}")
+        with open(yolo_dir / f"{jf.stem}.txt", "w") as f:
+            f.write("\n".join(lines))
+
+    print(f"\n{'=' * 60}\nRECOMPUTE SUMMARY\n{'=' * 60}")
+    print(f"Total annotations: {total}")
+    print(f"\nCategories:")
+    for cat in ["keep", "fix", "discard"]:
+        cnt = category_counts.get(cat, 0)
+        print(f"  {cat:14}: {cnt:5} ({100 * cnt / max(1, total):.1f}%)")
+    print(f"\nSub-categories:")
+    for sub, cnt in sorted(sub_category_counts.items(), key=lambda x: -x[1]):
+        print(f"  {sub:18}: {cnt:5} ({100 * cnt / max(1, total):.1f}%)")
+    print(f"\nExpected class distribution (annotation labels):")
+    for cls, cnt in sorted(expected_class_counts.items(), key=lambda x: -x[1]):
+        print(f"  {cls:18}: {cnt:5} ({100 * cnt / max(1, total):.1f}%)")
+    print(f"\nDetected class distribution (model output):")
+    for cls, cnt in sorted(detected_class_counts.items(), key=lambda x: -x[1]):
+        print(f"  {cls:18}: {cnt:5} ({100 * cnt / max(1, total):.1f}%)")
+    print(f"\nPer-class breakdown:")
+    for cls in sorted(per_class_categories.keys()):
+        counts = per_class_categories[cls]
+        cls_total = sum(counts.values())
+        parts = " | ".join(f"{c}: {counts[c]} ({100*counts[c]/max(1,cls_total):.0f}%)" for c in ["keep", "fix", "discard"])
+        print(f"  {cls:18}: {parts}")
+
+    summary_path = output_dir / "summary.json"
+    summary = {}
+    if summary_path.exists():
+        with open(summary_path) as f:
+            summary = json.load(f)
+    summary["category_counts"] = category_counts
+    summary["sub_category_counts"] = sub_category_counts
+    summary["expected_class_counts"] = expected_class_counts
+    summary["detected_class_counts"] = detected_class_counts
+    summary["per_class_categories"] = per_class_categories
+    summary["total_annotations"] = total
+    summary["thresholds"] = {"discard": THRESHOLD_DISCARD, "fix": THRESHOLD_FIX}
+    summary["confusion_class_names"] = {str(k): v for k, v in build_confusion_class_names(all_classes).items()}
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"\nConfusion class mapping: {build_confusion_class_names(all_classes)}")
+    print(f"\nUpdated: {output_dir}")
+
+
+def collect_failed_items(output_dir: Path) -> list[tuple[str, int]]:
+    """Scan sidecar JSONs for parse_error annotations. Returns [(image_path, bbox_index), ...]."""
+    sidecar_dir = output_dir / "sidecar_json"
+    failed = []
+    for jf in sorted(sidecar_dir.glob("*.json")):
+        with open(jf) as f:
+            data = json.load(f)
+        for ann in data["annotations"]:
+            if ann.get("bbox_score", -1) < 0 or ann.get("sub_category") == "parse_error":
+                failed.append((data["image_path"], ann["bbox_index"]))
+    return failed
+
+
+def rerun_failed(
+    output_dir: Path,
+    annotation_dir: Path,
+    all_classes: list[str],
+    class_descriptions: str,
+    thinking: bool = False,
+    max_workers: int = 4,
+):
+    """Re-run inference only for annotations that had parse errors."""
+    sidecar_dir = output_dir / "sidecar_json"
+    yolo_dir = output_dir / "yolo_confusion_labels"
+
+    failed = collect_failed_items(output_dir)
+    if not failed:
+        print("No failed annotations found.")
+        return
+
+    # Group by image
+    from collections import defaultdict
+    by_image = defaultdict(list)
+    for img_path, bbox_idx in failed:
+        by_image[img_path].append(bbox_idx)
+
+    print(f"Re-running {len(failed)} failed annotations across {len(by_image)} images")
+
+    rerun_count = 0
+
+    def _rerun_one(img_path_str: str, bbox_indices: list[int]):
+        img_path = Path(img_path_str)
+        image = Image.open(img_path).convert("RGB")
+
+        # Load existing sidecar
+        jf = sidecar_dir / f"{img_path.stem}.json"
+        with open(jf) as f:
+            data = json.load(f)
+
+        # Load annotations to get bbox coords
+        ann_path = annotation_dir / f"{img_path.stem}.txt"
+        annotations = load_annotations(ann_path)
+
+        for idx in bbox_indices:
+            if idx >= len(annotations):
+                continue
+            class_id, x_c, y_c, w, h = annotations[idx]
+            expected_class = all_classes[class_id] if class_id < len(all_classes) else f"unknown_class_{class_id}"
+
+            rating = validate_annotation(
+                image, (x_c, y_c, w, h),
+                expected_class, all_classes, class_descriptions, thinking,
+            )
+
+            # Update the annotation in sidecar data
+            for ann in data["annotations"]:
+                if ann["bbox_index"] == idx:
+                    ann["class_match"] = rating["class_match"]
+                    ann["detected_class"] = rating["detected_class"]
+                    ann["bbox_score"] = rating["bbox_score"]
+                    ann["category"] = rating["category"]
+                    ann["sub_category"] = rating["sub_category"]
+                    break
+
+        # Rewrite sidecar
+        with open(jf, "w") as f:
+            json.dump(data, f, indent=2)
+
+        # Rewrite YOLO confusion labels
+        lines = []
+        for ann in data["annotations"]:
+            bx_c, by_c, bw, bh = ann["bbox"]
+            conf_cls = build_confusion_class_id(ann.get("expected_class", ""), ann.get("detected_class", ""), all_classes)
+            lines.append(f"{conf_cls} {bx_c:.6f} {by_c:.6f} {bw:.6f} {bh:.6f} {ann['bbox_score']:.3f}")
+        with open(yolo_dir / f"{img_path.stem}.txt", "w") as f:
+            f.write("\n".join(lines))
+
+        return len(bbox_indices)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_rerun_one, img, idxs): img
+            for img, idxs in by_image.items()
+        }
+        with tqdm(total=len(by_image), desc="Re-running failed") as pbar:
+            for future in as_completed(futures):
+                try:
+                    rerun_count += future.result()
+                except Exception as e:
+                    print(f"\nError: {e}")
+                pbar.update(1)
+
+    print(f"\nRe-ran {rerun_count} annotations. Run --recompute to update summary.")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -575,10 +856,29 @@ def main():
     # Inference
     parser.add_argument("--thinking", action="store_true", help="Enable thinking mode (slower, better on edge cases)")
     parser.add_argument("--workers", type=int, default=4, help="Concurrent requests to vLLM (default: 4)")
+    parser.add_argument("--debug-images", action="store_true", help="Save annotated debug images (default: off)")
+
+    # Post-processing modes (no inference needed for --recompute)
+    parser.add_argument("--recompute", action="store_true", help="Re-derive categories from existing sidecar JSONs (no inference)")
+    parser.add_argument("--rerun-failed", action="store_true", help="Re-run inference only for parse_error annotations")
 
     args = parser.parse_args()
 
     all_classes = parse_class_list(args.classes)
+
+    # --- Recompute mode (no inference) ---
+    if args.recompute:
+        recompute_categories(Path(args.output_dir), all_classes)
+        return
+
+    # --- Rerun failed mode ---
+    if args.rerun_failed:
+        annotation_dir = Path(args.annotation_dir) if args.annotation_dir else Path(args.image_dir or ".")
+        rerun_failed(
+            Path(args.output_dir), annotation_dir, all_classes,
+            args.class_descriptions, args.thinking, args.workers,
+        )
+        return
 
     # --- Single image mode ---
     if args.image:
@@ -591,7 +891,7 @@ def main():
         print(f"Validating {image_path.name} against {BASE_URL}")
         print(f"Model: {MODEL} | Classes: {args.classes}\n")
 
-        debug_dir = Path(args.output_dir) / "debug_images"
+        debug_dir = Path(args.output_dir) / "debug_images" if args.debug_images else None
         results, _, _ = process_single_image(
             image_path, ann_path, all_classes, args.class_descriptions, args.thinking, debug_dir,
         )
@@ -617,6 +917,7 @@ def main():
             class_descriptions=args.class_descriptions,
             thinking=args.thinking,
             max_workers=args.workers,
+            debug_images=args.debug_images,
         )
         return
 

@@ -342,6 +342,9 @@ if __name__ == "__main__":
             "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/grounding_dino/nms_conf",
             "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/owlvit/nms_conf",
             "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/cross_model_nms",
+            "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/yolo_confusion_labels",
+            "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/yolo_confusion_labels_filtered",
+            "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/yolo_confusion_labels_bad",
 
         ],
         prediction_fields=[
@@ -349,8 +352,12 @@ if __name__ == "__main__":
             "grounding_dino_nms_conf",
             "owlvit_nms_conf",
             "cross_model_nms",
+            "q35_rater",
+            "q35_rater_filtered",
+            "q35_rater_bad"
         ],
         overwrite=True,
         port=7776,
     )
     visualize_remote_view_images(dataset_config=fl_pj)
+

@@ -21,6 +21,7 @@ dependencies = [
     "python-logging-loki>=0.3.1",
     "python-dotenv>=1.0",
     "setuptools<81",
+    "fiftyone>=1.13.2",
 ]
 
 [project.optional-dependencies]

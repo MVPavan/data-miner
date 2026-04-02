@@ -43,7 +43,7 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       - VLLM_WORKER_MULTIPROC_METHOD=spawn
       # Select which GPUs vLLM sees (e.g. "0", "0,1", "2,3")
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1}
       # Bypass CUDA version check if container CUDA > host driver CUDA
       - NVIDIA_DISABLE_REQUIRE=1
     volumes:
@@ -54,9 +54,9 @@ services:
     restart: unless-stopped
     command:
       - --model
-      - ${VALIDATOR_MODEL:-Qwen/Qwen3.5-9B}
+      - ${VALIDATOR_MODEL:-Qwen/Qwen3.5-27B-FP8}
       - --tensor-parallel-size
-      - "${VALIDATOR_TP:-1}"
+      - "${VALIDATOR_TP:-2}"
       - --max-model-len
       - "4096"
       - --gpu-memory-utilization
@@ -65,7 +65,7 @@ services:
       - --reasoning-parser
       - qwen3
       - --dtype
-      - ${VALIDATOR_DTYPE:-bfloat16}
+      - ${VALIDATOR_DTYPE:-auto}
       - --port
       - "8000"
       # Disable thinking by default (per-request can override)
