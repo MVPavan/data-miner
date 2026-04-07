@@ -17,12 +17,6 @@ from ..utils import clamp
 from .base import AnnotationAdapter
 
 
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    return "cuda" if torch.cuda.is_available() else "cpu"
-
-
 def _to_bytes_rle(rle: dict[str, Any]) -> dict[str, Any]:
     out = dict(rle)
     if isinstance(out.get("counts"), str):
@@ -53,7 +47,6 @@ class FalconAdapter(AnnotationAdapter):
 
     def __init__(self, name, config):
         super().__init__(name, config)
-        self.device = _resolve_device(config.device)
         self.model = None
         self.tokenizer = None
         self.engine = None
@@ -105,7 +98,11 @@ class FalconAdapter(AnnotationAdapter):
                     bbox=box,
                     score=1.0,
                     mask=rle,
-                    metadata={"task": params.get("task", "segmentation")},
+                    metadata={
+                        "task": params.get("task", "segmentation"),
+                        "binary_support_only": True,
+                        "confidence_type": "binary_support",
+                    },
                 )
             )
         return candidates

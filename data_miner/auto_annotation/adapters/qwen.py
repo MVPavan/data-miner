@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import socket
+import time
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -60,28 +63,63 @@ class QwenAdapter(AnnotationAdapter):
                 }
             ],
         }
-        request = urllib.request.Request(
-            url=f"{self.base_url}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=float(params.get("timeout", 120))) as response:
-            raw = json.loads(response.read().decode("utf-8"))
+        raw = self._post_with_retries(candidate, payload, params)
+        if isinstance(raw, ReviewDecision):
+            return raw
         content = raw["choices"][0]["message"]["content"]
-        payload = _extract_json(content or "{}")
+        try:
+            payload = _extract_json(content or "{}")
+        except Exception as exc:
+            return self._failure_decision(candidate, "invalid_json", f"Verifier returned invalid JSON: {exc}")
         try:
             return ReviewDecision.model_validate({"candidate_id": candidate.candidate_id, **payload})
-        except Exception:
-            return ReviewDecision(
-                candidate_id=candidate.candidate_id,
-                semantic_match="uncertain",
-                bbox_tight="uncertain",
-                recommended_action="escalate",
-                confidence_band="low",
-                rationale_short="Verifier output was invalid.",
-                next_stage="escalation",
+        except Exception as exc:
+            return self._failure_decision(candidate, "schema_error", f"Verifier output failed schema validation: {exc}")
+
+    def _post_with_retries(self, candidate: Candidate, payload: dict[str, Any], params: dict[str, Any]) -> dict[str, Any] | ReviewDecision:
+        max_retries = int(params.get("max_retries", 2))
+        timeout = float(params.get("timeout", 120))
+        base_backoff = float(params.get("retry_backoff_seconds", 1.0))
+
+        for attempt in range(max_retries + 1):
+            request = urllib.request.Request(
+                url=f"{self.base_url}/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
             )
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
+                retryable = exc.code >= 500 or exc.code in {408, 409, 429}
+                if retryable and attempt < max_retries:
+                    time.sleep(base_backoff * (2**attempt))
+                    continue
+                return self._failure_decision(candidate=candidate, failure_type="http_error", failure_reason=f"HTTP {exc.code}: {body or exc.reason}")
+            except (urllib.error.URLError, socket.timeout, TimeoutError) as exc:
+                if attempt < max_retries:
+                    time.sleep(base_backoff * (2**attempt))
+                    continue
+                failure_type = "timeout_error" if isinstance(exc, (socket.timeout, TimeoutError)) else "transport_error"
+                return self._failure_decision(candidate=candidate, failure_type=failure_type, failure_reason=str(exc))
+
+        return self._failure_decision(candidate=candidate, failure_type="transport_error", failure_reason="Verifier request exhausted retries.")
+
+    def _failure_decision(self, candidate: Candidate | None, failure_type: str, failure_reason: str) -> ReviewDecision:
+        candidate_id = candidate.candidate_id if candidate is not None else "unknown"
+        return ReviewDecision(
+            candidate_id=candidate_id,
+            semantic_match="uncertain",
+            bbox_tight="uncertain",
+            recommended_action="escalate",
+            confidence_band="low",
+            rationale_short="Verification failed.",
+            next_stage="escalation",
+            failure_type=failure_type,
+            failure_reason=failure_reason,
+        )

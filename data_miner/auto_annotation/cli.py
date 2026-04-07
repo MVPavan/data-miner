@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from .config import load_config
+from .log_utils import configure_logging
 from .pipeline import AutoAnnotationPipeline
 from .utils import save_result
 
@@ -32,6 +33,7 @@ def iter_images(image: str | None, image_dir: str | None) -> list[Path]:
 
 def main() -> None:
     args = parse_args()
+    configure_logging()
     config = load_config(args.config, args.overrides)
     pipeline = AutoAnnotationPipeline(config)
     output_dir = Path(args.output_dir)

@@ -14,3 +14,12 @@ class Stage:
 
     def run(self, state: PipelineState) -> PipelineState:
         raise NotImplementedError
+
+    def starts_retry_cycle(self) -> bool:
+        return bool(self.config.params.get("retry_cycle_start", False))
+
+    def decides_retry(self) -> bool:
+        return bool(self.config.params.get("retry_cycle_decider", False))
+
+    def requests_retry(self, state: PipelineState) -> bool:
+        return False

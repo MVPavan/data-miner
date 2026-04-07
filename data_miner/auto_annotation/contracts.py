@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Decision = Literal["accepted", "flagged", "rejected"]
 Action = Literal["accept", "relabel", "refine", "reject", "escalate"]
+FailureScope = Literal["candidate", "image", "transport", "stage"]
 
 
 class BoundingBox(BaseModel):
@@ -20,7 +21,7 @@ class BoundingBox(BaseModel):
 
 
 class Candidate(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     candidate_id: str
     class_name: str
@@ -64,6 +65,19 @@ class ReviewDecision(BaseModel):
     target_model: str | None = None
     retry_expression: str | None = None
     next_stage: Literal["proposal", "refinement", "escalation", "none"] = "none"
+    failure_type: str | None = None
+    failure_reason: str | None = None
+
+
+class FailureRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: FailureScope
+    stage: str
+    error_type: str
+    message: str
+    candidate_id: str | None = None
+    retriable: bool = False
 
 
 class PipelineState(BaseModel):
@@ -78,8 +92,10 @@ class PipelineState(BaseModel):
     human_review: list[Candidate] = Field(default_factory=list)
     clusters: list[CandidateCluster] = Field(default_factory=list)
     reviews: dict[str, ReviewDecision] = Field(default_factory=dict)
+    failures: list[FailureRecord] = Field(default_factory=list)
     history: list[str] = Field(default_factory=list)
     retry_round: int = 0
+    partial: bool = False
 
 
 class PipelineResult(BaseModel):
@@ -92,3 +108,5 @@ class PipelineResult(BaseModel):
     reviews: dict[str, ReviewDecision]
     clusters: list[CandidateCluster]
     history: list[str]
+    failures: list[FailureRecord]
+    partial: bool = False

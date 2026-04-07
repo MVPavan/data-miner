@@ -13,19 +13,12 @@ from ..utils import clamp
 from .base import AnnotationAdapter
 
 
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    return "cuda" if torch.cuda.is_available() else "cpu"
-
-
 @register_adapter("grounding_dino")
 class GroundingDINOAdapter(AnnotationAdapter):
     capabilities = {"proposal"}
 
     def __init__(self, name, config):
         super().__init__(name, config)
-        self.device = _resolve_device(config.device)
         self.model = None
         self.processor = None
 

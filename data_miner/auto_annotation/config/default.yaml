@@ -56,12 +56,14 @@ stages:
     kind: refinement
     models: [sam]
     params:
+      retry_cycle_start: true
       targets: [flagged]
       threshold: 0.5
   - name: verification
     kind: verification
     models: [qwen]
     params:
+      retry_cycle_decider: true
       padding: 0.08
   - name: escalation
     kind: escalation

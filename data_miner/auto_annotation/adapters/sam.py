@@ -13,12 +13,6 @@ from ..utils import bbox_to_pixels, clamp
 from .base import AnnotationAdapter
 
 
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    return "cuda" if torch.cuda.is_available() else "cpu"
-
-
 def _pick_best(results: dict[str, Any], image_size: tuple[int, int]) -> tuple[BoundingBox, float] | None:
     boxes = results.get("boxes")
     scores = results.get("scores")
@@ -46,7 +40,6 @@ class SAMAdapter(AnnotationAdapter):
 
     def __init__(self, name, config):
         super().__init__(name, config)
-        self.device = _resolve_device(config.device)
         self.model = None
         self.processor = None
 
