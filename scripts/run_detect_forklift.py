@@ -19,7 +19,8 @@ from tqdm import tqdm
 
 IMG_EXTENSIONS = (".jpg", ".jpeg", ".png")
 
-ALL_MODELS = ["grounding_dino", "owlvit", "sam3", "falcon"]  # , "moondream"]
+# ALL_MODELS = ["grounding_dino", "owlvit", "sam3", "falcon"]  # , "moondream"]
+ALL_MODELS = ["falcon"]  # , "moondream"]
 
 # Configuration
 img_dir = Path(
@@ -28,10 +29,9 @@ img_dir = Path(
 base_output_dir = Path(
     "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/pallet_jack/"
 )
-detection_classes = ["pallet jack"] # ["forklift", "pallet jack"]  # , 
-falcon_detection_classes = ["forklift", "pallet jack"]
+detection_classes = ["forklift", "pallet jack"]  # , 
 THRESHOLD = 0.001  # Very low to keep all detections
-REVIEW_IOU_THRESHOLD = 0.95
+REVIEW_IOU_THRESHOLD = 0.85
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -46,7 +46,7 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-SANITY = args.sanity
+SANITY = args.sanity #or True
 SANITY_N = 5
 models_to_run = args.models
 
@@ -148,8 +148,8 @@ if "falcon" in models_to_run:
     from data_miner.models.falcon_perception import FalconPerceptionHelper
 
     falcon = FalconPerceptionHelper(
-        detection_class=falcon_detection_classes,
-        model_id="tiiuae/Falcon-Perception",
+        detection_class=detection_classes,
+        model_id="tiiuae/falcon-perception",
     )
 
     output_dir = base_output_dir / "falcon_perception"
@@ -162,11 +162,11 @@ if "falcon" in models_to_run:
     print(f"Processing {len(image_files)} images")
     print(
         "Falcon prompt strategy: one query per class, then merge results "
-        f"for {falcon_detection_classes}\n"
+        f"for {detection_classes}\n"
     )
 
     class_name_to_id = {
-        class_name.lower(): index for index, class_name in enumerate(falcon_detection_classes)
+        class_name.lower(): index for index, class_name in enumerate(detection_classes)
     }
 
     total_detections = 0
@@ -180,7 +180,7 @@ if "falcon" in models_to_run:
         try:
             merged_detections = []
 
-            for class_name in falcon_detection_classes:
+            for class_name in detection_classes:
                 detections = falcon.detect(
                     image_file,
                     threshold=THRESHOLD,
@@ -238,7 +238,7 @@ if "falcon" in models_to_run:
                             "bbox_iou": bbox_iou,
                             "review_required": review_required,
                             "review_reason": (
-                                "mask_bbox_vs_coord_bbox_iou_below_0.95"
+                                "mask_bbox_vs_coord_bbox_iou_below_0.85"
                                 if review_required and bbox_iou is not None
                                 else None
                             ),
@@ -263,7 +263,7 @@ if "falcon" in models_to_run:
         json.dump(
             {
                 "model": "tiiuae/Falcon-Perception",
-                "classes": falcon_detection_classes,
+                "classes": detection_classes,
                 "query_mode": "one_query_per_class_then_merge",
                 "review_iou_threshold": REVIEW_IOU_THRESHOLD,
                 "total_images": len(image_files),

@@ -35,6 +35,7 @@ gpu = [
     "faiss-cpu>=1.7",
     "einops>=0.8.0",
     "pycocotools>=2.0",
+    "falcon-perception @ git+https://github.com/tiiuae/Falcon-Perception.git",
 ]
 dev = [
     # Development/visualization tools
@@ -54,3 +55,6 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 link-mode = "hardlink"
+
+[tool.hatch.metadata]
+allow-direct-references = true

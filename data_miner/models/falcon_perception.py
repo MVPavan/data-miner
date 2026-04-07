@@ -1,6 +1,6 @@
 import json
 import os
-import time
+import argparse
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -119,19 +119,43 @@ class FalconPerceptionHelper:
 
     DEFAULT_MODEL_ID = "tiiuae/Falcon-Perception"
 
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
+    def __init__(
+        self,
+        detection_class: Union[str, list[str]] = "object",
+        model_id: str = DEFAULT_MODEL_ID,
+        device: str = "auto",
+        dtype: Optional[str] = None,
+        compile: bool = False,
+        task: str = "segmentation",
+        seed: int = 42,
+        max_length: int = 4096,
+        min_dimension: int = 256,
+        max_dimension: int = 1024,
+    ):
         self.model_loaded = False
-        self.latencies = []
-        self.detection_class = kwargs.get("detection_class", ["object"])
-        self.model_id = kwargs.get("model_id", self.DEFAULT_MODEL_ID)
-        self.device = kwargs.get(
-            "device", "cuda" if torch.cuda.is_available() else "cpu"
-        )
+        self.detection_class = detection_class
+        self.model_id = model_id
+        self.device = device
+        self.dtype = dtype or ("bfloat16" if torch.cuda.is_available() else "float32")
+        self.compile = compile
+        self.task = task
+        self.seed = seed
+        self.max_length = max_length
+        self.min_dimension = min_dimension
+        self.max_dimension = max_dimension
         self.model = None
+        self.tokenizer = None
+        self.model_args = None
+        self.engine = None
+        self.stop_token_ids = None
 
         if isinstance(self.detection_class, str):
             self.detection_class = [self.detection_class]
+
+    def _resolved_device(self) -> Optional[str]:
+        if self.device in (None, "auto"):
+            return None
+        return self.device
 
     def load_model(self):
         """Load Falcon Perception model."""
@@ -140,146 +164,62 @@ class FalconPerceptionHelper:
 
         print(f"Loading Falcon Perception: {self.model_id}")
 
-        from transformers import AutoModelForCausalLM
+        from falcon_perception import load_and_prepare_model, setup_torch_config
+        from falcon_perception.batch_inference import BatchInferenceEngine
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_id,
-            trust_remote_code=True,
-            dtype=torch.float16 if self.device != "cpu" else torch.float32,
-            device_map=self.device,
+        setup_torch_config()
+        self.model, self.tokenizer, self.model_args = load_and_prepare_model(
+            hf_model_id=self.model_id,
+            device=self._resolved_device(),
+            dtype=self.dtype,
+            compile=self.compile,
         )
-        self.model.eval()
+        self.engine = BatchInferenceEngine(self.model, self.tokenizer)
+        self.stop_token_ids = [
+            self.tokenizer.eos_token_id,
+            self.tokenizer.end_of_query_token_id,
+        ]
+
+        if self.task == "segmentation" and not self.model_args.do_segmentation:
+            self.task = "detection"
 
         self.model_loaded = True
-        print(f"Falcon Perception loaded on {self.device}")
+        print(f"Falcon Perception loaded on {self.model.device}")
 
     def unload_model(self):
         """Unload model to free GPU memory."""
         if self.model is not None:
             del self.model
             self.model = None
+        self.tokenizer = None
+        self.model_args = None
+        self.engine = None
+        self.stop_token_ids = None
         self.model_loaded = False
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         print("Falcon Perception model unloaded")
 
-    def get_model(self):
-        return self.model
-
-    def _parse_prediction(self, prediction: dict, label: str) -> Optional[dict[str, Any]]:
-        """Parse one Falcon prediction and retain both geometry sources."""
-        mask_bbox = _mask_rle_to_xyxy(prediction.get("mask_rle"))
-
-        coord_bbox = None
-        xy = prediction.get("xy")
-        hw = prediction.get("hw")
-        if isinstance(xy, dict) and isinstance(hw, dict):
-            try:
-                coord_bbox = _center_size_to_xyxy(
-                    float(xy["x"]),
-                    float(xy["y"]),
-                    float(hw["w"]),
-                    float(hw["h"]),
-                )
-            except (KeyError, TypeError, ValueError):
-                coord_bbox = None
-
-        primary_bbox = mask_bbox or coord_bbox
-        if primary_bbox is None:
-            return None
-
-        raw_confidence = prediction.get("confidence", prediction.get("score", 1.0))
-        try:
-            confidence = float(raw_confidence)
-        except (TypeError, ValueError):
-            confidence = 1.0
-
-        bbox_iou = None
-        review_required = False
-        if mask_bbox is not None and coord_bbox is not None:
-            bbox_iou = _bbox_iou(mask_bbox, coord_bbox)
-            review_required = bbox_iou < 0.95
-
-        return {
-            "primary_bbox": primary_bbox,
-            "mask_bbox": mask_bbox,
-            "coord_bbox": coord_bbox,
-            "confidence": confidence,
-            "label": str(prediction.get("label") or label),
-            "bbox_iou": bbox_iou,
-            "review_required": review_required,
-        }
-
-    @torch.no_grad()
-    def detect(
-        self,
-        image: Union[str, Path, Image.Image],
-        threshold: float = 0.3,
-        detection_classes: Optional[list[str]] = None,
-        output_format: str = "normalized",
-        nms_threshold: Optional[float] = 0.5,
-        include_metadata: bool = False,
-    ):
-        """Run Falcon Perception detection on an image."""
-        if not self.model_loaded:
-            self.load_model()
-
-        t0 = time.perf_counter()
-        classes = detection_classes or self.detection_class
-
+    def _prepare_image(self, image: Union[str, Path, Image.Image]) -> Image.Image:
         if isinstance(image, (str, Path)):
-            pil_image = Image.open(image).convert("RGB")
-            img_path = Path(image)
-        else:
-            pil_image = image.convert("RGB")
-            img_path = None
+            return Image.open(image).convert("RGB")
+        return image.convert("RGB")
 
-        image_width, image_height = pil_image.size
-
-        all_boxes = []
-        all_scores = []
-        all_labels = []
-        all_metadata = []
-
-        for text_prompt in classes:
-            outputs = self.model.generate(pil_image, text_prompt)
-            if isinstance(outputs, tuple):
-                outputs = outputs[0]
-            if isinstance(outputs, list) and outputs and isinstance(outputs[0], list):
-                outputs = outputs[0]
-
-            for prediction in outputs or []:
-                if not isinstance(prediction, dict):
-                    continue
-                parsed = self._parse_prediction(prediction, text_prompt)
-                if parsed is None:
-                    continue
-                bbox = parsed["primary_bbox"]
-                confidence = parsed["confidence"]
-                label = parsed["label"]
-                if confidence < threshold:
-                    continue
-
-                x1, y1, x2, y2 = bbox
-                all_boxes.append(
-                    np.array(
-                        [
-                            x1 * image_width,
-                            y1 * image_height,
-                            x2 * image_width,
-                            y2 * image_height,
-                        ]
-                    )
-                )
-                all_scores.append(confidence)
-                all_labels.append(label)
-                all_metadata.append(parsed)
-
-        self.latencies.append(time.perf_counter() - t0)
+    def _finalize_detections(
+        self,
+        image_size: tuple[int, int],
+        all_boxes: list[np.ndarray],
+        all_scores: list[float],
+        all_labels: list[str],
+        all_metadata: list[dict[str, Any]],
+        classes: list[str],
+        output_format: str,
+        nms_threshold: Optional[float],
+        include_metadata: bool,
+    ):
+        image_width, image_height = image_size
 
         if len(all_boxes) == 0:
-            if img_path:
-                pass
             return [] if output_format == "normalized" else 0
 
         boxes_np = np.stack(all_boxes)
@@ -344,23 +284,184 @@ class FalconPerceptionHelper:
 
         return detections
 
-    def infer_image(self, img_path, threshold=0.3, detection_classes=None):
-        """Alias for detect() with pixel output format."""
-        return self.detect(
-            img_path, threshold, detection_classes, output_format="pixel"
-        )
+    def _parse_prediction(self, prediction: dict, label: str) -> Optional[dict[str, Any]]:
+        """Parse one Falcon prediction and retain both geometry sources."""
+        mask_bbox = _mask_rle_to_xyxy(prediction.get("mask_rle"))
 
-    def detect_objects(self, image, detection_classes, threshold=0.3):
-        """Alias for detect() with normalized output format."""
-        return self.detect(
-            image, threshold, detection_classes, output_format="normalized"
-        )
+        coord_bbox = None
+        xy = prediction.get("xy")
+        hw = prediction.get("hw")
+        if isinstance(xy, dict) and isinstance(hw, dict):
+            try:
+                coord_bbox = _center_size_to_xyxy(
+                    float(xy["x"]),
+                    float(xy["y"]),
+                    float(hw["w"]),
+                    float(hw["h"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                coord_bbox = None
+
+        primary_bbox = mask_bbox or coord_bbox
+        if primary_bbox is None:
+            return None
+
+        raw_confidence = prediction.get("confidence", prediction.get("score", 1.0))
+        try:
+            confidence = float(raw_confidence)
+        except (TypeError, ValueError):
+            confidence = 1.0
+
+        bbox_iou = None
+        review_required = False
+        if mask_bbox is not None and coord_bbox is not None:
+            bbox_iou = _bbox_iou(mask_bbox, coord_bbox)
+            review_required = bbox_iou < 0.95
+
+        return {
+            "primary_bbox": primary_bbox,
+            "mask_bbox": mask_bbox,
+            "coord_bbox": coord_bbox,
+            "confidence": confidence,
+            "label": str(prediction.get("label") or label),
+            "bbox_iou": bbox_iou,
+            "review_required": review_required,
+        }
+
+    @torch.no_grad()
+    def detect(
+        self,
+        image: Union[str, Path, Image.Image],
+        threshold: float = 0.3,
+        detection_classes: Optional[list[str]] = None,
+        output_format: str = "normalized",
+        nms_threshold: Optional[float] = 0.5,
+        include_metadata: bool = False,
+    ):
+        """Run Falcon Perception detection on an image."""
+        return self.detect_batch(
+            [image],
+            threshold=threshold,
+            detection_classes=detection_classes,
+            output_format=output_format,
+            nms_threshold=nms_threshold,
+            include_metadata=include_metadata,
+        )[0]
+
+    @torch.no_grad()
+    def detect_batch(
+        self,
+        images: list[Union[str, Path, Image.Image]],
+        threshold: float = 0.3,
+        detection_classes: Optional[list[str]] = None,
+        output_format: str = "normalized",
+        nms_threshold: Optional[float] = 0.5,
+        include_metadata: bool = False,
+    ):
+        """Run Falcon Perception detection on a batch of images."""
+        if not self.model_loaded:
+            self.load_model()
+
+        from falcon_perception import build_prompt_for_task
+        from falcon_perception.batch_inference import process_batch_and_generate
+        from falcon_perception.visualization_utils import pair_bbox_entries
+
+        classes = detection_classes or self.detection_class
+
+        pil_images = [self._prepare_image(image) for image in images]
+
+        per_image_boxes: list[list[np.ndarray]] = [[] for _ in pil_images]
+        per_image_scores: list[list[float]] = [[] for _ in pil_images]
+        per_image_labels: list[list[str]] = [[] for _ in pil_images]
+        per_image_metadata: list[list[dict[str, Any]]] = [[] for _ in pil_images]
+
+        for text_prompt in classes:
+            prompt = build_prompt_for_task(text_prompt, self.task)
+            batch_inputs = process_batch_and_generate(
+                self.tokenizer,
+                [(pil_image, prompt) for pil_image in pil_images],
+                max_length=self.max_length,
+                min_dimension=self.min_dimension,
+                max_dimension=self.max_dimension,
+            )
+            batch_inputs = {
+                key: (value.to(self.model.device) if torch.is_tensor(value) else value)
+                for key, value in batch_inputs.items()
+            }
+
+            _, aux_out = self.engine.generate(
+                **batch_inputs,
+                max_new_tokens=2048,
+                temperature=0.0,
+                stop_token_ids=self.stop_token_ids,
+                seed=self.seed,
+                task=self.task,
+            )
+
+            for image_index, aux in enumerate(aux_out):
+                image_width, image_height = pil_images[image_index].size
+                paired_bboxes = pair_bbox_entries(aux.bboxes_raw)
+                masks_rle = aux.masks_rle if self.task == "segmentation" else []
+
+                for index, bbox_entry in enumerate(paired_bboxes):
+                    prediction = {
+                        "xy": {
+                            "x": bbox_entry.get("x"),
+                            "y": bbox_entry.get("y"),
+                        },
+                        "hw": {
+                            "h": bbox_entry.get("h"),
+                            "w": bbox_entry.get("w"),
+                        },
+                        "mask_rle": masks_rle[index] if index < len(masks_rle) else None,
+                        "score": 1.0,
+                        "label": text_prompt,
+                    }
+                    parsed = self._parse_prediction(prediction, text_prompt)
+                    if parsed is None:
+                        continue
+                    bbox = parsed["primary_bbox"]
+                    confidence = parsed["confidence"]
+                    label = parsed["label"]
+                    if confidence < threshold:
+                        continue
+
+                    x1, y1, x2, y2 = bbox
+                    per_image_boxes[image_index].append(
+                        np.array(
+                            [
+                                x1 * image_width,
+                                y1 * image_height,
+                                x2 * image_width,
+                                y2 * image_height,
+                            ]
+                        )
+                    )
+                    per_image_scores[image_index].append(confidence)
+                    per_image_labels[image_index].append(label)
+                    per_image_metadata[image_index].append(parsed)
+
+        return [
+            self._finalize_detections(
+                pil_images[index].size,
+                per_image_boxes[index],
+                per_image_scores[index],
+                per_image_labels[index],
+                per_image_metadata[index],
+                classes,
+                output_format,
+                nms_threshold,
+                include_metadata,
+            )
+            for index in range(len(pil_images))
+        ]
 
     def process_folder(
         self,
         input_dir: Union[str, Path],
         output_dir: Union[str, Path],
         threshold: float = 0.3,
+        batch_size: int = 4,
     ):
         """Process all images in a folder and save YOLO-style txt output."""
         input_dir = Path(input_dir)
@@ -385,27 +486,29 @@ class FalconPerceptionHelper:
         total_detections = 0
         images_with_detections = 0
 
-        for image_file in tqdm(image_files, desc="Processing"):
+        for start_index in tqdm(range(0, len(image_files), batch_size), desc="Processing"):
+            batch_files = image_files[start_index:start_index + batch_size]
             try:
-                detections = self.detect(image_file, threshold=threshold)
-                if len(detections) == 0:
-                    continue
+                batch_detections = self.detect_batch(batch_files, threshold=threshold)
+                for image_file, detections in zip(batch_files, batch_detections):
+                    if len(detections) == 0:
+                        continue
 
-                images_with_detections += 1
-                total_detections += len(detections)
+                    images_with_detections += 1
+                    total_detections += len(detections)
 
-                txt_path = predictions_dir / f"{image_file.stem}.txt"
-                with open(txt_path, "w") as file_handle:
-                    for det in detections:
-                        cls_id, x_min, y_min, w, h = det[:5]
-                        score = det[5]
-                        x_center = x_min + w / 2
-                        y_center = y_min + h / 2
-                        file_handle.write(
-                            f"{cls_id} {x_center:.6f} {y_center:.6f} {w:.6f} {h:.6f} {score:.4f}\n"
-                        )
+                    txt_path = predictions_dir / f"{image_file.stem}.txt"
+                    with open(txt_path, "w") as file_handle:
+                        for det in detections:
+                            cls_id, x_min, y_min, w, h = det[:5]
+                            score = det[5]
+                            x_center = x_min + w / 2
+                            y_center = y_min + h / 2
+                            file_handle.write(
+                                f"{cls_id} {x_center:.6f} {y_center:.6f} {w:.6f} {h:.6f} {score:.4f}\n"
+                            )
             except Exception as exc:
-                print(f"Error processing {image_file}: {exc}")
+                print(f"Error processing batch starting at {batch_files[0]}: {exc}")
 
         print(
             f"\nDone! {total_detections} detections in {images_with_detections}/{len(image_files)} images"
@@ -423,3 +526,64 @@ class FalconPerceptionHelper:
                 file_handle,
                 indent=2,
             )
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Batch process images with Falcon Perception.")
+    parser.add_argument("input_dir", type=Path, help="Folder containing images to process")
+    parser.add_argument("output_dir", type=Path, help="Folder where YOLO predictions will be written")
+    parser.add_argument(
+        "--classes",
+        nargs="+",
+        required=True,
+        help="One or more text queries/classes to run against every image",
+    )
+    parser.add_argument("--threshold", type=float, default=0.3, help="Detection threshold")
+    parser.add_argument("--batch-size", type=int, default=4, help="Number of images per inference batch")
+    parser.add_argument(
+        "--model-id",
+        default=FalconPerceptionHelper.DEFAULT_MODEL_ID,
+        help="Falcon model id to use",
+    )
+    parser.add_argument(
+        "--task",
+        choices=["segmentation", "detection"],
+        default="segmentation",
+        help="Falcon task mode",
+    )
+    parser.add_argument("--device", default="auto", help="Device to run on, e.g. auto/cuda/cpu")
+    parser.add_argument(
+        "--dtype",
+        default="bfloat16" if torch.cuda.is_available() else "float32",
+        help="Torch dtype passed to the upstream Falcon loader",
+    )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Enable upstream model compilation",
+    )
+    args = parser.parse_args()
+
+    print(f"Running Falcon Perception:{args}")
+    # return
+    helper = FalconPerceptionHelper(
+        detection_class=args.classes,
+        model_id=args.model_id,
+        task=args.task,
+        device=args.device,
+        dtype=args.dtype,
+        compile=args.compile,
+    )
+    try:
+        helper.process_folder(
+            args.input_dir,
+            args.output_dir,
+            threshold=args.threshold,
+            batch_size=args.batch_size,
+        )
+    finally:
+        helper.unload_model()
+
+
+if __name__ == "__main__":
+    main()
