@@ -1,0 +1,85 @@
+classes:
+  - name: object
+    synonyms: []
+    negatives: []
+    prompt_variants: ["object"]
+
+models:
+  falcon:
+    kind: falcon
+    enabled: true
+    model_id: tiiuae/Falcon-Perception
+    device: auto
+    params:
+      task: segmentation
+      min_dimension: 256
+      max_dimension: 1024
+      max_length: 4096
+      max_new_tokens: 2048
+  grounding_dino:
+    kind: grounding_dino
+    enabled: true
+    model_id: IDEA-Research/grounding-dino-base
+    device: auto
+    params:
+      box_threshold: 0.25
+      text_threshold: 0.2
+  sam:
+    kind: sam
+    enabled: true
+    model_id: facebook/sam3
+    device: auto
+    params:
+      threshold: 0.5
+  qwen:
+    kind: qwen
+    enabled: true
+    model_id: Qwen/Qwen3.5-27B-FP8
+    device: auto
+    params:
+      base_url: http://localhost:8005/v1
+      api_key: dummy
+      padding: 0.08
+
+stages:
+  - name: proposal
+    kind: proposal
+    models: [falcon, grounding_dino]
+    params: {}
+  - name: consensus
+    kind: consensus
+    models: []
+    params:
+      iou_threshold: 0.5
+      min_agreement: 2
+  - name: refinement
+    kind: refinement
+    models: [sam]
+    params:
+      targets: [flagged]
+      threshold: 0.5
+  - name: verification
+    kind: verification
+    models: [qwen]
+    params:
+      padding: 0.08
+  - name: escalation
+    kind: escalation
+    models: []
+    params: {}
+
+limits:
+  max_candidates_per_class: 12
+  max_retry_rounds: 1
+  auto_accept_quality: 0.8
+  auto_accept_uncertainty: 0.25
+  reject_quality: 0.5
+  reject_uncertainty: 0.6
+
+output:
+  save_labels: true
+  save_sidecars: true
+  save_review_queue: true
+  label_dirname: labels
+  sidecar_dirname: sidecars
+  review_dirname: review
