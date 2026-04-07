@@ -33,6 +33,8 @@ gpu = [
     "accelerate>=1.12.0",
     "scikit-learn>=1.4",
     "faiss-cpu>=1.7",
+    "einops>=0.8.0",
+    "pycocotools>=2.0",
 ]
 dev = [
     # Development/visualization tools

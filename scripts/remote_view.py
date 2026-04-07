@@ -333,31 +333,46 @@ if __name__ == "__main__":
     # )
     # visualize_remote_view_images(dataset_config=delivery_filtered_v2_dedup_md)
 
-    fl_pj = DatasetConfig(
-        name="fl_pj",
-        images_dir="/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.85",
+    # fl_pj = DatasetConfig(
+    #     name="fl_pj",
+    #     images_dir="/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.85",
+    #     dataset_type="images",
+    #     yolo_pred_folders=[
+    #         "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/sam3/nms_conf",
+    #         "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/grounding_dino/nms_conf",
+    #         "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/owlvit/nms_conf",
+    #         "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/cross_model_nms",
+    #         "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/yolo_confusion_labels",
+    #         "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/yolo_confusion_labels_filtered",
+    #         "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/yolo_confusion_labels_bad",
+
+    #     ],
+    #     prediction_fields=[
+    #         "sam3_nms_conf",
+    #         "grounding_dino_nms_conf",
+    #         "owlvit_nms_conf",
+    #         "cross_model_nms",
+    #         "q35_rater",
+    #         "q35_rater_filtered",
+    #         "q35_rater_bad"
+    #     ],
+    #     overwrite=True,
+    #     port=7776,
+    # )
+    # visualize_remote_view_images(dataset_config=fl_pj)
+
+    fl_pj_clean = DatasetConfig(
+        name="fl_pj_clean",
+        images_dir="/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/clean_dataset_v1/images",
         dataset_type="images",
         yolo_pred_folders=[
-            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/sam3/nms_conf",
-            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/grounding_dino/nms_conf",
-            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/owlvit/nms_conf",
-            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/fl_pj/cross_model_nms",
-            "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/yolo_confusion_labels",
-            "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/yolo_confusion_labels_filtered",
-            "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/yolo_confusion_labels_bad",
-
+            "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/clean_dataset_v1/labels",
         ],
         prediction_fields=[
-            "sam3_nms_conf",
-            "grounding_dino_nms_conf",
-            "owlvit_nms_conf",
-            "cross_model_nms",
-            "q35_rater",
-            "q35_rater_filtered",
-            "q35_rater_bad"
+            "clean_labels",
         ],
         overwrite=True,
-        port=7776,
+        port=7777,
     )
-    visualize_remote_view_images(dataset_config=fl_pj)
+    visualize_remote_view_images(dataset_config=fl_pj_clean)
 

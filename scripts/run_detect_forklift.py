@@ -1,13 +1,13 @@
 """
 Run detection models sequentially on forklift/pallet jack dataset.
 
-Models: grounding_dino, owlvit, sam3, moondream
+Models: grounding_dino, owlvit, sam3, moondream, falcon
 Classes: forklift, pallet jack
 
 Usage:
     python scripts/run_detect_forklift.py --models grounding_dino owlvit
-    python scripts/run_detect_forklift.py --models sam3 moondream --sanity
-    python scripts/run_detect_forklift.py                           # runs all 4
+    python scripts/run_detect_forklift.py --models falcon --sanity
+    python scripts/run_detect_forklift.py                           # runs all configured models
 """
 
 import argparse
@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 IMG_EXTENSIONS = (".jpg", ".jpeg", ".png")
 
-ALL_MODELS = ["grounding_dino", "owlvit", "sam3"]#, "moondream"]
+ALL_MODELS = ["grounding_dino", "owlvit", "sam3", "falcon"]  # , "moondream"]
 
 # Configuration
 img_dir = Path(
@@ -29,7 +29,9 @@ base_output_dir = Path(
     "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/pallet_jack/"
 )
 detection_classes = ["pallet jack"] # ["forklift", "pallet jack"]  # , 
+falcon_detection_classes = ["forklift", "pallet jack"]
 THRESHOLD = 0.001  # Very low to keep all detections
+REVIEW_IOU_THRESHOLD = 0.95
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -63,6 +65,15 @@ def get_image_files(input_dir):
     return sorted(image_files)
 
 
+def yolo_line(class_id, x_min, y_min, width, height, score):
+    x_center = x_min + width / 2
+    y_center = y_min + height / 2
+    return (
+        f"{class_id} {x_center:.6f} {y_center:.6f} "
+        f"{width:.6f} {height:.6f} {score:.6f}\n"
+    )
+
+
 # In sanity mode, create a temp dir with symlinks to a small subset
 if SANITY:
     import atexit
@@ -77,7 +88,7 @@ if SANITY:
     img_dir = _sanity_dir
     print(f"Sanity images: {[p.name for p in _all_imgs]}\n")
 
-
+print("processing:", img_dir)
 # ============================================================
 # 1. Grounding DINO
 # ============================================================
@@ -127,7 +138,148 @@ if "sam3" in models_to_run:
     sam.unload_model()
 
 # ============================================================
-# 4. MoonDream
+# 4. Falcon Perception
+# ============================================================
+if "falcon" in models_to_run:
+    print("\n" + "=" * 60)
+    print(f"[{models_to_run.index('falcon')+1}/{len(models_to_run)}] Falcon Perception")
+    print("=" * 60)
+
+    from data_miner.models.falcon_perception import FalconPerceptionHelper
+
+    falcon = FalconPerceptionHelper(
+        detection_class=falcon_detection_classes,
+        model_id="tiiuae/Falcon-Perception",
+    )
+
+    output_dir = base_output_dir / "falcon_perception"
+    predictions_dir = output_dir / "pred_txt"
+    details_dir = output_dir / "details"
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+    details_dir.mkdir(parents=True, exist_ok=True)
+
+    image_files = get_image_files(img_dir)
+    print(f"Processing {len(image_files)} images")
+    print(
+        "Falcon prompt strategy: one query per class, then merge results "
+        f"for {falcon_detection_classes}\n"
+    )
+
+    class_name_to_id = {
+        class_name.lower(): index for index, class_name in enumerate(falcon_detection_classes)
+    }
+
+    total_detections = 0
+    images_with_detections = 0
+    review_images = []
+    review_detection_count = 0
+
+    falcon.load_model()
+
+    for image_file in tqdm(image_files, desc="Processing"):
+        try:
+            merged_detections = []
+
+            for class_name in falcon_detection_classes:
+                detections = falcon.detect(
+                    image_file,
+                    threshold=THRESHOLD,
+                    detection_classes=[class_name],
+                    output_format="normalized",
+                    include_metadata=True,
+                )
+                for det in detections:
+                    label = det["label"] if det.get("label") else class_name
+                    merged_detections.append((label, det))
+
+            if not merged_detections:
+                continue
+
+            images_with_detections += 1
+            total_detections += len(merged_detections)
+
+            image_detail = {
+                "image": image_file.name,
+                "review_required": False,
+                "detections": [],
+            }
+
+            txt_path = predictions_dir / f"{image_file.stem}.txt"
+            with open(txt_path, "w") as file_handle:
+                for label, det in merged_detections:
+                    normalized_label = label.lower().strip()
+                    class_id = class_name_to_id.get(
+                        normalized_label,
+                        class_name_to_id.get(label.split(",")[0].lower().strip(), 0),
+                    )
+                    x_min, y_min, width, height = det["yolo_bbox"]
+                    score = det["confidence"]
+                    file_handle.write(
+                        yolo_line(class_id, x_min, y_min, width, height, score)
+                    )
+
+                    bbox_iou = det.get("bbox_iou")
+                    review_required = bool(det.get("review_required"))
+                    if bbox_iou is not None and bbox_iou >= REVIEW_IOU_THRESHOLD:
+                        review_required = False
+
+                    if review_required:
+                        image_detail["review_required"] = True
+                        review_detection_count += 1
+
+                    image_detail["detections"].append(
+                        {
+                            "class_id": class_id,
+                            "label": label,
+                            "confidence": score,
+                            "mask_bbox": det.get("mask_bbox"),
+                            "coord_bbox": det.get("coord_bbox"),
+                            "yolo_bbox": det.get("yolo_bbox"),
+                            "bbox_iou": bbox_iou,
+                            "review_required": review_required,
+                            "review_reason": (
+                                "mask_bbox_vs_coord_bbox_iou_below_0.95"
+                                if review_required and bbox_iou is not None
+                                else None
+                            ),
+                        }
+                    )
+
+            with open(details_dir / f"{image_file.stem}.json", "w") as file_handle:
+                json.dump(image_detail, file_handle, indent=2)
+
+            if image_detail["review_required"]:
+                review_images.append(image_file.name)
+
+        except Exception as e:
+            print(f"Error processing {image_file}: {e}")
+
+    print(
+        f"\nDone! {total_detections} detections in "
+        f"{images_with_detections}/{len(image_files)} images"
+    )
+
+    with open(output_dir / "summary.json", "w") as f:
+        json.dump(
+            {
+                "model": "tiiuae/Falcon-Perception",
+                "classes": falcon_detection_classes,
+                "query_mode": "one_query_per_class_then_merge",
+                "review_iou_threshold": REVIEW_IOU_THRESHOLD,
+                "total_images": len(image_files),
+                "images_with_detections": images_with_detections,
+                "total_detections": total_detections,
+                "review_detection_count": review_detection_count,
+                "review_images": review_images,
+            },
+            f,
+            indent=2,
+        )
+
+    falcon.unload_model()
+
+# ============================================================
+# 5. MoonDream
 # ============================================================
 if "moondream" in models_to_run:
     print("\n" + "=" * 60)
