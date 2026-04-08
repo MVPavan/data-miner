@@ -27,13 +27,26 @@ class GroundingDINOAdapter(AnnotationAdapter):
             return
         model_id = self.config.model_id or "IDEA-Research/grounding-dino-base"
         self.processor = AutoProcessor.from_pretrained(model_id)
-        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(self.device).eval()
+        self.model = (
+            AutoModelForZeroShotObjectDetection.from_pretrained(model_id)
+            .to(self.device)
+            .eval()
+        )
 
-    def propose(self, image: Image.Image, class_pack: ClassPackConfig, expression: str, params: dict[str, Any]) -> list[Candidate]:
+    def propose(
+        self,
+        image: Image.Image,
+        class_pack: ClassPackConfig,
+        expression: str,
+        params: dict[str, Any],
+    ) -> list[Candidate]:
         self._ensure_loaded()
         text = " . ".join(class_pack.names())
         inputs = self.processor(images=image, text=text, return_tensors="pt")
-        inputs = {key: value.to(self.device) if torch.is_tensor(value) else value for key, value in inputs.items()}
+        inputs = {
+            key: value.to(self.device) if torch.is_tensor(value) else value
+            for key, value in inputs.items()
+        }
         with torch.no_grad():
             outputs = self.model(**inputs)
         results = self.processor.post_process_grounded_object_detection(
@@ -45,7 +58,9 @@ class GroundingDINOAdapter(AnnotationAdapter):
         )[0]
         width, height = image.size
         candidates: list[Candidate] = []
-        for index, (box, score, label) in enumerate(zip(results["boxes"], results["scores"], results["labels"]), start=1):
+        for index, (box, score, label) in enumerate(
+            zip(results["boxes"], results["scores"], results["labels"]), start=1
+        ):
             x1, y1, x2, y2 = [float(value) for value in box.tolist()]
             candidates.append(
                 Candidate(
@@ -65,8 +80,21 @@ class GroundingDINOAdapter(AnnotationAdapter):
             )
         return candidates
 
-    def refine(self, image: Image.Image, candidate: Candidate, class_pack: ClassPackConfig, params: dict[str, Any], request: ReviewDecision | None = None) -> Candidate | None:
+    def refine(
+        self,
+        image: Image.Image,
+        candidate: Candidate,
+        class_pack: ClassPackConfig,
+        params: dict[str, Any],
+        request: ReviewDecision | None = None,
+    ) -> Candidate | None:
         return None
 
-    def verify(self, image: Image.Image, candidate: Candidate, class_pack: ClassPackConfig, params: dict[str, Any]) -> ReviewDecision:
+    def verify(
+        self,
+        image: Image.Image,
+        candidate: Candidate,
+        class_pack: ClassPackConfig,
+        params: dict[str, Any],
+    ) -> ReviewDecision:
         raise NotImplementedError

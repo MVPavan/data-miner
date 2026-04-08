@@ -13,13 +13,19 @@ from ..utils import bbox_to_pixels, clamp
 from .base import AnnotationAdapter
 
 
-def _pick_best(results: dict[str, Any], image_size: tuple[int, int]) -> tuple[BoundingBox, float] | None:
+def _pick_best(
+    results: dict[str, Any], image_size: tuple[int, int]
+) -> tuple[BoundingBox, float] | None:
     boxes = results.get("boxes")
     scores = results.get("scores")
     if boxes is None or scores is None or len(boxes) == 0:
         return None
     width, height = image_size
-    index = int(torch.argmax(scores).item()) if torch.is_tensor(scores) else max(range(len(scores)), key=lambda idx: scores[idx])
+    index = (
+        int(torch.argmax(scores).item())
+        if torch.is_tensor(scores)
+        else max(range(len(scores)), key=lambda idx: scores[idx])
+    )
     box = boxes[index]
     score = float(scores[index])
     x1, y1, x2, y2 = [float(value) for value in box.tolist()]
@@ -48,9 +54,18 @@ class SAMAdapter(AnnotationAdapter):
             return
         model_id = self.config.model_id or "facebook/sam3"
         self.processor = Sam3Processor.from_pretrained(model_id)
-        self.model = Sam3Model.from_pretrained(model_id, torch_dtype=torch.bfloat16 if self.device == "cuda" else torch.float32).to(self.device).eval()
+        self.model = (
+            Sam3Model.from_pretrained(
+                model_id,
+                torch_dtype=torch.bfloat16 if self.device == "cuda" else torch.float32,
+            )
+            .to(self.device)
+            .eval()
+        )
 
-    def _post_process(self, image: Image.Image, inputs: dict[str, Any], outputs: Any, threshold: float) -> dict[str, Any]:
+    def _post_process(
+        self, image: Image.Image, inputs: dict[str, Any], outputs: Any, threshold: float
+    ) -> dict[str, Any]:
         return self.processor.post_process_instance_segmentation(
             outputs,
             threshold=threshold,
@@ -58,13 +73,21 @@ class SAMAdapter(AnnotationAdapter):
             target_sizes=inputs.get("original_sizes").tolist(),
         )[0]
 
-    def propose(self, image: Image.Image, class_pack: ClassPackConfig, expression: str, params: dict[str, Any]) -> list[Candidate]:
+    def propose(
+        self,
+        image: Image.Image,
+        class_pack: ClassPackConfig,
+        expression: str,
+        params: dict[str, Any],
+    ) -> list[Candidate]:
         self._ensure_loaded()
         inputs = self.processor(images=image, text=expression, return_tensors="pt")
         inputs = inputs.to(device=self.device, dtype=self.model.dtype)
         with torch.no_grad():
             outputs = self.model(**inputs)
-        results = self._post_process(image, inputs, outputs, float(params.get("threshold", 0.5)))
+        results = self._post_process(
+            image, inputs, outputs, float(params.get("threshold", 0.5))
+        )
         boxes = results.get("boxes")
         scores = results.get("scores")
         candidates: list[Candidate] = []
@@ -91,7 +114,14 @@ class SAMAdapter(AnnotationAdapter):
             )
         return candidates
 
-    def refine(self, image: Image.Image, candidate: Candidate, class_pack: ClassPackConfig, params: dict[str, Any], request: ReviewDecision | None = None) -> Candidate | None:
+    def refine(
+        self,
+        image: Image.Image,
+        candidate: Candidate,
+        class_pack: ClassPackConfig,
+        params: dict[str, Any],
+        request: ReviewDecision | None = None,
+    ) -> Candidate | None:
         self._ensure_loaded()
         pixel_box = list(bbox_to_pixels(candidate.bbox, image.size))
         inputs = self.processor(
@@ -102,7 +132,9 @@ class SAMAdapter(AnnotationAdapter):
         ).to(device=self.device, dtype=self.model.dtype)
         with torch.no_grad():
             outputs = self.model(**inputs)
-        results = self._post_process(image, inputs, outputs, float(params.get("threshold", 0.5)))
+        results = self._post_process(
+            image, inputs, outputs, float(params.get("threshold", 0.5))
+        )
         best = _pick_best(results, image.size)
         if best is None:
             return None
@@ -117,5 +149,11 @@ class SAMAdapter(AnnotationAdapter):
             }
         )
 
-    def verify(self, image: Image.Image, candidate: Candidate, class_pack: ClassPackConfig, params: dict[str, Any]) -> ReviewDecision:
+    def verify(
+        self,
+        image: Image.Image,
+        candidate: Candidate,
+        class_pack: ClassPackConfig,
+        params: dict[str, Any],
+    ) -> ReviewDecision:
         raise NotImplementedError

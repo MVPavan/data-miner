@@ -4,11 +4,17 @@ from typing import Any
 
 import numpy as np
 import torch
+from falcon_perception import (
+    PERCEPTION_MODEL_ID,
+    build_prompt_for_task,
+    load_from_hf_export,
+)
+from falcon_perception.batch_inference import (
+    BatchInferenceEngine,
+    process_batch_and_generate,
+)
 from PIL import Image
 from pycocotools import mask as mask_utils
-
-from falcon_perception import PERCEPTION_MODEL_ID, build_prompt_for_task, load_from_hf_export
-from falcon_perception.batch_inference import BatchInferenceEngine, process_batch_and_generate
 
 from ..config import ClassPackConfig
 from ..contracts import BoundingBox, Candidate, ReviewDecision
@@ -24,7 +30,9 @@ def _to_bytes_rle(rle: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _bbox_from_rle(rle: dict[str, Any], image_size: tuple[int, int]) -> BoundingBox | None:
+def _bbox_from_rle(
+    rle: dict[str, Any], image_size: tuple[int, int]
+) -> BoundingBox | None:
     mask = mask_utils.decode(_to_bytes_rle(rle))
     if mask is None or not np.any(mask):
         return None
@@ -56,15 +64,24 @@ class FalconAdapter(AnnotationAdapter):
             return
         # Disable torch.compile to avoid triton shared-memory OOM on consumer GPUs
         import torch._dynamo
+
         torch._dynamo.config.suppress_errors = True
-        model, tokenizer, _ = load_from_hf_export(hf_model_id=self.config.model_id or PERCEPTION_MODEL_ID)
+        model, tokenizer, _ = load_from_hf_export(
+            hf_model_id=self.config.model_id or PERCEPTION_MODEL_ID
+        )
         dtype = self.config.params.get("dtype", "bfloat16")
         torch_dtype = getattr(torch, dtype, torch.bfloat16)
         self.model = model.to(dtype=torch_dtype, device=self.device).eval()
         self.tokenizer = tokenizer
         self.engine = BatchInferenceEngine(self.model, self.tokenizer)
 
-    def propose(self, image: Image.Image, class_pack: ClassPackConfig, expression: str, params: dict[str, Any]) -> list[Candidate]:
+    def propose(
+        self,
+        image: Image.Image,
+        class_pack: ClassPackConfig,
+        expression: str,
+        params: dict[str, Any],
+    ) -> list[Candidate]:
         self._ensure_loaded()
         prompt = build_prompt_for_task(expression, params.get("task", "segmentation"))
         batch_inputs = process_batch_and_generate(
@@ -74,7 +91,10 @@ class FalconAdapter(AnnotationAdapter):
             min_dimension=int(params.get("min_dimension", 256)),
             max_dimension=int(params.get("max_dimension", 1024)),
         )
-        batch_inputs = {key: value.to(self.device) if torch.is_tensor(value) else value for key, value in batch_inputs.items()}
+        batch_inputs = {
+            key: value.to(self.device) if torch.is_tensor(value) else value
+            for key, value in batch_inputs.items()
+        }
         stop_ids = [self.tokenizer.eos_token_id]
         end_query = getattr(self.tokenizer, "end_of_query_token_id", None)
         if end_query is not None:
@@ -112,13 +132,35 @@ class FalconAdapter(AnnotationAdapter):
             )
         return candidates
 
-    def refine(self, image: Image.Image, candidate: Candidate, class_pack: ClassPackConfig, params: dict[str, Any], request: ReviewDecision | None = None) -> Candidate | None:
-        expression = request.retry_expression if request and request.retry_expression else candidate.expression
+    def refine(
+        self,
+        image: Image.Image,
+        candidate: Candidate,
+        class_pack: ClassPackConfig,
+        params: dict[str, Any],
+        request: ReviewDecision | None = None,
+    ) -> Candidate | None:
+        expression = (
+            request.retry_expression
+            if request and request.retry_expression
+            else candidate.expression
+        )
         proposals = self.propose(image, class_pack, expression, params)
         if not proposals:
             return None
         best = max(proposals, key=lambda item: item.score)
-        return best.model_copy(update={"candidate_id": candidate.candidate_id, "notes": [*candidate.notes, f"falcon_retry:{expression}"]})
+        return best.model_copy(
+            update={
+                "candidate_id": candidate.candidate_id,
+                "notes": [*candidate.notes, f"falcon_retry:{expression}"],
+            }
+        )
 
-    def verify(self, image: Image.Image, candidate: Candidate, class_pack: ClassPackConfig, params: dict[str, Any]) -> ReviewDecision:
+    def verify(
+        self,
+        image: Image.Image,
+        candidate: Candidate,
+        class_pack: ClassPackConfig,
+        params: dict[str, Any],
+    ) -> ReviewDecision:
         raise NotImplementedError
