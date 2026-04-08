@@ -54,8 +54,13 @@ class FalconAdapter(AnnotationAdapter):
     def _ensure_loaded(self) -> None:
         if self.engine is not None:
             return
+        # Disable torch.compile to avoid triton shared-memory OOM on consumer GPUs
+        import torch._dynamo
+        torch._dynamo.config.suppress_errors = True
         model, tokenizer, _ = load_from_hf_export(hf_model_id=self.config.model_id or PERCEPTION_MODEL_ID)
-        self.model = model.to(self.device).eval()
+        dtype = self.config.params.get("dtype", "bfloat16")
+        torch_dtype = getattr(torch, dtype, torch.bfloat16)
+        self.model = model.to(dtype=torch_dtype, device=self.device).eval()
         self.tokenizer = tokenizer
         self.engine = BatchInferenceEngine(self.model, self.tokenizer)
 

@@ -12,8 +12,9 @@ models:
     device: auto
     params:
       task: segmentation
+      dtype: bfloat16
       min_dimension: 256
-      max_dimension: 1024
+      max_dimension: 512
       max_length: 4096
       max_new_tokens: 2048
   grounding_dino:

@@ -61,7 +61,7 @@ class SAMAdapter(AnnotationAdapter):
     def propose(self, image: Image.Image, class_pack: ClassPackConfig, expression: str, params: dict[str, Any]) -> list[Candidate]:
         self._ensure_loaded()
         inputs = self.processor(images=image, text=expression, return_tensors="pt")
-        inputs = inputs.to(self.device)
+        inputs = inputs.to(device=self.device, dtype=self.model.dtype)
         with torch.no_grad():
             outputs = self.model(**inputs)
         results = self._post_process(image, inputs, outputs, float(params.get("threshold", 0.5)))
@@ -99,7 +99,7 @@ class SAMAdapter(AnnotationAdapter):
             input_boxes=[[pixel_box]],
             input_boxes_labels=[[1]],
             return_tensors="pt",
-        ).to(self.device)
+        ).to(device=self.device, dtype=self.model.dtype)
         with torch.no_grad():
             outputs = self.model(**inputs)
         results = self._post_process(image, inputs, outputs, float(params.get("threshold", 0.5)))
