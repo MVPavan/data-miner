@@ -361,18 +361,33 @@ if __name__ == "__main__":
     # )
     # visualize_remote_view_images(dataset_config=fl_pj)
 
-    fl_pj_clean = DatasetConfig(
-        name="fl_pj_clean",
-        images_dir="/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/clean_dataset_v1/images",
+    # fl_pj_clean = DatasetConfig(
+    #     name="fl_pj_clean",
+    #     images_dir="/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/clean_dataset_v1/images",
+    #     dataset_type="images",
+    #     yolo_pred_folders=[
+    #         "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/clean_dataset_v1/labels",
+    #     ],
+    #     prediction_fields=[
+    #         "clean_labels",
+    #     ],
+    #     overwrite=True,
+    #     port=7777,
+    # )
+    # visualize_remote_view_images(dataset_config=fl_pj_clean)
+
+
+    fl_pj_falcon = DatasetConfig(
+        name="falcon_batch_remote",
+        images_dir="/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.85",
         dataset_type="images",
         yolo_pred_folders=[
-            "/data/pavan/tycoai/project_helpers/data_miner/annotation-validator/validation_results_27B/clean_dataset_v1/labels",
+            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/falcon_batch/pred_txt",
         ],
         prediction_fields=[
-            "clean_labels",
+            "falcon_batch",
         ],
         overwrite=True,
         port=7777,
     )
-    visualize_remote_view_images(dataset_config=fl_pj_clean)
-
+    visualize_remote_view_images(dataset_config=fl_pj_falcon)

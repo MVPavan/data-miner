@@ -915,7 +915,7 @@ requires-dist = [
     { name = "einops", marker = "extra == 'gpu'", specifier = ">=0.8.0" },
     { name = "faiss-cpu", marker = "extra == 'gpu'", specifier = ">=1.7" },
     { name = "falcon-perception", marker = "extra == 'gpu'", git = "https://github.com/tiiuae/Falcon-Perception.git" },
-    { name = "fiftyone", specifier = ">=1.13.2" },
+    { name = "fiftyone", specifier = "==1.13.2" },
     { name = "fiftyone", marker = "extra == 'dev'", specifier = ">=1.11.1" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "omegaconf", specifier = ">=2.3" },
