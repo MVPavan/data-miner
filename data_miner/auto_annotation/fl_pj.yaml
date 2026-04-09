@@ -1,8 +1,8 @@
 classes:
-  - name: object
+  - name: forklift
     synonyms: []
     negatives: []
-    prompt_variants: ["object"]
+    prompt_variants: ["forklift", "a forklift", "the forklift"]
 
 models:
   falcon:
@@ -45,19 +45,16 @@ models:
 stages:
   - name: proposal
     kind: proposal
-    enabled: true
     models: [falcon, grounding_dino, sam]
     params: {}
   - name: consensus
     kind: consensus
-    enabled: true
     models: []
     params:
       iou_threshold: 0.5
       min_agreement: 2
   - name: refinement
     kind: refinement
-    enabled: true
     models: [sam]
     params:
       retry_cycle_start: true
@@ -65,14 +62,12 @@ stages:
       threshold: 0.5
   - name: verification
     kind: verification
-    enabled: true
     models: [qwen]
     params:
       retry_cycle_decider: true
       padding: 0.08
   - name: escalation
     kind: escalation
-    enabled: true
     models: []
     params: {}
 

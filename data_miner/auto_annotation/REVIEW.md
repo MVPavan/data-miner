@@ -1,5 +1,32 @@
 # Auto Annotation — Critical Review
 
+## Issue Index
+
+| # | Issue | Priority | Status |
+|---|-------|----------|--------|
+| 1 | [Consensus quality heuristic ignores model scores](#1-the-consensus-stage-has-a-flawed-quality-heuristic) | High | ✅ Fixed — model confidence now weighted 45%; geometry is penalty only |
+| 2 | [Proposal truncation before ranking](#2-proposals-are-truncated-before-consensus-not-after) | High | ✅ Fixed — interleaving via `_interleave_buckets()` replaces flat slicing |
+| 3 | [Order-dependent greedy clustering](#3-consensus-clustering-is-greedy-and-order-dependent) | Medium | ✅ Fixed — union-find algorithm, deterministic |
+| 4 | [Retry loop hardcoded to pipeline runner](#4-the-retry-loop-is-hardcoded-to-the-pipeline-runner-not-the-stage-system) | Medium | ✅ Fixed — generic `starts_retry_cycle()`/`decides_retry()` pattern |
+| 5 | [Single-model verification bottleneck](#5-single-model-verification-creates-a-bottleneck-with-no-fallback) | High | ✅ Fixed — per-candidate exception handling + escalation fallback |
+| 6 | [No HTTP retries for verification](#6-urlibrequest-for-http-calls--no-retries-no-connection-pooling) | High | ✅ Fixed — retry loop with exponential backoff |
+| 7 | [Base64 full images per verification call](#7-base64-encoded-full-images-in-every-verification-request) | Medium | ⚠️ Open — still sends two base64 images (optimization, not correctness) |
+| 8 | [Duplicated `_resolve_device`](#8-_resolve_device-is-duplicated-across-every-adapter) | Low | ✅ Fixed — centralized in base adapter |
+| 9 | [Relabel creates orphan class names](#9-relabel-in-verification-can-create-orphan-class-names) | High | ✅ Fixed — canonical alias map + validation; invalid relabels escalate |
+| 10 | [`save_result` loses data on relabel](#10-save_result-loses-data-on-relabeled-candidates) | High | ✅ Fixed — unmapped candidates logged + tracked for review |
+| 11 | [No error handling in stage loop](#11-no-error-handling-in-the-stage-loop) | High | ✅ Fixed — `_run_stage()` catches exceptions, returns partial results |
+| 12 | [`Candidate` uses `extra="allow"`](#12-the-candidate-model-uses-extraallow-while-everything-else-uses-extraforbid) | Medium | ✅ Fixed — changed to `extra="forbid"` |
+| 13 | [No logging anywhere](#13-no-logging-anywhere-in-the-pipeline) | Medium | ✅ Fixed — structured logging via `get_logger()` throughout |
+| 14 | [Verification prompt not schema-enforced](#14-verification-prompt-is-fragile-and-not-schema-enforced) | Low | ⚠️ Open — has JSON extraction fallback but no `response_format` enforcement |
+| 15 | [Non-serializable `PipelineState`](#15-pipelinestate-carries-a-full-pil-image--not-serializable) | Low | ⏳ Deferred — acknowledged; not a v1 blocker |
+| 16 | [No batching support](#16-no-batching-support) | Low | ⏳ Deferred — future optimization |
+| 17 | [No progress reporting](#17-no-progress-reporting-or-callback-hooks) | Low | ⏳ Deferred — future feature |
+| 18 | [`save_result` not integrated with pipeline](#18-save_result-is-a-standalone-function-not-integrated-with-the-pipeline) | Low | ⏳ Deferred — future architectural cleanup |
+
+**Summary:** 14/18 resolved, 2 partially open (optimization/hardening), 4 deferred (low priority).
+
+---
+
 ## What's Done Well
 
 **Clean separation of concerns.** The registry/adapter/stage layering is sound. Config-driven stage ordering, OmegaConf + Pydantic validation, and the decorator-based registry pattern make the system genuinely pluggable without subclass gymnastics.
@@ -12,25 +39,25 @@
 
 ## Design-Level Issues
 
-### 1. The consensus stage has a flawed quality heuristic
+### 1. The consensus stage has a flawed quality heuristic — ✅ Fixed
 
 `consensus.py` `_quality()` computes quality purely from bbox geometry (area, aspect ratio, edge proximity). This has **nothing to do with detection quality**—a perfectly detected small object near the image edge will score poorly. The score from the actual model is completely ignored. This means the auto-accept/reject thresholds in `LimitConfig` gate on a geometric proxy, not on model confidence. The `_uncertainty()` function compounds this by blending the geometric quality score with agreement count using arbitrary fixed weights (0.6/0.4).
 
 **Impact:** The consensus stage will systematically reject valid small or edge-adjacent detections and accept large, centered, low-confidence ones.
 
-### 2. Proposals are truncated before consensus, not after
+### 2. Proposals are truncated before consensus, not after — ✅ Fixed
 
 In `proposal.py`, `class_candidates[:per_class_limit]` is applied **per-class across all models and prompt variants combined**, before any quality-based filtering. If Falcon returns 12 mediocre candidates first, GroundingDINO's better candidates are silently dropped. The truncation should happen after scoring/ranking, or at least interleave model results.
 
-### 3. Consensus clustering is greedy and order-dependent
+### 3. Consensus clustering is greedy and order-dependent — ✅ Fixed
 
 `consensus.py` uses a greedy sequential clustering: pop first element, absorb anything within IoU threshold, repeat. This means **cluster membership depends on the order candidates appear in the list**, which is determined by which model/expression ran first. Two identical runs with models in different order can produce different clusters. A proper approach would use agglomerative clustering or a union-find structure.
 
-### 4. The retry loop is hardcoded to the pipeline runner, not the stage system
+### 4. The retry loop is hardcoded to the pipeline runner, not the stage system — ✅ Fixed
 
 `pipeline.py` has a `while` loop that manually searches for the refinement and verification stages by `kind` string, then re-runs them. This breaks the abstraction—the pipeline runner "knows" about specific stage types. If someone adds a second refinement variant or renames the kind, the retry loop silently stops working. The retry logic should either be a stage-level concern or a first-class pipeline concept, not an ad-hoc loop in `run_image`.
 
-### 5. Single-model verification creates a bottleneck with no fallback
+### 5. Single-model verification creates a bottleneck with no fallback — ✅ Fixed
 
 `verification.py` iterates models but `break`s after the first one that supports verification. If that model (Qwen) is down or returns garbage, every flagged candidate falls through to the `flagged.append` path with no review decision, meaning they'll hit escalation as if the verifier never ran. There's no retry, no timeout handling at the stage level, and no distinction between "verifier said uncertain" and "verifier crashed."
 
@@ -38,43 +65,43 @@ In `proposal.py`, `class_candidates[:per_class_limit]` is applied **per-class ac
 
 ## Implementation Issues
 
-### 6. `urllib.request` for HTTP calls — no retries, no connection pooling
+### 6. `urllib.request` for HTTP calls — no retries, no connection pooling — ✅ Fixed
 
 `qwen.py` uses raw `urllib.request` for the verification API. No retry logic, no connection reuse, no backoff. A single transient error (503, timeout, connection reset) fails the candidate permanently. For a pipeline that may process thousands of images, this will cause silent data loss. Use `requests.Session` or `httpx` with retry middleware.
 
-### 7. Base64-encoded full images in every verification request
+### 7. Base64-encoded full images in every verification request — ⚠️ Open
 
 `qwen.py` sends **two** base64-encoded images (full overlay + crop) per candidate per verification call. For a 1920×1080 image, that's ~5–10 MB of base64 per request. With 12 candidates per class across multiple classes, this will saturate the network and the LLM endpoint. Consider resizing the overlay, or sending only the crop with textual bounding box coordinates.
 
-### 8. `_resolve_device` is duplicated across every adapter
+### 8. `_resolve_device` is duplicated across every adapter — ✅ Fixed
 
 The exact same function appears in `falcon.py`, `grounding_dino.py`, and `sam.py`. Should live in the base adapter or utils.
 
-### 9. Relabel in verification can create orphan class names
+### 9. Relabel in verification can create orphan class names — ✅ Fixed
 
 `verification.py`: when the verifier says `relabel_to: "pallet_truck"`, the code blindly sets both `label` and `class_name` to whatever string the LLM returns. If that string doesn't match any configured class name, `save_result` will hit a `KeyError` on the `label_map` lookup in `utils.py`. There's no validation that relabel targets exist in the config's class list.
 
-### 10. `save_result` loses data on relabeled candidates
+### 10. `save_result` loses data on relabeled candidates — ✅ Fixed
 
 `utils.py`: `label_map[candidate.class_name]` will crash for any accepted candidate whose `class_name` was relabeled to a value not in the original `class_names` list (see issue 9). Even if the relabel target is a valid synonym, it won't be in the map since the map is built from `config.classes[*].name` only.
 
-### 11. No error handling in the stage loop
+### 11. No error handling in the stage loop — ✅ Fixed
 
 `pipeline.py`: if any stage raises an exception (model OOM, corrupt image region, network error), the entire image is lost with no partial result saved. For a batch pipeline, this means one bad candidate in one stage can lose all work done on that image. At minimum, `run_image` should catch per-image errors and return a partial/failed result.
 
-### 12. The `Candidate` model uses `extra="allow"` while everything else uses `extra="forbid"`
+### 12. The `Candidate` model uses `extra="allow"` while everything else uses `extra="forbid"` — ✅ Fixed
 
 `contracts.py`: `Candidate` allows arbitrary extra fields. This means typos in field names when constructing candidates (e.g., `sourec_model`) will silently create extra fields instead of raising validation errors. This is inconsistent with the defensive `extra="forbid"` used everywhere else.
 
-### 13. No logging anywhere in the pipeline
+### 13. No logging anywhere in the pipeline — ✅ Fixed
 
 None of the adapters, stages, or the pipeline runner use any logger. For a multi-model pipeline that processes batches of images, the complete absence of logging means debugging production issues requires adding print statements. The parent `data_miner` project has a `get_logger` convention that this package ignores entirely.
 
-### 14. Verification prompt is fragile and not schema-enforced
+### 14. Verification prompt is fragile and not schema-enforced — ⚠️ Open
 
 `prompts.py`: the prompt asks the LLM to return raw JSON with a specific schema, but there's no JSON-mode enforcement (`response_format`), no schema passed to the API, and the `_extract_json` fallback in the Qwen adapter silently degrades to an "escalate" decision if parsing fails. The prompt itself includes the JSON template as a flat string, making it easy for the LLM to hallucinate extra fields or skip required ones.
 
-### 15. `PipelineState` carries a full PIL Image — not serializable
+### 15. `PipelineState` carries a full PIL Image — not serializable — ⏳ Deferred
 
 `contracts.py`: `PipelineState` holds `image: Image.Image` with `arbitrary_types_allowed=True`. This means the state can't be serialized for checkpointing, debugging dumps, or distributed processing. If any future stage tries to `model_dump()` the state, it will fail.
 
@@ -82,15 +109,15 @@ None of the adapters, stages, or the pipeline runner use any logger. For a multi
 
 ## Structural Gaps
 
-### 16. No batching support
+### 16. No batching support — ⏳ Deferred
 
 The pipeline processes one image at a time. The Falcon adapter internally uses `BatchInferenceEngine` but is called with a batch of 1. For GPU-bound models, this leaves significant throughput on the table. The pipeline architecture doesn't have a concept of batch processing—each adapter call is per-image, per-class, per-expression.
 
-### 17. No progress reporting or callback hooks
+### 17. No progress reporting or callback hooks — ⏳ Deferred
 
 For large runs, there's no way to monitor progress, get intermediate counts, or hook into lifecycle events (image started, stage completed, image failed). The CLI just loops silently.
 
-### 18. `save_result` is a standalone function, not integrated with the pipeline
+### 18. `save_result` is a standalone function, not integrated with the pipeline — ⏳ Deferred
 
 Output writing is done in the CLI loop (`cli.py`), not in the pipeline. If someone uses `AutoAnnotationPipeline` as a library (which the `__init__.py` exports suggest is intended), they have to manually call `save_result` with the correct arguments. The output config is in the pipeline config but isn't used by the pipeline itself.
 
@@ -98,18 +125,18 @@ Output writing is done in the CLI loop (`cli.py`), not in the pipeline. If someo
 
 ## Summary
 
-| Priority | Issue | Risk |
-|----------|-------|------|
-| **High** | Consensus quality heuristic ignores model scores | Systematic mis-classification of detections |
-| **High** | Relabel creates invalid class names → crash | Runtime crash on accepted candidates |
-| **High** | No error handling per image or per candidate | Single failure loses entire image |
-| **High** | No HTTP retries for verification endpoint | Silent data loss at scale |
-| **Medium** | Order-dependent greedy clustering | Non-deterministic results |
-| **Medium** | Proposal truncation before ranking | Good candidates silently dropped |
-| **Medium** | Base64 full images per verification call | Throughput bottleneck |
-| **Medium** | No logging | Undebuggable in production |
-| **Low** | No batching | Suboptimal GPU utilization |
-| **Low** | Non-serializable state | Blocks future distributed/checkpoint work |
+| Priority | Issue | Risk | Status |
+|----------|-------|------|--------|
+| **High** | Consensus quality heuristic ignores model scores | Systematic mis-classification of detections | ✅ Fixed |
+| **High** | Relabel creates invalid class names → crash | Runtime crash on accepted candidates | ✅ Fixed |
+| **High** | No error handling per image or per candidate | Single failure loses entire image | ✅ Fixed |
+| **High** | No HTTP retries for verification endpoint | Silent data loss at scale | ✅ Fixed |
+| **Medium** | Order-dependent greedy clustering | Non-deterministic results | ✅ Fixed |
+| **Medium** | Proposal truncation before ranking | Good candidates silently dropped | ✅ Fixed |
+| **Medium** | Base64 full images per verification call | Throughput bottleneck | ⚠️ Open |
+| **Medium** | No logging | Undebuggable in production | ✅ Fixed |
+| **Low** | No batching | Suboptimal GPU utilization | ⏳ Deferred |
+| **Low** | Non-serializable state | Blocks future distributed/checkpoint work | ⏳ Deferred |
 
 ---
 

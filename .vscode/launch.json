@@ -44,6 +44,25 @@
             },
             "console": "integratedTerminal",
             "justMyCode": false
-        }
-    ]
+        },
+        {
+            "name": "Auto Annotate",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "data_miner.auto_annotation.cli",
+            "args": [
+                "--config",
+                "/media/data_2/vlm/code/data_miner/data_miner/auto_annotation/fl_pj.yaml",
+                // "--image",
+                // "${input:autoAnnotateImagePath}",
+                "--image-dir",
+                "output/sample/fl_pj_sample",
+                // "--output-dir",
+                // "${input:autoAnnotateOutputDir}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+    ],
 }

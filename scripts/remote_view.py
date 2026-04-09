@@ -235,16 +235,17 @@ if __name__ == "__main__":
         # "flpj_yvl_filter_mean_failed": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/yvl_filter_mean/images_failed",
         # "flpj_yvl_filter_cls": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/yvl_filter_cls/images",
         # "flpj_yvl_filter_cls_failed": "/swdfs_mnt/swshared/data_miner_output/projects/forklift_palletjack_v1/yvl_filter_cls/images_failed",
-        "flpj_dedup_cls_85":"/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.85",
-        "flpj_dedup_cls_80":"/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.8",
+        # "flpj_dedup_cls_85":"/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.85",
+        # "flpj_dedup_cls_80":"/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.8",
+        "flpj_dedup_cls_85": "/media/data_2/datasets/datasets_pavan/fl_pj/frames_dedup_v1_cls_0.85",
     }
 
     # # # # visualize_remote_view_images(dataset_config=delivery_videos)
-    # visualize_remote_view_images_multiple(
-    #     dataset_configs=dataset_config_creator(dataset_paths, port_start=7770),
-    #     port=0,  # if port not zero, all datasets will be visualized in same port
-    #     # ignoring individual dataset ports
-    # )
+    visualize_remote_view_images_multiple(
+        dataset_configs=dataset_config_creator(dataset_paths, port_start=7770),
+        port=0,  # if port not zero, all datasets will be visualized in same port
+        # ignoring individual dataset ports
+    )
 
     # delivery_filtered_v2_dedup_md = DatasetConfig(
     #     name="delivery_filtered_v2_dedup",
@@ -303,7 +304,7 @@ if __name__ == "__main__":
     #     yolo_pred_folder="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations",
     #     output_folder="/media/data_2/vlm/code/data_miner/output/projects/delivery_pov_v1/qwen3vl_rated/scored_annotations_modified",
     # )
-    
+
     # doors_all_v2_filtered = DatasetConfig(
     #     name="doors_all_v2_filtered",
     #     images_dir="/swdfs_mnt/swshared/data_miner_output/projects/doors_all_v2/frames_filtered",
@@ -312,7 +313,6 @@ if __name__ == "__main__":
     #     port=7775,
     # )
     # visualize_remote_view_images(dataset_config=doors_all_v2_filtered)
-
 
     # delivery_filtered_v2_dedup_md = DatasetConfig(
     #     name="doors_dmv2_real",
@@ -376,18 +376,17 @@ if __name__ == "__main__":
     # )
     # visualize_remote_view_images(dataset_config=fl_pj_clean)
 
-
-    fl_pj_falcon = DatasetConfig(
-        name="falcon_batch_remote",
-        images_dir="/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.85",
-        dataset_type="images",
-        yolo_pred_folders=[
-            "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/falcon_batch/pred_txt",
-        ],
-        prediction_fields=[
-            "falcon_batch",
-        ],
-        overwrite=True,
-        port=7777,
-    )
-    visualize_remote_view_images(dataset_config=fl_pj_falcon)
+    # fl_pj_falcon = DatasetConfig(
+    #     name="falcon_batch_remote",
+    #     images_dir="/data/datasets/data_miner_datasets/forklift_palletjack_v1/frames_dedup_v1_cls_0.85",
+    #     dataset_type="images",
+    #     yolo_pred_folders=[
+    #         "/data/datasets/data_miner_datasets/forklift_palletjack_v1/detections/falcon_batch/pred_txt",
+    #     ],
+    #     prediction_fields=[
+    #         "falcon_batch",
+    #     ],
+    #     overwrite=True,
+    #     port=7777,
+    # )
+    # visualize_remote_view_images(dataset_config=fl_pj_falcon)
