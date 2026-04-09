@@ -38,11 +38,19 @@ def main(argv: list[str] | None = None) -> None:
         description="Auto Annotation V2 Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--config", type=str, default=None, help="Path to custom YAML config")
-    parser.add_argument("--image", type=str, default=None, help="Path to a single image")
-    parser.add_argument("--image-dir", type=str, default=None, help="Directory of images")
     parser.add_argument(
-        "--output-dir", type=str, default="output/auto_annotation_v2",
+        "--config", type=str, default=None, help="Path to custom YAML config"
+    )
+    parser.add_argument(
+        "--image", type=str, default=None, help="Path to a single image"
+    )
+    parser.add_argument(
+        "--image-dir", type=str, default=None, help="Directory of images"
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="output/auto_annotation_v2",
         help="Output directory (default: output/auto_annotation_v2)",
     )
     parser.add_argument("--log-level", type=str, default=None, help="Logging level")
@@ -55,7 +63,11 @@ def main(argv: list[str] | None = None) -> None:
     overrides = [arg for arg in unknown if "=" in arg]
 
     config = load_config(args.config, overrides=overrides or None)
-    logger.info("Config loaded: %d classes, %d detection models", len(config.classes), len(config.detection_models))
+    logger.info(
+        "Config loaded: %d classes, %d detection models",
+        len(config.classes),
+        len(config.detection_models),
+    )
 
     images = _collect_images(args.image, args.image_dir)
     logger.info("Processing %d images", len(images))
@@ -72,7 +84,11 @@ def main(argv: list[str] | None = None) -> None:
 
     logger.info(
         "Done: %d images, %d accepted, %d rejected, %d review, %d partial",
-        len(results), total_accepted, total_rejected, total_review, total_partial,
+        len(results),
+        total_accepted,
+        total_rejected,
+        total_review,
+        total_partial,
     )
 
 

@@ -22,7 +22,7 @@ from .contracts import (
     StageName,
     StageRecord,
 )
-from .log_utils import configure_logging, get_logger
+from .log_utils import get_logger
 from .stages.filtering import run_filtering
 from .stages.finalize import build_final_annotations, build_pipeline_result, save_result
 from .stages.proposal import run_proposal
@@ -96,17 +96,24 @@ class AutoAnnotationPipelineV2:
                     self.checkpoint.save(stem, StageName.PROPOSAL, proposal_candidates)
                 except Exception as exc:
                     logger.exception("[%s] Proposal failed", stem)
-                    trace.failures.append(FailureRecord(
-                        stage=StageName.PROPOSAL, error_type=type(exc).__name__,
-                        message=str(exc),
-                    ))
+                    trace.failures.append(
+                        FailureRecord(
+                            stage=StageName.PROPOSAL,
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                        )
+                    )
                     partial = True
                 else:
-                    trace.stages.append(StageRecord(
-                        stage=StageName.PROPOSAL, started_at=started,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        candidate_count_in=0, candidate_count_out=len(proposal_candidates),
-                    ))
+                    trace.stages.append(
+                        StageRecord(
+                            stage=StageName.PROPOSAL,
+                            started_at=started,
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            candidate_count_in=0,
+                            candidate_count_out=len(proposal_candidates),
+                        )
+                    )
             trace.proposal_candidates = proposal_candidates
 
         # --- FILTERING ---
@@ -119,23 +126,31 @@ class AutoAnnotationPipelineV2:
             else:
                 started = datetime.now(timezone.utc).isoformat()
                 try:
-                    filtered_candidates = run_filtering(proposal_candidates, self.config)
+                    filtered_candidates = run_filtering(
+                        proposal_candidates, self.config
+                    )
                     self.checkpoint.save(stem, StageName.FILTERING, filtered_candidates)
                 except Exception as exc:
                     logger.exception("[%s] Filtering failed", stem)
-                    trace.failures.append(FailureRecord(
-                        stage=StageName.FILTERING, error_type=type(exc).__name__,
-                        message=str(exc),
-                    ))
+                    trace.failures.append(
+                        FailureRecord(
+                            stage=StageName.FILTERING,
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                        )
+                    )
                     filtered_candidates = proposal_candidates
                     partial = True
                 else:
-                    trace.stages.append(StageRecord(
-                        stage=StageName.FILTERING, started_at=started,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        candidate_count_in=len(proposal_candidates),
-                        candidate_count_out=len(filtered_candidates),
-                    ))
+                    trace.stages.append(
+                        StageRecord(
+                            stage=StageName.FILTERING,
+                            started_at=started,
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            candidate_count_in=len(proposal_candidates),
+                            candidate_count_out=len(filtered_candidates),
+                        )
+                    )
             trace.filtered_candidates = filtered_candidates
 
         # --- VLM REASONING ---
@@ -144,7 +159,8 @@ class AutoAnnotationPipelineV2:
                 logger.info("[%s] Resuming from checkpoint: vlm_reasoning", stem)
                 data = self.checkpoint.load(stem, StageName.VLM_REASONING)
                 screening_verdicts = [
-                    ScreeningVerdict.model_validate(v) for v in data.get("screening", [])
+                    ScreeningVerdict.model_validate(v)
+                    for v in data.get("screening", [])
                 ]
                 detailed_verdicts = [
                     DetailedVerdict.model_validate(v) for v in data.get("detailed", [])
@@ -155,24 +171,38 @@ class AutoAnnotationPipelineV2:
                     screening_verdicts, detailed_verdicts = await run_vlm_reasoning(
                         image, filtered_candidates, self.config
                     )
-                    self.checkpoint.save(stem, StageName.VLM_REASONING, {
-                        "screening": [v.model_dump(mode="json") for v in screening_verdicts],
-                        "detailed": [v.model_dump(mode="json") for v in detailed_verdicts],
-                    })
+                    self.checkpoint.save(
+                        stem,
+                        StageName.VLM_REASONING,
+                        {
+                            "screening": [
+                                v.model_dump(mode="json") for v in screening_verdicts
+                            ],
+                            "detailed": [
+                                v.model_dump(mode="json") for v in detailed_verdicts
+                            ],
+                        },
+                    )
                 except Exception as exc:
                     logger.exception("[%s] VLM reasoning failed", stem)
-                    trace.failures.append(FailureRecord(
-                        stage=StageName.VLM_REASONING, error_type=type(exc).__name__,
-                        message=str(exc),
-                    ))
+                    trace.failures.append(
+                        FailureRecord(
+                            stage=StageName.VLM_REASONING,
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                        )
+                    )
                     partial = True
                 else:
-                    trace.stages.append(StageRecord(
-                        stage=StageName.VLM_REASONING, started_at=started,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        candidate_count_in=len(filtered_candidates),
-                        candidate_count_out=len(screening_verdicts),
-                    ))
+                    trace.stages.append(
+                        StageRecord(
+                            stage=StageName.VLM_REASONING,
+                            started_at=started,
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            candidate_count_in=len(filtered_candidates),
+                            candidate_count_out=len(screening_verdicts),
+                        )
+                    )
             trace.screening_results = screening_verdicts
             trace.detailed_verdicts = detailed_verdicts
 
@@ -191,28 +221,45 @@ class AutoAnnotationPipelineV2:
                 started = datetime.now(timezone.utc).isoformat()
                 try:
                     refined_candidates, refinement_actions = await run_vlm_refinement(
-                        image, filtered_candidates, screening_verdicts,
-                        detailed_verdicts, self.config,
+                        image,
+                        filtered_candidates,
+                        screening_verdicts,
+                        detailed_verdicts,
+                        self.config,
                     )
-                    self.checkpoint.save(stem, StageName.VLM_REFINEMENT, {
-                        "candidates": [c.model_dump(mode="json") for c in refined_candidates],
-                        "actions": [a.model_dump(mode="json") for a in refinement_actions],
-                    })
+                    self.checkpoint.save(
+                        stem,
+                        StageName.VLM_REFINEMENT,
+                        {
+                            "candidates": [
+                                c.model_dump(mode="json") for c in refined_candidates
+                            ],
+                            "actions": [
+                                a.model_dump(mode="json") for a in refinement_actions
+                            ],
+                        },
+                    )
                 except Exception as exc:
                     logger.exception("[%s] VLM refinement failed", stem)
-                    trace.failures.append(FailureRecord(
-                        stage=StageName.VLM_REFINEMENT, error_type=type(exc).__name__,
-                        message=str(exc),
-                    ))
+                    trace.failures.append(
+                        FailureRecord(
+                            stage=StageName.VLM_REFINEMENT,
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                        )
+                    )
                     refined_candidates = filtered_candidates
                     partial = True
                 else:
-                    trace.stages.append(StageRecord(
-                        stage=StageName.VLM_REFINEMENT, started_at=started,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        candidate_count_in=len(filtered_candidates),
-                        candidate_count_out=len(refined_candidates),
-                    ))
+                    trace.stages.append(
+                        StageRecord(
+                            stage=StageName.VLM_REFINEMENT,
+                            started_at=started,
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            candidate_count_in=len(filtered_candidates),
+                            candidate_count_out=len(refined_candidates),
+                        )
+                    )
             trace.refined_candidates = refined_candidates
             trace.refinement_proposals = refinement_actions
 
@@ -222,7 +269,8 @@ class AutoAnnotationPipelineV2:
                 logger.info("[%s] Resuming from checkpoint: vlm_validation", stem)
                 data = self.checkpoint.load(stem, StageName.VLM_VALIDATION)
                 validation_screening = [
-                    ScreeningVerdict.model_validate(v) for v in data.get("screening", [])
+                    ScreeningVerdict.model_validate(v)
+                    for v in data.get("screening", [])
                 ]
                 validation_detailed = [
                     DetailedVerdict.model_validate(v) for v in data.get("detailed", [])
@@ -230,46 +278,68 @@ class AutoAnnotationPipelineV2:
             else:
                 started = datetime.now(timezone.utc).isoformat()
                 try:
-                    validation_screening, validation_detailed = await run_vlm_validation(
-                        image, refined_candidates, self.config
+                    (
+                        validation_screening,
+                        validation_detailed,
+                    ) = await run_vlm_validation(image, refined_candidates, self.config)
+                    self.checkpoint.save(
+                        stem,
+                        StageName.VLM_VALIDATION,
+                        {
+                            "screening": [
+                                v.model_dump(mode="json") for v in validation_screening
+                            ],
+                            "detailed": [
+                                v.model_dump(mode="json") for v in validation_detailed
+                            ],
+                        },
                     )
-                    self.checkpoint.save(stem, StageName.VLM_VALIDATION, {
-                        "screening": [v.model_dump(mode="json") for v in validation_screening],
-                        "detailed": [v.model_dump(mode="json") for v in validation_detailed],
-                    })
                 except Exception as exc:
                     logger.exception("[%s] VLM validation failed", stem)
-                    trace.failures.append(FailureRecord(
-                        stage=StageName.VLM_VALIDATION, error_type=type(exc).__name__,
-                        message=str(exc),
-                    ))
+                    trace.failures.append(
+                        FailureRecord(
+                            stage=StageName.VLM_VALIDATION,
+                            error_type=type(exc).__name__,
+                            message=str(exc),
+                        )
+                    )
                     partial = True
                 else:
-                    trace.stages.append(StageRecord(
-                        stage=StageName.VLM_VALIDATION, started_at=started,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        candidate_count_in=len(refined_candidates),
-                        candidate_count_out=len(validation_screening),
-                    ))
+                    trace.stages.append(
+                        StageRecord(
+                            stage=StageName.VLM_VALIDATION,
+                            started_at=started,
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                            candidate_count_in=len(refined_candidates),
+                            candidate_count_out=len(validation_screening),
+                        )
+                    )
             trace.validation_verdicts = validation_detailed
 
         # --- FINALIZE ---
-        final_candidates = refined_candidates or filtered_candidates or proposal_candidates
+        final_candidates = (
+            refined_candidates or filtered_candidates or proposal_candidates
+        )
 
         if self._is_stage_enabled(StageName.FINALIZE):
             started = datetime.now(timezone.utc).isoformat()
             final_annotations = build_final_annotations(
                 final_candidates,
-                screening_verdicts, detailed_verdicts,
-                validation_screening, validation_detailed,
+                screening_verdicts,
+                detailed_verdicts,
+                validation_screening,
+                validation_detailed,
             )
             trace.final_annotations = final_annotations
-            trace.stages.append(StageRecord(
-                stage=StageName.FINALIZE, started_at=started,
-                completed_at=datetime.now(timezone.utc).isoformat(),
-                candidate_count_in=len(final_candidates),
-                candidate_count_out=len(final_annotations),
-            ))
+            trace.stages.append(
+                StageRecord(
+                    stage=StageName.FINALIZE,
+                    started_at=started,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                    candidate_count_in=len(final_candidates),
+                    candidate_count_out=len(final_annotations),
+                )
+            )
 
         result = build_pipeline_result(str(image_path), trace, partial=partial)
 
@@ -279,8 +349,11 @@ class AutoAnnotationPipelineV2:
 
         logger.info(
             "[%s] Complete: %d accepted, %d rejected, %d review, partial=%s",
-            stem, len(result.accepted), len(result.rejected),
-            len(result.human_review), partial,
+            stem,
+            len(result.accepted),
+            len(result.rejected),
+            len(result.human_review),
+            partial,
         )
         return result
 

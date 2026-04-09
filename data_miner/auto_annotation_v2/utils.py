@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import base64
 import io
-from pathlib import Path
-from typing import Iterable
 
 from PIL import Image, ImageDraw, ImageFont
 
 from .config import ClassPackConfig
 from .contracts import BoundingBox, Candidate, FinalAnnotation
 
-
 # ---------------------------------------------------------------------------
 # Bbox math
 # ---------------------------------------------------------------------------
+
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
@@ -31,7 +29,9 @@ def bbox_iou(a: BoundingBox, b: BoundingBox) -> float:
     return 0.0 if union <= 0 else inter / union
 
 
-def bbox_to_pixels(box: BoundingBox, size: tuple[int, int]) -> tuple[int, int, int, int]:
+def bbox_to_pixels(
+    box: BoundingBox, size: tuple[int, int]
+) -> tuple[int, int, int, int]:
     w, h = size
     return (
         int(clamp(box.x1) * w),
@@ -41,7 +41,9 @@ def bbox_to_pixels(box: BoundingBox, size: tuple[int, int]) -> tuple[int, int, i
     )
 
 
-def pixels_to_bbox(coords: tuple[int, int, int, int], size: tuple[int, int]) -> BoundingBox:
+def pixels_to_bbox(
+    coords: tuple[int, int, int, int], size: tuple[int, int]
+) -> BoundingBox:
     w, h = size
     x1, y1, x2, y2 = coords
     return BoundingBox(
@@ -54,9 +56,18 @@ def pixels_to_bbox(coords: tuple[int, int, int, int], size: tuple[int, int]) -> 
 # ---------------------------------------------------------------------------
 
 _COLORS = [
-    (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
-    (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0),
-    (0, 0, 128), (128, 128, 0), (128, 0, 128), (0, 128, 128),
+    (255, 0, 0),
+    (0, 255, 0),
+    (0, 0, 255),
+    (255, 255, 0),
+    (255, 0, 255),
+    (0, 255, 255),
+    (128, 0, 0),
+    (0, 128, 0),
+    (0, 0, 128),
+    (128, 128, 0),
+    (128, 0, 128),
+    (0, 128, 128),
 ]
 
 
@@ -69,7 +80,9 @@ def draw_candidates_numbered(
     rendered = image.copy().convert("RGB")
     draw = ImageDraw.Draw(rendered)
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14
+        )
     except (OSError, IOError):
         font = ImageFont.load_default()
 
@@ -101,12 +114,15 @@ def crop_candidate(
     px = int(box.width * w * padding)
     py = int(box.height * h * padding)
     x1, y1, x2, y2 = bbox_to_pixels(box, image.size)
-    return image.crop((max(0, x1 - px), max(0, y1 - py), min(w, x2 + px), min(h, y2 + py)))
+    return image.crop(
+        (max(0, x1 - px), max(0, y1 - py), min(w, x2 + px), min(h, y2 + py))
+    )
 
 
 # ---------------------------------------------------------------------------
 # Image encoding for VLM
 # ---------------------------------------------------------------------------
+
 
 def pil_to_data_url(image: Image.Image, max_size: int = 1024) -> str:
     """Encode PIL image as base64 data URL, resizing if needed."""
@@ -123,18 +139,16 @@ def pil_to_data_url(image: Image.Image, max_size: int = 1024) -> str:
 # YOLO export
 # ---------------------------------------------------------------------------
 
+
 def annotation_to_yolo_line(annotation: FinalAnnotation, class_index: int) -> str:
     box = annotation.bbox
-    return (
-        f"{class_index} "
-        f"{box.cx:.6f} {box.cy:.6f} "
-        f"{box.width:.6f} {box.height:.6f}"
-    )
+    return f"{class_index} {box.cx:.6f} {box.cy:.6f} {box.width:.6f} {box.height:.6f}"
 
 
 # ---------------------------------------------------------------------------
 # Class alias resolution
 # ---------------------------------------------------------------------------
+
 
 def normalize_class_alias(value: str) -> str:
     return " ".join(value.strip().lower().replace("_", " ").replace("-", " ").split())

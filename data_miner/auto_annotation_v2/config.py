@@ -8,13 +8,14 @@ from typing import Any, Literal
 from omegaconf import OmegaConf
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-
 # ---------------------------------------------------------------------------
 # Class definition
 # ---------------------------------------------------------------------------
 
+
 class ClassPackConfig(BaseModel):
     """One target class with synonyms, negatives, and prompt variants."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str
@@ -31,8 +32,10 @@ class ClassPackConfig(BaseModel):
 # Detection / segmentation model config
 # ---------------------------------------------------------------------------
 
+
 class DetectionModelConfig(BaseModel):
     """Config for a detection/segmentation model (Falcon, DINO, SAM, etc.)."""
+
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["falcon", "grounding_dino", "sam"]
@@ -46,8 +49,10 @@ class DetectionModelConfig(BaseModel):
 # VLM config
 # ---------------------------------------------------------------------------
 
+
 class VLMConfig(BaseModel):
     """Config for the VLM reasoning model (Qwen3.5, Gemma4, etc.)."""
+
     model_config = ConfigDict(extra="forbid")
 
     provider: Literal["openai-compatible"] = "openai-compatible"
@@ -64,8 +69,10 @@ class VLMConfig(BaseModel):
 # Filter config
 # ---------------------------------------------------------------------------
 
+
 class FilterConfig(BaseModel):
     """Programmatic bbox filtering thresholds."""
+
     model_config = ConfigDict(extra="forbid")
 
     min_area: float = 0.0005
@@ -81,8 +88,10 @@ class FilterConfig(BaseModel):
 # Reasoning config
 # ---------------------------------------------------------------------------
 
+
 class ReasoningPassConfig(BaseModel):
     """Custom pass/fail criteria for VLM reasoning."""
+
     model_config = ConfigDict(extra="forbid")
 
     accept_confidence_threshold: float = 0.75
@@ -94,6 +103,7 @@ class ReasoningPassConfig(BaseModel):
 
 class ReasoningConfig(BaseModel):
     """VLM reasoning stage configuration."""
+
     model_config = ConfigDict(extra="forbid")
 
     screening: ReasoningPassConfig = Field(default_factory=ReasoningPassConfig)
@@ -109,8 +119,10 @@ class ReasoningConfig(BaseModel):
 # Refinement config
 # ---------------------------------------------------------------------------
 
+
 class RefinementConfig(BaseModel):
     """VLM refinement stage configuration."""
+
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
@@ -121,6 +133,7 @@ class RefinementConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Output config
 # ---------------------------------------------------------------------------
+
 
 class OutputConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -137,8 +150,10 @@ class OutputConfig(BaseModel):
 # Stage enable/disable
 # ---------------------------------------------------------------------------
 
+
 class StageFlags(BaseModel):
     """Which pipeline stages to run."""
+
     model_config = ConfigDict(extra="forbid")
 
     proposal: bool = True
@@ -153,16 +168,21 @@ class StageFlags(BaseModel):
 # Proposal stage config
 # ---------------------------------------------------------------------------
 
+
 class ProposalConfig(BaseModel):
     """Which detection models to use for proposal stage."""
+
     model_config = ConfigDict(extra="forbid")
 
-    models: list[str] = Field(default_factory=lambda: ["falcon", "grounding_dino", "sam"])
+    models: list[str] = Field(
+        default_factory=lambda: ["falcon", "grounding_dino", "sam"]
+    )
 
 
 # ---------------------------------------------------------------------------
 # Top-level config
 # ---------------------------------------------------------------------------
+
 
 class AutoAnnotationV2Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -200,6 +220,7 @@ class AutoAnnotationV2Config(BaseModel):
 # ---------------------------------------------------------------------------
 # Config loading (OmegaConf merge → Pydantic validation)
 # ---------------------------------------------------------------------------
+
 
 def default_config_path() -> Path:
     return Path(__file__).parent / "default.yaml"

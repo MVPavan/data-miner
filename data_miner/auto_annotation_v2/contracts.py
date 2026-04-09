@@ -8,10 +8,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ---------------------------------------------------------------------------
 # Enums — typed stage & status identifiers
 # ---------------------------------------------------------------------------
+
 
 class StageName(str, Enum):
     PROPOSAL = "proposal"
@@ -54,8 +54,10 @@ class FinalAction(str, Enum):
 # Geometry
 # ---------------------------------------------------------------------------
 
+
 class BoundingBox(BaseModel):
     """Normalised bounding box (0.0–1.0)."""
+
     model_config = ConfigDict(extra="forbid")
 
     x1: float
@@ -90,6 +92,7 @@ class BoundingBox(BaseModel):
 
 class PointPrompt(BaseModel):
     """A pixel-coordinate point prompt for SAM."""
+
     model_config = ConfigDict(extra="forbid")
 
     x: int
@@ -101,8 +104,10 @@ class PointPrompt(BaseModel):
 # Candidate — the core annotation unit throughout the pipeline
 # ---------------------------------------------------------------------------
 
+
 class Candidate(BaseModel):
     """A single detection/annotation candidate tracked through the pipeline."""
+
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: str
@@ -122,8 +127,10 @@ class Candidate(BaseModel):
 # VLM Reasoning outputs — structured output types for PydanticAI agents
 # ---------------------------------------------------------------------------
 
+
 class ScreeningVerdict(BaseModel):
     """Per-candidate verdict from Pass 1 (batch screening)."""
+
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: str
@@ -134,6 +141,7 @@ class ScreeningVerdict(BaseModel):
 
 class ScreeningResult(BaseModel):
     """Output of Pass 1 screening for all candidates of one class."""
+
     model_config = ConfigDict(extra="forbid")
 
     verdicts: list[ScreeningVerdict]
@@ -142,6 +150,7 @@ class ScreeningResult(BaseModel):
 
 class DetailedVerdict(BaseModel):
     """Per-candidate verdict from Pass 2 (detailed review)."""
+
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: str
@@ -158,8 +167,10 @@ class DetailedVerdict(BaseModel):
 # VLM Refinement outputs
 # ---------------------------------------------------------------------------
 
+
 class RefinementAction(BaseModel):
     """What the refinement agent proposes for one candidate."""
+
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: str
@@ -172,6 +183,7 @@ class RefinementAction(BaseModel):
 
 class RefinementProposal(BaseModel):
     """Batch output from the refinement agent."""
+
     model_config = ConfigDict(extra="forbid")
 
     actions: list[RefinementAction]
@@ -182,8 +194,10 @@ class RefinementProposal(BaseModel):
 # Final annotation
 # ---------------------------------------------------------------------------
 
+
 class FinalAnnotation(BaseModel):
     """Final status of one annotation after the full pipeline."""
+
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: str
@@ -201,8 +215,10 @@ class FinalAnnotation(BaseModel):
 # Per-image trace (full audit trail)
 # ---------------------------------------------------------------------------
 
+
 class StageRecord(BaseModel):
     """Record of one pipeline stage completing for one image."""
+
     model_config = ConfigDict(extra="forbid")
 
     stage: StageName
@@ -221,11 +237,14 @@ class FailureRecord(BaseModel):
     message: str
     candidate_id: str | None = None
     retriable: bool = False
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
 
 class ImageTrace(BaseModel):
     """Complete trace of everything that happened for one image."""
+
     model_config = ConfigDict(extra="forbid")
 
     image_path: str
@@ -245,8 +264,10 @@ class ImageTrace(BaseModel):
 # Pipeline result
 # ---------------------------------------------------------------------------
 
+
 class PipelineResult(BaseModel):
     """Immutable output for one image."""
+
     model_config = ConfigDict(extra="forbid")
 
     image_path: str

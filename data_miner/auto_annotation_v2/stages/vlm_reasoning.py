@@ -23,7 +23,7 @@ from ..contracts import (
     VLMDecision,
 )
 from ..log_utils import get_logger
-from ..utils import crop_candidate, draw_candidates_numbered, draw_single_candidate, pil_to_data_url
+from ..utils import crop_candidate, draw_candidates_numbered, pil_to_data_url
 
 logger = get_logger(__name__)
 
@@ -31,6 +31,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_image_content(
     image: Image.Image,
@@ -72,6 +73,7 @@ def _format_candidate_list(candidates: list[Candidate]) -> str:
 # Pass 1: Screening (one call per class with all candidates)
 # ---------------------------------------------------------------------------
 
+
 async def _run_screening_for_class(
     image: Image.Image,
     class_candidates: list[Candidate],
@@ -107,6 +109,7 @@ async def _run_screening_for_class(
 # ---------------------------------------------------------------------------
 # Pass 2: Detailed review (one call per uncertain candidate)
 # ---------------------------------------------------------------------------
+
 
 async def _run_detailed_for_candidate(
     image: Image.Image,
@@ -147,6 +150,7 @@ async def _run_detailed_for_candidate(
 # Public API: two-pass VLM reasoning
 # ---------------------------------------------------------------------------
 
+
 async def run_vlm_reasoning(
     image: Image.Image,
     candidates: list[Candidate],
@@ -177,9 +181,7 @@ async def run_vlm_reasoning(
         if cp is None:
             logger.warning("No class pack for '%s', skipping screening", class_name)
             continue
-        screening_tasks.append(
-            _run_screening_for_class(image, class_cands, cp, config)
-        )
+        screening_tasks.append(_run_screening_for_class(image, class_cands, cp, config))
 
     screening_results: list[ScreeningResult] = await asyncio.gather(
         *screening_tasks, return_exceptions=True

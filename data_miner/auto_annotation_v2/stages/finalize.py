@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..config import AutoAnnotationV2Config, OutputConfig
+from ..config import OutputConfig
 from ..contracts import (
     Candidate,
     CandidateStatus,
@@ -14,7 +14,6 @@ from ..contracts import (
     FinalAnnotation,
     ImageTrace,
     PipelineResult,
-    RefinementAction,
     ScreeningVerdict,
     VLMDecision,
 )
@@ -102,17 +101,19 @@ def build_final_annotations(
                 relabel = v.relabel_to
                 break
 
-        annotations.append(FinalAnnotation(
-            candidate_id=cand.candidate_id,
-            class_name=relabel or cand.class_name,
-            bbox=cand.bbox,
-            action=action,
-            confidence=confidence,
-            source_model=cand.source_model,
-            reasoning_trace=trace,
-            was_refined=cand.status == CandidateStatus.REFINED,
-            original_bbox=None,  # Could track original if needed
-        ))
+        annotations.append(
+            FinalAnnotation(
+                candidate_id=cand.candidate_id,
+                class_name=relabel or cand.class_name,
+                bbox=cand.bbox,
+                action=action,
+                confidence=confidence,
+                source_model=cand.source_model,
+                reasoning_trace=trace,
+                was_refined=cand.status == CandidateStatus.REFINED,
+                original_bbox=None,  # Could track original if needed
+            )
+        )
 
     return annotations
 
@@ -131,7 +132,8 @@ def build_yolo_lines(
         if class_idx is None:
             logger.warning(
                 "Accepted annotation %s has unmapped class '%s'",
-                ann.candidate_id, ann.class_name,
+                ann.candidate_id,
+                ann.class_name,
             )
             continue
         lines.append(annotation_to_yolo_line(ann, class_idx))
@@ -146,7 +148,9 @@ def build_pipeline_result(
     """Build the final pipeline result from the trace."""
     accepted = [a for a in trace.final_annotations if a.action == FinalAction.ACCEPT]
     rejected = [a for a in trace.final_annotations if a.action == FinalAction.REJECT]
-    human_review = [a for a in trace.final_annotations if a.action == FinalAction.HUMAN_REVIEW]
+    human_review = [
+        a for a in trace.final_annotations if a.action == FinalAction.HUMAN_REVIEW
+    ]
 
     class_names = list({a.class_name for a in trace.final_annotations})
     class_names.sort()
@@ -167,6 +171,7 @@ def build_pipeline_result(
 # Output writing
 # ---------------------------------------------------------------------------
 
+
 def save_result(
     result: PipelineResult,
     class_names: list[str],
@@ -182,22 +187,24 @@ def save_result(
         label_dir = output_dir / output_cfg.label_dirname
         label_dir.mkdir(parents=True, exist_ok=True)
         yolo_lines = build_yolo_lines(result.accepted, class_names)
-        (label_dir / f"{stem}.txt").write_text(
-            "\n".join(yolo_lines), encoding="utf-8"
-        )
+        (label_dir / f"{stem}.txt").write_text("\n".join(yolo_lines), encoding="utf-8")
 
     # Full trace
     if output_cfg.save_traces:
         trace_dir = output_dir / output_cfg.trace_dirname
         trace_dir.mkdir(parents=True, exist_ok=True)
         (trace_dir / f"{stem}.json").write_text(
-            json.dumps(result.trace.model_dump(mode="json"), indent=2, ensure_ascii=False),
+            json.dumps(
+                result.trace.model_dump(mode="json"), indent=2, ensure_ascii=False
+            ),
             encoding="utf-8",
         )
 
     # Review queue
     review_items = result.human_review
-    if output_cfg.save_review_queue and (review_items or result.partial or result.trace.failures):
+    if output_cfg.save_review_queue and (
+        review_items or result.partial or result.trace.failures
+    ):
         review_dir = output_dir / output_cfg.review_dirname
         review_dir.mkdir(parents=True, exist_ok=True)
         payload = {

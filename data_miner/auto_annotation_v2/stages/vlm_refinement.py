@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import Literal
-
 from PIL import Image
 from pydantic_ai.messages import BinaryContent
 
 from ..agents.refinement import RefinementDeps, build_refinement_agent
-from ..config import AutoAnnotationV2Config, ClassPackConfig
+from ..config import AutoAnnotationV2Config
 from ..contracts import (
     Candidate,
     CandidateStatus,
@@ -130,7 +127,8 @@ def _execute_repropose(
     config: AutoAnnotationV2Config,
 ) -> list[Candidate]:
     """Execute a re-proposal with a new text prompt."""
-    from ..stages.proposal import _RUNNERS, get_loaded_model as _get_model
+    from ..stages.proposal import _RUNNERS
+    from ..stages.proposal import get_loaded_model as _get_model
 
     model_name = action.target_model
     model_cfg = config.detection_models.get(model_name)
@@ -150,7 +148,9 @@ def _execute_repropose(
     expression = action.text_prompt or candidate.expression
 
     try:
-        return runner(loaded, image, class_pack, expression, model_cfg.params, model_name)
+        return runner(
+            loaded, image, class_pack, expression, model_cfg.params, model_name
+        )
     except Exception:
         logger.exception("Re-proposal failed for %s", candidate.candidate_id)
         return []
@@ -159,6 +159,7 @@ def _execute_repropose(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 async def run_vlm_refinement(
     image: Image.Image,
@@ -203,7 +204,10 @@ async def run_vlm_refinement(
         if cand is None:
             continue
 
-        if action.strategy in (RefinementStrategy.SAM_POINTS, RefinementStrategy.SAM_BOX):
+        if action.strategy in (
+            RefinementStrategy.SAM_POINTS,
+            RefinementStrategy.SAM_BOX,
+        ):
             refined = _execute_sam_refinement(image, cand, action, config)
             if refined:
                 cand_map[action.candidate_id] = refined
@@ -214,16 +218,24 @@ async def run_vlm_refinement(
             new_candidates = _execute_repropose(image, cand, action, config)
             if new_candidates:
                 best = max(new_candidates, key=lambda c: c.score)
-                refined = cand.model_copy(update={
-                    "bbox": best.bbox,
-                    "score": best.score,
-                    "status": CandidateStatus.REFINED,
-                    "source_model": f"{cand.source_model}+{action.target_model}",
-                    "notes": [*cand.notes, f"reproposed:{action.text_prompt}"],
-                })
+                refined = cand.model_copy(
+                    update={
+                        "bbox": best.bbox,
+                        "score": best.score,
+                        "status": CandidateStatus.REFINED,
+                        "source_model": f"{cand.source_model}+{action.target_model}",
+                        "notes": [*cand.notes, f"reproposed:{action.text_prompt}"],
+                    }
+                )
                 cand_map[action.candidate_id] = refined
                 refined_ids.add(action.candidate_id)
-                logger.info("Re-proposed %s via %s", action.candidate_id, action.target_model)
+                logger.info(
+                    "Re-proposed %s via %s", action.candidate_id, action.target_model
+                )
 
-    logger.info("Refinement complete: %d/%d candidates refined", len(refined_ids), len(to_refine))
+    logger.info(
+        "Refinement complete: %d/%d candidates refined",
+        len(refined_ids),
+        len(to_refine),
+    )
     return list(cand_map.values()), all_actions

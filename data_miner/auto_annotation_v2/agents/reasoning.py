@@ -11,10 +11,10 @@ from pydantic_ai.settings import ModelSettings
 from ..config import AutoAnnotationV2Config, ClassPackConfig, VLMConfig
 from ..contracts import DetailedVerdict, ScreeningResult
 
-
 # ---------------------------------------------------------------------------
 # Dependencies injected into agents at runtime
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ScreeningDeps:
@@ -39,6 +39,7 @@ class DetailedReviewDeps:
 # ---------------------------------------------------------------------------
 # Model factory
 # ---------------------------------------------------------------------------
+
 
 def _build_vlm_model(vlm_cfg: VLMConfig) -> OpenAIModel:
     return OpenAIModel(
@@ -81,7 +82,9 @@ Return your assessment for ALL {num_candidates} candidates.
 """
 
 
-def build_screening_agent(config: AutoAnnotationV2Config) -> Agent[ScreeningDeps, ScreeningResult]:
+def build_screening_agent(
+    config: AutoAnnotationV2Config,
+) -> Agent[ScreeningDeps, ScreeningResult]:
     """Create the screening agent (Pass 1)."""
     vlm_model = _build_vlm_model(config.vlm)
 
@@ -137,7 +140,9 @@ Be precise and strict in your assessment.
 """
 
 
-def build_detailed_agent(config: AutoAnnotationV2Config) -> Agent[DetailedReviewDeps, DetailedVerdict]:
+def build_detailed_agent(
+    config: AutoAnnotationV2Config,
+) -> Agent[DetailedReviewDeps, DetailedVerdict]:
     """Create the detailed review agent (Pass 2)."""
     vlm_model = _build_vlm_model(config.vlm)
 

@@ -52,7 +52,9 @@ def _load_grounding_dino(cfg: DetectionModelConfig) -> dict[str, Any]:
     model_id = cfg.model_id or "IDEA-Research/grounding-dino-base"
     device = _resolve_device(cfg)
     processor = AutoProcessor.from_pretrained(model_id)
-    model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(device).eval()
+    model = (
+        AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(device).eval()
+    )
     return {"model": model, "processor": processor, "device": device}
 
 
@@ -63,7 +65,9 @@ def _load_sam(cfg: DetectionModelConfig) -> dict[str, Any]:
     device = _resolve_device(cfg)
     processor = Sam3Processor.from_pretrained(model_id)
     torch_dtype = torch.bfloat16 if device == "cuda" else torch.float32
-    model = Sam3Model.from_pretrained(model_id, torch_dtype=torch_dtype).to(device).eval()
+    model = (
+        Sam3Model.from_pretrained(model_id, torch_dtype=torch_dtype).to(device).eval()
+    )
     return {"model": model, "processor": processor, "device": device}
 
 
@@ -87,6 +91,7 @@ def _get_model(name: str, cfg: DetectionModelConfig) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Per-model inference
 # ---------------------------------------------------------------------------
+
 
 def _run_falcon(
     loaded: dict[str, Any],
@@ -148,17 +153,19 @@ def _run_falcon(
             x2=clamp(float(cols[-1] + 1) / w),
             y2=clamp(float(rows[-1] + 1) / h),
         )
-        candidates.append(Candidate(
-            candidate_id=f"{model_name}:{class_pack.name}:{expression}:{idx}",
-            class_name=class_pack.name,
-            label=class_pack.name,
-            source_model=model_name,
-            expression=expression,
-            bbox=box,
-            score=1.0,
-            mask_rle=rle,
-            metadata={"task": params.get("task", "segmentation")},
-        ))
+        candidates.append(
+            Candidate(
+                candidate_id=f"{model_name}:{class_pack.name}:{expression}:{idx}",
+                class_name=class_pack.name,
+                label=class_pack.name,
+                source_model=model_name,
+                expression=expression,
+                bbox=box,
+                score=1.0,
+                mask_rle=rle,
+                metadata={"task": params.get("task", "segmentation")},
+            )
+        )
     return candidates
 
 
@@ -195,18 +202,22 @@ def _run_grounding_dino(
         zip(results["boxes"], results["scores"], results["labels"]), start=1
     ):
         x1, y1, x2, y2 = [float(v) for v in box_t.tolist()]
-        candidates.append(Candidate(
-            candidate_id=f"{model_name}:{class_pack.name}:{expression}:{idx}",
-            class_name=class_pack.name,
-            label=str(label_str),
-            source_model=model_name,
-            expression=expression,
-            bbox=BoundingBox(
-                x1=clamp(x1 / w), y1=clamp(y1 / h),
-                x2=clamp(x2 / w), y2=clamp(y2 / h),
-            ),
-            score=float(score_t),
-        ))
+        candidates.append(
+            Candidate(
+                candidate_id=f"{model_name}:{class_pack.name}:{expression}:{idx}",
+                class_name=class_pack.name,
+                label=str(label_str),
+                source_model=model_name,
+                expression=expression,
+                bbox=BoundingBox(
+                    x1=clamp(x1 / w),
+                    y1=clamp(y1 / h),
+                    x2=clamp(x2 / w),
+                    y2=clamp(y2 / h),
+                ),
+                score=float(score_t),
+            )
+        )
     return candidates
 
 
@@ -244,18 +255,22 @@ def _run_sam(
     candidates: list[Candidate] = []
     for idx, (box_t, score_t) in enumerate(zip(boxes, scores), start=1):
         x1, y1, x2, y2 = [float(v) for v in box_t.tolist()]
-        candidates.append(Candidate(
-            candidate_id=f"{model_name}:{class_pack.name}:{expression}:{idx}",
-            class_name=class_pack.name,
-            label=class_pack.name,
-            source_model=model_name,
-            expression=expression,
-            bbox=BoundingBox(
-                x1=clamp(x1 / w), y1=clamp(y1 / h),
-                x2=clamp(x2 / w), y2=clamp(y2 / h),
-            ),
-            score=float(score_t),
-        ))
+        candidates.append(
+            Candidate(
+                candidate_id=f"{model_name}:{class_pack.name}:{expression}:{idx}",
+                class_name=class_pack.name,
+                label=class_pack.name,
+                source_model=model_name,
+                expression=expression,
+                bbox=BoundingBox(
+                    x1=clamp(x1 / w),
+                    y1=clamp(y1 / h),
+                    x2=clamp(x2 / w),
+                    y2=clamp(y2 / h),
+                ),
+                score=float(score_t),
+            )
+        )
     return candidates
 
 
@@ -321,21 +336,26 @@ def _refine_with_sam(
     x1, y1, x2, y2 = [float(v) for v in boxes[best_idx].tolist()]
     w, h = image.size
 
-    return candidate.model_copy(update={
-        "bbox": BoundingBox(
-            x1=clamp(x1 / w), y1=clamp(y1 / h),
-            x2=clamp(x2 / w), y2=clamp(y2 / h),
-        ),
-        "score": max(candidate.score, float(scores[best_idx])),
-        "source_model": f"{candidate.source_model}+sam",
-        "status": CandidateStatus.REFINED,
-        "notes": [*candidate.notes, "sam_refined"],
-    })
+    return candidate.model_copy(
+        update={
+            "bbox": BoundingBox(
+                x1=clamp(x1 / w),
+                y1=clamp(y1 / h),
+                x2=clamp(x2 / w),
+                y2=clamp(y2 / h),
+            ),
+            "score": max(candidate.score, float(scores[best_idx])),
+            "source_model": f"{candidate.source_model}+sam",
+            "status": CandidateStatus.REFINED,
+            "notes": [*candidate.notes, "sam_refined"],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def run_proposal(
     image: Image.Image,
@@ -352,7 +372,9 @@ def run_proposal(
         loaded = _get_model(model_name, model_cfg)
         runner = _RUNNERS.get(model_cfg.kind)
         if runner is None:
-            logger.warning("No runner for kind=%s, skipping %s", model_cfg.kind, model_name)
+            logger.warning(
+                "No runner for kind=%s, skipping %s", model_cfg.kind, model_name
+            )
             continue
 
         for class_pack in config.classes:
@@ -360,21 +382,33 @@ def run_proposal(
             for expression in expressions:
                 logger.info(
                     "Proposing: model=%s class=%s expression=%s",
-                    model_name, class_pack.name, expression,
+                    model_name,
+                    class_pack.name,
+                    expression,
                 )
                 try:
                     candidates = runner(
-                        loaded, image, class_pack, expression, model_cfg.params, model_name
+                        loaded,
+                        image,
+                        class_pack,
+                        expression,
+                        model_cfg.params,
+                        model_name,
                     )
                     logger.info(
                         "Got %d candidates from %s for %s/%s",
-                        len(candidates), model_name, class_pack.name, expression,
+                        len(candidates),
+                        model_name,
+                        class_pack.name,
+                        expression,
                     )
                     all_candidates.extend(candidates)
                 except Exception:
                     logger.exception(
                         "Proposal failed: model=%s class=%s expr=%s",
-                        model_name, class_pack.name, expression,
+                        model_name,
+                        class_pack.name,
+                        expression,
                     )
 
     logger.info("Total proposal candidates: %d", len(all_candidates))

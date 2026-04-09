@@ -40,6 +40,7 @@ async def run_vlm_validation(
     screening, detailed = await run_vlm_reasoning(image, refined, config)
     logger.info(
         "Validation complete: %d screening verdicts, %d detailed verdicts",
-        len(screening), len(detailed),
+        len(screening),
+        len(detailed),
     )
     return screening, detailed
