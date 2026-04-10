@@ -5,7 +5,7 @@ from __future__ import annotations
 from PIL import Image
 from pydantic_ai.messages import BinaryContent
 
-from ..agents.refinement import RefinementDeps, build_refinement_agent
+from ..agents.refinement import RefinementDeps, build_refinement_agent, parse_refinement_proposal
 from ..config import AutoAnnotationV2Config
 from ..contracts import (
     Candidate,
@@ -19,7 +19,7 @@ from ..contracts import (
 )
 from ..log_utils import get_logger
 from ..stages.proposal import _refine_with_sam, get_loaded_model
-from ..utils import draw_candidates_numbered, pil_to_data_url
+from ..utils import draw_candidates_numbered, pil_to_png_bytes
 
 logger = get_logger(__name__)
 
@@ -94,14 +94,14 @@ async def _get_refinement_proposals(
 
     annotated = draw_candidates_numbered(image, to_refine)
     image_parts: list[str | BinaryContent] = [
-        BinaryContent(data=pil_to_data_url(annotated), media_type="image/png"),
+        BinaryContent(data=pil_to_png_bytes(annotated), media_type="image/png"),
         f"These candidates need refinement:\n\n{deps.candidate_descriptions}\n\n"
         f"Image dimensions: {image.size[0]}x{image.size[1]} pixels.\n"
         f"Propose refinements for each candidate.",
     ]
 
     result = await agent.run(image_parts, deps=deps)
-    return result.output
+    return parse_refinement_proposal(result.output)
 
 
 def _execute_sam_refinement(

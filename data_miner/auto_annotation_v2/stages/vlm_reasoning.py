@@ -13,6 +13,8 @@ from ..agents.reasoning import (
     ScreeningDeps,
     build_detailed_agent,
     build_screening_agent,
+    parse_detailed_verdict,
+    parse_screening_result,
 )
 from ..config import AutoAnnotationV2Config, ClassPackConfig
 from ..contracts import (
@@ -23,7 +25,7 @@ from ..contracts import (
     VLMDecision,
 )
 from ..log_utils import get_logger
-from ..utils import crop_candidate, draw_candidates_numbered, pil_to_data_url
+from ..utils import crop_candidate, draw_candidates_numbered, pil_to_png_bytes
 
 logger = get_logger(__name__)
 
@@ -43,16 +45,19 @@ def _build_image_content(
     parts: list[BinaryContent] = []
     for kind in inputs:
         if kind == "original":
-            data_url = pil_to_data_url(image)
-            parts.append(BinaryContent(data=data_url, media_type="image/png"))
+            parts.append(
+                BinaryContent(data=pil_to_png_bytes(image), media_type="image/png")
+            )
         elif kind == "annotated":
             annotated = draw_candidates_numbered(image, candidates)
-            data_url = pil_to_data_url(annotated)
-            parts.append(BinaryContent(data=data_url, media_type="image/png"))
+            parts.append(
+                BinaryContent(data=pil_to_png_bytes(annotated), media_type="image/png")
+            )
         elif kind == "crop" and candidate is not None:
             cropped = crop_candidate(image, candidate)
-            data_url = pil_to_data_url(cropped)
-            parts.append(BinaryContent(data=data_url, media_type="image/png"))
+            parts.append(
+                BinaryContent(data=pil_to_png_bytes(cropped), media_type="image/png")
+            )
     return parts
 
 
@@ -103,7 +108,7 @@ async def _run_screening_for_class(
     )
 
     result = await agent.run(user_prompt_parts, deps=deps)
-    return result.output
+    return parse_screening_result(result.output)
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +148,7 @@ async def _run_detailed_for_candidate(
     )
 
     result = await agent.run(user_prompt_parts, deps=deps)
-    return result.output
+    return parse_detailed_verdict(result.output)
 
 
 # ---------------------------------------------------------------------------

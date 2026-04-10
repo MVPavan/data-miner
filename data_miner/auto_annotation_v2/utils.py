@@ -135,6 +135,16 @@ def pil_to_data_url(image: Image.Image, max_size: int = 1024) -> str:
     return f"data:image/png;base64,{payload}"
 
 
+def pil_to_png_bytes(image: Image.Image, max_size: int = 1024) -> bytes:
+    """Encode PIL image as PNG bytes, resizing if needed."""
+    img = image.copy()
+    if max(img.size) > max_size:
+        img.thumbnail((max_size, max_size), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # YOLO export
 # ---------------------------------------------------------------------------

@@ -96,3 +96,24 @@ class CheckpointManager:
             for f in image_dir.iterdir():
                 f.unlink(missing_ok=True)
             image_dir.rmdir()
+
+    def clear_stage_and_downstream(
+        self,
+        image_stem: str,
+        stage: StageName,
+        stage_order: list[StageName],
+    ) -> None:
+        """Remove checkpoint for *stage* and every stage after it.
+
+        If you force-redo 'filtering', this also clears vlm_reasoning,
+        vlm_refinement, vlm_validation, and finalize so they re-run with
+        the new filtering output.
+        """
+        try:
+            idx = stage_order.index(stage)
+        except ValueError:
+            return
+        for s in stage_order[idx:]:
+            path = self._stage_path(image_stem, s)
+            if path.is_file():
+                path.unlink()

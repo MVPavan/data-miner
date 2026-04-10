@@ -1,11 +1,18 @@
-"""PydanticAI agents for VLM reasoning (screening + detailed review)."""
+"""PydanticAI agents for VLM reasoning (screening + detailed review).
+
+Uses output_type=str with JSON schema in system prompt because vLLM
+doesn't support tool_choice (requires --tool-call-parser).
+The caller parses the JSON manually via Pydantic.
+"""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 
 from ..config import AutoAnnotationV2Config, ClassPackConfig, VLMConfig
@@ -41,13 +48,9 @@ class DetailedReviewDeps:
 # ---------------------------------------------------------------------------
 
 
-def _build_vlm_model(vlm_cfg: VLMConfig) -> OpenAIModel:
-    return OpenAIModel(
-        vlm_cfg.model_name,
-        provider="openai",
-        base_url=vlm_cfg.base_url,
-        api_key=vlm_cfg.api_key,
-    )
+def _build_vlm_model(vlm_cfg: VLMConfig) -> OpenAIChatModel:
+    provider = OpenAIProvider(base_url=vlm_cfg.base_url, api_key=vlm_cfg.api_key)
+    return OpenAIChatModel(vlm_cfg.model_name, provider=provider)
 
 
 def _build_model_settings(vlm_cfg: VLMConfig) -> ModelSettings:
@@ -58,9 +61,24 @@ def _build_model_settings(vlm_cfg: VLMConfig) -> ModelSettings:
     )
 
 
+def _extract_json(text: str) -> dict:
+    """Extract JSON from model response, handling markdown code fences."""
+    text = text.strip()
+    if text.startswith("```"):
+        # Strip ```json ... ``` or ``` ... ```
+        lines = text.split("\n")
+        lines = lines[1:]  # remove opening ```json
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    return json.loads(text)
+
+
 # ---------------------------------------------------------------------------
 # Screening Agent (Pass 1): batch evaluation of all candidates for one class
 # ---------------------------------------------------------------------------
+
+_SCREENING_SCHEMA = ScreeningResult.model_json_schema()
 
 _SCREENING_INSTRUCTIONS = """\
 You are a strict annotation quality reviewer for object detection.
@@ -79,19 +97,25 @@ For EACH numbered candidate, determine:
 
 Be strict. When in doubt, mark as "needs_review" rather than "accept".
 Return your assessment for ALL {num_candidates} candidates.
+
+You MUST respond with ONLY valid JSON (no extra text) matching this schema:
+{schema}
+
+decision must be one of: "accept", "needs_review", "reject".
+confidence must be between 0.0 and 1.0.
 """
 
 
 def build_screening_agent(
     config: AutoAnnotationV2Config,
-) -> Agent[ScreeningDeps, ScreeningResult]:
-    """Create the screening agent (Pass 1)."""
+) -> Agent[ScreeningDeps, str]:
+    """Create the screening agent (Pass 1). Returns raw JSON string."""
     vlm_model = _build_vlm_model(config.vlm)
 
-    agent: Agent[ScreeningDeps, ScreeningResult] = Agent(
+    agent: Agent[ScreeningDeps, str] = Agent(
         vlm_model,
         deps_type=ScreeningDeps,
-        output_type=ScreeningResult,
+        output_type=str,
         retries=config.vlm.max_retries,
         model_settings=_build_model_settings(config.vlm),
     )
@@ -106,14 +130,22 @@ def build_screening_agent(
             negatives=", ".join(cp.negatives) or "(none)",
             positive_prompts=", ".join(cp.prompt_variants) or cp.name,
             num_candidates=deps.num_candidates,
+            schema=json.dumps(_SCREENING_SCHEMA, indent=2),
         )
 
     return agent
 
 
+def parse_screening_result(raw: str) -> ScreeningResult:
+    """Parse raw JSON string from screening agent into ScreeningResult."""
+    return ScreeningResult.model_validate(_extract_json(raw))
+
+
 # ---------------------------------------------------------------------------
 # Detailed Review Agent (Pass 2): per-candidate deep analysis
 # ---------------------------------------------------------------------------
+
+_DETAILED_SCHEMA = DetailedVerdict.model_json_schema()
 
 _DETAILED_INSTRUCTIONS = """\
 You are a meticulous annotation quality reviewer for object detection.
@@ -137,19 +169,27 @@ Evaluate carefully:
 4. If the box needs adjustment, describe how in refinement_hint.
 
 Be precise and strict in your assessment.
+
+You MUST respond with ONLY valid JSON (no extra text) matching this schema:
+{schema}
+
+decision must be one of: "accept", "needs_review", "reject".
+semantic_match must be one of: "yes", "no", "uncertain".
+bbox_quality must be one of: "tight", "loose", "too_small", "uncertain".
+confidence must be between 0.0 and 1.0.
 """
 
 
 def build_detailed_agent(
     config: AutoAnnotationV2Config,
-) -> Agent[DetailedReviewDeps, DetailedVerdict]:
-    """Create the detailed review agent (Pass 2)."""
+) -> Agent[DetailedReviewDeps, str]:
+    """Create the detailed review agent (Pass 2). Returns raw JSON string."""
     vlm_model = _build_vlm_model(config.vlm)
 
-    agent: Agent[DetailedReviewDeps, DetailedVerdict] = Agent(
+    agent: Agent[DetailedReviewDeps, str] = Agent(
         vlm_model,
         deps_type=DetailedReviewDeps,
-        output_type=DetailedVerdict,
+        output_type=str,
         retries=config.vlm.max_retries,
         model_settings=_build_model_settings(config.vlm),
     )
@@ -167,6 +207,12 @@ def build_detailed_agent(
             candidate_label=deps.candidate_label,
             candidate_source=deps.candidate_source,
             candidate_score=deps.candidate_score,
+            schema=json.dumps(_DETAILED_SCHEMA, indent=2),
         )
 
     return agent
+
+
+def parse_detailed_verdict(raw: str) -> DetailedVerdict:
+    """Parse raw JSON string from detailed agent into DetailedVerdict."""
+    return DetailedVerdict.model_validate(_extract_json(raw))

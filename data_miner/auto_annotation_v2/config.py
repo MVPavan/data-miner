@@ -165,6 +165,23 @@ class StageFlags(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Runtime config (CLI-overridable params)
+# ---------------------------------------------------------------------------
+
+
+class RuntimeConfig(BaseModel):
+    """Parameters also settable via CLI args. CLI values override YAML."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    output_dir: str = "output/auto_annotation_v2"
+    log_level: str = "INFO"
+    image: str | None = None
+    image_dir: str | None = None
+    force_redo: str | None = None  # comma-separated stage names or "all"
+
+
+# ---------------------------------------------------------------------------
 # Proposal stage config
 # ---------------------------------------------------------------------------
 
@@ -196,6 +213,7 @@ class AutoAnnotationV2Config(BaseModel):
     refinement: RefinementConfig = Field(default_factory=RefinementConfig)
     stages: StageFlags = Field(default_factory=StageFlags)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
     @model_validator(mode="after")
     def validate_model_references(self) -> AutoAnnotationV2Config:
