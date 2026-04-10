@@ -33,17 +33,38 @@ def _load_falcon(cfg: DetectionModelConfig) -> dict[str, Any]:
     import torch._dynamo
 
     torch._dynamo.config.suppress_errors = True
-    from falcon_perception import PERCEPTION_MODEL_ID, load_from_hf_export
+    from falcon_perception import load_and_prepare_model, setup_torch_config
     from falcon_perception.batch_inference import BatchInferenceEngine
 
-    model_id = cfg.model_id or PERCEPTION_MODEL_ID
-    model, tokenizer, _ = load_from_hf_export(hf_model_id=model_id)
-    device = _resolve_device(cfg)
+    setup_torch_config()
+    model_id = cfg.model_id or "tiiuae/Falcon-Perception"
+    device_str = _resolve_device(cfg)
+    # load_and_prepare_model accepts device=None for auto
+    resolve = device_str if device_str != "auto" else None
     dtype_name = cfg.params.get("dtype", "bfloat16")
-    torch_dtype = getattr(torch, dtype_name, torch.bfloat16)
-    model = model.to(dtype=torch_dtype, device=device).eval()
+    task = cfg.params.get("task", "segmentation")
+
+    model, tokenizer, model_args = load_and_prepare_model(
+        hf_model_id=model_id,
+        device=resolve,
+        dtype=dtype_name,
+        compile=False,
+    )
     engine = BatchInferenceEngine(model, tokenizer)
-    return {"model": model, "tokenizer": tokenizer, "engine": engine, "device": device}
+    stop_token_ids = [tokenizer.eos_token_id, tokenizer.end_of_query_token_id]
+
+    # If model doesn't support segmentation, fall back to detection
+    if task == "segmentation" and not model_args.do_segmentation:
+        task = "detection"
+
+    return {
+        "model": model,
+        "tokenizer": tokenizer,
+        "engine": engine,
+        "device": str(model.device),
+        "stop_token_ids": stop_token_ids,
+        "task": task,
+    }
 
 
 def _load_grounding_dino(cfg: DetectionModelConfig) -> dict[str, Any]:
@@ -93,6 +114,50 @@ def _get_model(name: str, cfg: DetectionModelConfig) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _center_size_to_xyxy(
+    x_center: float, y_center: float, box_width: float, box_height: float
+) -> tuple[float, float, float, float]:
+    """Convert normalized center-size coordinates to normalized xyxy."""
+    x1 = x_center - box_width / 2
+    y1 = y_center - box_height / 2
+    x2 = x_center + box_width / 2
+    y2 = y_center + box_height / 2
+    return (clamp(x1), clamp(y1), clamp(x2), clamp(y2))
+
+
+def _mask_rle_to_xyxy(mask_rle: dict) -> tuple[float, float, float, float] | None:
+    """Decode a Falcon mask RLE and return normalized xyxy bounds."""
+    from pycocotools import mask as mask_utils
+
+    if not isinstance(mask_rle, dict):
+        return None
+    size = mask_rle.get("size")
+    counts = mask_rle.get("counts")
+    if not isinstance(size, list) or len(size) != 2 or counts is None:
+        return None
+    try:
+        encoded = {
+            "size": size,
+            "counts": counts.encode("utf-8") if isinstance(counts, str) else counts,
+        }
+        decoded = mask_utils.decode(encoded)
+    except Exception:
+        return None
+    if decoded is None or decoded.size == 0:
+        return None
+    foreground = np.argwhere(decoded.astype(bool))
+    if foreground.size == 0:
+        return None
+    y_coords, x_coords = foreground[:, 0], foreground[:, 1]
+    img_h, img_w = decoded.shape[:2]
+    return (
+        clamp(float(x_coords.min()) / img_w),
+        clamp(float(y_coords.min()) / img_h),
+        clamp(float(x_coords.max() + 1) / img_w),
+        clamp(float(y_coords.max() + 1) / img_h),
+    )
+
+
 def _run_falcon(
     loaded: dict[str, Any],
     image: Image.Image,
@@ -103,13 +168,15 @@ def _run_falcon(
 ) -> list[Candidate]:
     from falcon_perception import build_prompt_for_task
     from falcon_perception.batch_inference import process_batch_and_generate
-    from pycocotools import mask as mask_utils
+    from falcon_perception.visualization_utils import pair_bbox_entries
 
     engine = loaded["engine"]
     tokenizer = loaded["tokenizer"]
     device = loaded["device"]
+    task = loaded.get("task", params.get("task", "segmentation"))
+    stop_ids = loaded["stop_token_ids"]
 
-    prompt = build_prompt_for_task(expression, params.get("task", "segmentation"))
+    prompt = build_prompt_for_task(expression, task)
     batch_inputs = process_batch_and_generate(
         tokenizer,
         [(image.convert("RGB"), prompt)],
@@ -120,10 +187,6 @@ def _run_falcon(
     batch_inputs = {
         k: v.to(device) if torch.is_tensor(v) else v for k, v in batch_inputs.items()
     }
-    stop_ids = [tokenizer.eos_token_id]
-    end_query = getattr(tokenizer, "end_of_query_token_id", None)
-    if end_query is not None:
-        stop_ids.append(end_query)
 
     _, aux_out = engine.generate(
         **batch_inputs,
@@ -131,28 +194,36 @@ def _run_falcon(
         temperature=0.0,
         stop_token_ids=stop_ids,
         seed=int(params.get("seed", 42)),
+        task=task,
     )
 
+    aux = aux_out[0]
+    paired_bboxes = pair_bbox_entries(aux.bboxes_raw)
+    masks_rle = aux.masks_rle if task == "segmentation" else []
+
     candidates: list[Candidate] = []
-    masks = getattr(aux_out[0], "masks_rle", []) or []
-    for idx, rle in enumerate(masks, start=1):
-        rle_bytes = dict(rle)
-        if isinstance(rle_bytes.get("counts"), str):
-            rle_bytes["counts"] = rle_bytes["counts"].encode("utf-8")
-        decoded = mask_utils.decode(rle_bytes)
-        if decoded is None or not np.any(decoded):
+    for idx, bbox_entry in enumerate(paired_bboxes, start=1):
+        # Extract bbox from mask RLE or coordinate entries (same as models/)
+        mask_rle = masks_rle[idx - 1] if (idx - 1) < len(masks_rle) else None
+        mask_bbox = _mask_rle_to_xyxy(mask_rle) if mask_rle else None
+
+        coord_bbox = None
+        xy = bbox_entry.get("x"), bbox_entry.get("y")
+        hw = bbox_entry.get("h"), bbox_entry.get("w")
+        if all(v is not None for v in (*xy, *hw)):
+            try:
+                coord_bbox = _center_size_to_xyxy(
+                    float(xy[0]), float(xy[1]), float(hw[1]), float(hw[0])
+                )
+            except (TypeError, ValueError):
+                coord_bbox = None
+
+        primary_bbox = mask_bbox or coord_bbox
+        if primary_bbox is None:
             continue
-        rows = np.where(decoded.any(axis=1))[0]
-        cols = np.where(decoded.any(axis=0))[0]
-        if rows.size == 0 or cols.size == 0:
-            continue
-        w, h = image.size
-        box = BoundingBox(
-            x1=clamp(float(cols[0]) / w),
-            y1=clamp(float(rows[0]) / h),
-            x2=clamp(float(cols[-1] + 1) / w),
-            y2=clamp(float(rows[-1] + 1) / h),
-        )
+
+        x1, y1, x2, y2 = primary_bbox
+        box = BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2)
         candidates.append(
             Candidate(
                 candidate_id=f"{model_name}:{class_pack.name}:{expression}:{idx}",
@@ -162,8 +233,8 @@ def _run_falcon(
                 expression=expression,
                 bbox=box,
                 score=1.0,
-                mask_rle=rle,
-                metadata={"task": params.get("task", "segmentation")},
+                mask_rle=mask_rle,
+                metadata={"task": task},
             )
         )
     return candidates
@@ -181,7 +252,7 @@ def _run_grounding_dino(
     processor = loaded["processor"]
     device = loaded["device"]
 
-    text = " . ".join(class_pack.all_names())
+    text = [class_pack.all_names()]
     inputs = processor(images=image, text=text, return_tensors="pt")
     inputs = {k: v.to(device) if torch.is_tensor(v) else v for k, v in inputs.items()}
 

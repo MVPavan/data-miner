@@ -5,7 +5,11 @@ from __future__ import annotations
 from PIL import Image
 from pydantic_ai.messages import BinaryContent
 
-from ..agents.refinement import RefinementDeps, build_refinement_agent, parse_refinement_proposal
+from ..agents.refinement import (
+    RefinementDeps,
+    build_refinement_agent,
+    parse_refinement_proposal,
+)
 from ..config import AutoAnnotationV2Config
 from ..contracts import (
     Candidate,

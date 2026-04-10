@@ -421,3 +421,7 @@ results = pipeline.run_batch_sync(images)
 - Disable slow models: `detection_models.falcon.enabled: false`
 - Reduce candidate cap: `filtering.max_candidates_per_class: 15`
 - For fast iteration on VLM prompting, skip proposal: run once to checkpoint, then re-run with `stages.proposal: false` and `stages.filtering: false`
+
+
+### Visualization
+`uv run python -m data_miner.auto_annotation_v2.viewer --image-dir output/sample/fl_pj_sample --port 8956`

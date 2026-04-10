@@ -1,12 +1,12 @@
 classes:
-  - name: person
+  - name: forklift
     synonyms: []
     negatives: []
-    prompt_variants: ["human", "people"]
-  # - name: pallet jack
-  #   synonyms: []
-  #   negatives: []
-  #   prompt_variants: ["pallet jack", "pallet truck", "pallet trolley"]
+    prompt_variants: ["forklift including any load on the forks"]
+  - name: pallet jack
+    synonyms: []
+    negatives: []
+    prompt_variants: ["pallet jack including any load on the forks"]
 
 detection_models:
   falcon:
@@ -94,8 +94,8 @@ output:
 
 
 runtime:
-  output_dir: output/auto_annotation_v2
+  output_dir: output/auto_annotation_v2/fl_pj_sample/v1
   log_level: INFO
-  image: output/sample/fl_pj_sample/-pFdYqqFUl8_003840.jpg
-  image_dir: null #output/sample/fl_pj_sample
-  force_redo: vlm_reasoning
+  image: null #output/sample/fl_pj_sample/-pFdYqqFUl8_003840.jpg
+  image_dir: output/sample/fl_pj_sample
+  force_redo: all

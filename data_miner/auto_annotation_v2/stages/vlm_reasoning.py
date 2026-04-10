@@ -181,20 +181,29 @@ async def run_vlm_reasoning(
     logger.info("Pass 1: Screening %d classes", len(by_class))
     all_screening: list[ScreeningVerdict] = []
     screening_tasks = []
+    class_order: list[str] = []  # track which class each task corresponds to
     for class_name, class_cands in by_class.items():
         cp = class_pack_map.get(class_name)
         if cp is None:
             logger.warning("No class pack for '%s', skipping screening", class_name)
             continue
         screening_tasks.append(_run_screening_for_class(image, class_cands, cp, config))
+        class_order.append(class_name)
 
     screening_results: list[ScreeningResult] = await asyncio.gather(
         *screening_tasks, return_exceptions=True
     )
-    for result in screening_results:
+    # Map index-based candidate_ids ("0","1",...) from VLM back to real IDs.
+    # Each result corresponds to one class (same order as class_order).
+    for result, class_name in zip(screening_results, class_order):
         if isinstance(result, Exception):
-            logger.exception("Screening failed: %s", result)
+            logger.exception("Screening failed for class %s: %s", class_name, result)
             continue
+        class_cands = by_class[class_name]
+        idx_to_real = {str(i): c.candidate_id for i, c in enumerate(class_cands)}
+        for verdict in result.verdicts:
+            if verdict.candidate_id in idx_to_real:
+                verdict.candidate_id = idx_to_real[verdict.candidate_id]
         all_screening.extend(result.verdicts)
 
     logger.info(
