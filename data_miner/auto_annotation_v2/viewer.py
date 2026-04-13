@@ -503,15 +503,17 @@ def build_ui(state: ViewerState) -> None:
         count_label = ui.label(f"{len(state.stems)} images").classes(
             "text-sm text-gray-400 mb-2"
         )
-        search_input = ui.input(placeholder="Search images...").classes(
-            "w-full mb-2"
-        ).props('dense clearable outlined dark')
+        search_input = (
+            ui.input(placeholder="Search images...")
+            .classes("w-full mb-2")
+            .props("dense clearable outlined dark")
+        )
 
         # Store button refs keyed by stem (mutated on refresh)
         stem_buttons: dict[str, ui.button] = {}
 
-        button_container = ui.scroll_area().classes("w-full").style(
-            "height: calc(100vh - 200px);"
+        button_container = (
+            ui.scroll_area().classes("w-full").style("height: calc(100vh - 200px);")
         )
 
         def _highlight_active():
@@ -547,10 +549,15 @@ def build_ui(state: ViewerState) -> None:
                     ui.label("No processed images found.").classes("text-gray-400")
                 else:
                     for stem in state.stems:
-                        btn = ui.button(
-                            stem[:36] + ("..." if len(stem) > 36 else ""),
-                            on_click=lambda s=stem: on_image_select(s),
-                        ).classes("w-full text-left mb-1").props("flat dense").tooltip(stem)
+                        btn = (
+                            ui.button(
+                                stem[:36] + ("..." if len(stem) > 36 else ""),
+                                on_click=lambda s=stem: on_image_select(s),
+                            )
+                            .classes("w-full text-left mb-1")
+                            .props("flat dense")
+                            .tooltip(stem)
+                        )
                         stem_buttons[stem] = btn
 
         def _refresh_sidebar():
