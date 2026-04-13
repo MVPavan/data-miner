@@ -1,0 +1,103 @@
+classes:
+  - name: object
+    synonyms: []
+    negatives: []
+    prompt_variants: ["object"]
+
+detection_models:
+  falcon:
+    kind: falcon
+    enabled: true
+    model_id: tiiuae/Falcon-Perception
+    device: auto
+    params:
+      task: segmentation
+      dtype: bfloat16
+      min_dimension: 256
+      max_dimension: 512
+      max_length: 4096
+      max_new_tokens: 2048
+      seed: 42
+  grounding_dino:
+    kind: grounding_dino
+    enabled: true
+    model_id: IDEA-Research/grounding-dino-base
+    device: auto
+    params:
+      box_threshold: 0.25
+      text_threshold: 0.2
+  sam:
+    kind: sam
+    enabled: true
+    model_id: facebook/sam3
+    device: auto
+    params:
+      threshold: 0.5
+  owlvit:
+    kind: owlvit
+    enabled: false
+    model_id: google/owlv2-base-patch16-ensemble
+    device: auto
+    params:
+      threshold: 0.1
+
+vlm:
+  provider: openai-compatible
+  model_name: Qwen/Qwen3.5-27B-FP8
+  base_url: http://localhost:8955/v1
+  api_key: dummy
+  temperature: 0.0
+  max_tokens: 2048
+  max_retries: 2
+  timeout: 120.0
+
+proposal:
+  models: [falcon, grounding_dino, sam]
+
+filtering:
+  min_area: 0.0005
+  max_area: 0.95
+  min_aspect_ratio: 0.1
+  max_aspect_ratio: 10.0
+  min_edge_distance: 0.0
+  iou_dedup_threshold: 0.7
+  max_candidates_per_class: 30
+
+reasoning:
+  screening:
+    accept_confidence_threshold: 0.75
+    reject_confidence_threshold: 0.4
+    image_inputs: [annotated]
+  detailed:
+    accept_confidence_threshold: 0.75
+    reject_confidence_threshold: 0.4
+    image_inputs: [original, annotated, crop]
+  max_concurrent_calls: 4
+
+refinement:
+  enabled: true
+  refinement_models: [sam]
+  max_refinement_rounds: 1
+
+stages:
+  proposal: true
+  filtering: true
+  vlm_reasoning: true
+  vlm_refinement: true
+  vlm_validation: true
+  finalize: true
+
+output:
+  save_labels: true
+  save_traces: true
+  save_review_queue: true
+  label_dirname: labels
+  trace_dirname: traces
+  review_dirname: review
+
+runtime:
+  output_dir: output/auto_annotation_v2
+  log_level: INFO
+  image: null
+  image_dir: null
+  force_redo: null

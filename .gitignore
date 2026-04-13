@@ -30,3 +30,4 @@
 **/manifests/*
 # .mailmap
 **/cvat_output/
+**/validation_results*

@@ -108,38 +108,67 @@ class DINOv3Model(BaseModel):
         device = get_model_device(self.model)
         
         all_embeddings = []
-        
+        failed_indices = []
+
         for start_idx, batch_images in create_batch_iterator(
             images, batch_size, show_progress, "Computing embeddings"
         ):
-            # Load and process images
-            pil_images = [self._load_image(img) for img in batch_images]
-            
+            # Load images, tracking failures for zero-embedding insertion
+            pil_images = []
+            batch_failed = []
+            for i, img in enumerate(batch_images):
+                try:
+                    pil_images.append(self._load_image(img))
+                except (OSError, IOError) as e:
+                    logger.warning(f"Skipping unreadable image {img}: {e}")
+                    batch_failed.append(start_idx + i)
+
+            if not pil_images:
+                failed_indices.extend(batch_failed)
+                continue
+
             inputs = self.processor(images=pil_images, return_tensors="pt")
-            
+
             # Move inputs to model device
             inputs = {k: v.to(device) for k, v in inputs.items()}
             if self.use_fp16 and device.type != "cpu":
                 inputs = {k: v.half() if v.dtype == torch.float32 else v for k, v in inputs.items()}
-            
+
             # Get CLS token embeddings
             outputs = self.model(**inputs)
-            
+
             # Use pooler output if available, else use CLS token from last hidden state
             if stage == DinoEmbeddingStage.POOLER and hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
                 embeddings = outputs.pooler_output
             elif stage == DinoEmbeddingStage.HIDDEN_CLS:
                 embeddings = outputs.last_hidden_state[:, 0]
-            elif stage == DinoEmbeddingStage.HIDDEN_MEAN: 
+            elif stage == DinoEmbeddingStage.HIDDEN_MEAN:
                 # mean pooling with out cls token
                 embeddings = outputs.last_hidden_state[:, 1:]
                 embeddings = embeddings.mean(dim=1)
             else:
                 raise ValueError(f"Unsupported stage: {stage}")
-            
-            all_embeddings.append(embeddings.cpu().numpy())
-        
+
+            batch_np = embeddings.cpu().numpy()
+
+            # Re-insert zero embeddings for failed images to maintain index alignment
+            if batch_failed:
+                embed_dim = batch_np.shape[1]
+                full_batch = np.zeros((len(batch_images), embed_dim), dtype=batch_np.dtype)
+                valid_idx = 0
+                for i in range(len(batch_images)):
+                    if (start_idx + i) not in batch_failed:
+                        full_batch[i] = batch_np[valid_idx]
+                        valid_idx += 1
+                batch_np = full_batch
+                failed_indices.extend(batch_failed)
+
+            all_embeddings.append(batch_np)
+
         embeddings = np.vstack(all_embeddings)
+
+        if failed_indices:
+            logger.warning(f"Total unreadable images: {len(failed_indices)}/{len(images)}")
         
         if normalize:
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)

@@ -21,6 +21,8 @@ dependencies = [
     "python-logging-loki>=0.3.1",
     "python-dotenv>=1.0",
     "setuptools<81",
+    "fiftyone>=1.13.2",
+    "pydantic-ai>=1.79.0",
 ]
 
 [project.optional-dependencies]
@@ -28,10 +30,13 @@ gpu = [
     # ML dependencies (filter/dedup/detect workers)
     "torch>=2.0",
     "torchvision>=0.24.1",
-    "transformers>=4.49,<5.0",
+    "transformers>=5.0.0",
     "accelerate>=1.12.0",
     "scikit-learn>=1.4",
     "faiss-cpu>=1.7",
+    "einops>=0.8.0",
+    "pycocotools>=2.0",
+    "falcon-perception @ git+https://github.com/tiiuae/Falcon-Perception.git",
 ]
 dev = [
     # Development/visualization tools
@@ -48,3 +53,9 @@ data-miner = "data_miner.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+link-mode = "hardlink"
+
+[tool.hatch.metadata]
+allow-direct-references = true

@@ -50,6 +50,7 @@ class FilterWorker(BaseProjectVideosWorker):
         result = self._filter.filter_frames(
             frame_paths=frame_paths,
             video_id=video.video_id,
+            input_dir=frames_dir,
         )
         
         # If no frames passed filter, signal skip status

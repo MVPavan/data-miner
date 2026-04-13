@@ -65,6 +65,10 @@ class FilterConfig(BaseModel):
     junk_thr: float = Field(default=0.3, description="junk threshold should be less than this")
     pos_junk_margin_thr: float = Field(default=0.05, description="Positive must beat junk by this margin")
 
+    # Embedding cache
+    cache_embeddings: bool = Field(default=True)
+    ignore_cache: bool = Field(default=False)
+
 class DeduplicationConfig(BaseModel):
     """Deduplication stage config."""
     output_dir: Path = Field(default=Path("./output/frames_dedup"))
@@ -82,6 +86,10 @@ class DeduplicationConfig(BaseModel):
     
     # FAISS settings
     k_neighbors: int = Field(default=50)
+
+    # Embedding cache
+    cache_embeddings: bool = Field(default=True)
+    ignore_cache: bool = Field(default=False)
 
 
 class DetectionConfig(BaseModel):
@@ -130,7 +138,8 @@ class MonitorConfig(BaseModel):
     stale_threshold_minutes: int = Field(default=2, description="Reset locks older than this")
     long_running_threshold_minutes: int = Field(default=30, description="Warn about locks older than this")
     cleanup_extracted_videos: bool = Field(default=False, description="Delete source videos after extraction")
-
+    cleanup_raw_frames: bool = Field(default=False, description="Delete raw frames after all project filtering is done")
+    
 
 class BackupConfig(BaseModel):
     """Backup worker settings."""

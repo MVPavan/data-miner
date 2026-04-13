@@ -21,7 +21,7 @@
                 "--config",
                 "run_configs/multi_config_v1/delivery_pov_v1.yaml"
             ],
-            "cwd": "/mnt/data_2/pavan/project_helpers/data_miner",
+            "cwd": "/media/data_2/vlm/code/data_miner",
             "env": {
                 "DATA_MINER_DEBUG": "1"
             },
@@ -38,12 +38,31 @@
                 "scripts/annotation/v51_cvat_config.yaml",
                 "--dry-run"
             ],
-            "cwd": "/data/nvidia_local/tycoai/project_helpers/data_miner",
+            "cwd": "/media/data_2/vlm/code/data_miner",
             "env": {
                 "DATA_MINER_DEBUG": "1"
             },
             "console": "integratedTerminal",
             "justMyCode": false
-        }
-    ]
+        },
+        {
+            "name": "Auto Annotate",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "data_miner.auto_annotation_v2.cli",
+            "args": [
+                "--config",
+                "/media/data_2/vlm/code/data_miner/data_miner/auto_annotation_v2/fl_pj.yaml",
+                // "--image",
+                // "${input:autoAnnotateImagePath}",
+                // "--image-dir",
+                // "output/sample/fl_pj_sample",
+                // "--output-dir",
+                // "${input:autoAnnotateOutputDir}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+    ],
 }

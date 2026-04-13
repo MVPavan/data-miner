@@ -70,6 +70,7 @@ monitor:
   stale_threshold_minutes: 2           # Reset locks older than this
   long_running_threshold_minutes: 30   # Warn about locks older than this
   cleanup_extracted_videos: false      # Delete source videos after extraction
+  cleanup_raw_frames: false            # Delete raw frames after all project filtering is done
 
 # -----------------------------------------------------------------------------
 # Backup Settings (sync frames_raw to remote after filtering complete)
@@ -125,6 +126,10 @@ filter:
   # Model settings
   model_id: "siglip2-so400m"  # siglip2-so400m or siglip2-giant
   batch_size: 32
+  
+  # Embedding cache (cache passed frames' embeddings for re-filtering)
+  cache_embeddings: true
+  ignore_cache: false
   
   # Thresholds
   positive_thr: 0.3           # Min score for positive prompts

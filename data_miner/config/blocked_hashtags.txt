@@ -14,8 +14,8 @@
 # fail
 prank
 # funny
-meme
-edit
+# meme
+# edit
 montage
 bestof
 
@@ -24,7 +24,7 @@ gaming
 gta
 minecraft
 gameplay
-asmr
+# asmr
 #music
 #song
 cover

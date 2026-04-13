@@ -373,6 +373,11 @@ python k3s_setup/orchestrate.py setup --run-config run_configs/<your_config>.yam
 or 
 python k3s_setup/generate_manifests.py --run-config run_configs/<your_config>.yaml
 
+# check pods
+watch kubectl get pods -n data-miner -o wide
+watch kubectl get pods -n seaweedfs -o wide
+kubectl exec -it -n data-miner deploy/monitor-worker -- watch "python -m data_miner.cli status --project doors_all_v2"
+
 # Check pipeline status
 kubectl exec -n data-miner deploy/monitor-worker -- python -m data_miner.cli status
 kubectl exec -it -n data-miner deploy/monitor-worker -- watch "python -m data_miner.cli status"
@@ -387,9 +392,10 @@ kubectl logs -n data-miner -l app=filter-worker -f --max-log-requests=10
 # Scale workers
 kubectl -n data-miner scale statefulset download-worker --replicas=6
 kubectl -n data-miner scale deployment extract-worker --replicas=4
+kubectl -n data-miner scale deployment filter-worker --replicas=0
 
 # Regenerate manifests after config change
-python k3s_setup/generate_manifests.py --run-config run_configs/glass_door.yaml
+python k3s_setup/generate_manifests.py --run-config run_configs/doors_all_v2.yaml
 kubectl apply -f k3s_setup/manifests/config/configmap.yaml
 kubectl apply -f k3s_setup/manifests/workers/
 kubectl apply -f k3s_setup/manifests/infrastructure/
@@ -412,7 +418,7 @@ kubectl port-forward -n data-miner deploy/grafana 30300:3000
 # port-forward Adminer
 kubectl port-forward -n data-miner deploy/adminer 30080:8080
 # port-forward PostgreSQL
-kubectl port-forward -n data-miner statefulset/postgres 5432:543
+kubectl port-forward -n data-miner statefulset/postgres 5432:5432
 kubectl port-forward -n data-miner svc/postgres 5432:5432
 ```
 

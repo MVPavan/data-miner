@@ -1,0 +1,84 @@
+# ============================================================================
+# Qwen3.5 Annotation Validator — vLLM Server
+#
+# MODEL OPTIONS (pick one, adjust tensor-parallel-size accordingly):
+#
+#   Qwen3.5-9B BF16 (RECOMMENDED — single GPU, full precision)
+#     VALIDATOR_MODEL=Qwen/Qwen3.5-9B VALIDATOR_DTYPE=bfloat16 VALIDATOR_TP=1
+#     VRAM: ~18 GB — fits on 1x 24GB GPU
+#
+#   Qwen3.5-27B FP8 (higher accuracy, needs 2 GPUs)
+#     VALIDATOR_MODEL=Qwen/Qwen3.5-27B-FP8 VALIDATOR_DTYPE=auto VALIDATOR_TP=2
+#     VRAM: ~30 GB — fits on 2x 24GB GPUs
+#
+#   Qwen3.5-27B GPTQ-Int4 (single GPU, quantized)
+#     VALIDATOR_MODEL=Qwen/Qwen3.5-27B-GPTQ-Int4 VALIDATOR_DTYPE=auto VALIDATOR_TP=1
+#     VRAM: ~16 GB — fits on 1x 24GB GPU (some quality loss)
+#
+#   Qwen3.5-27B AWQ-Int4 (single GPU, quantized)
+#     VALIDATOR_MODEL=Qwen/Qwen3.5-27B-AWQ VALIDATOR_DTYPE=auto VALIDATOR_TP=1
+#     VRAM: ~16 GB — fits on 1x 24GB GPU (some quality loss)
+#
+#   Qwen3.5-27B BF16 (full precision, needs 3+ GPUs)
+#     VALIDATOR_MODEL=Qwen/Qwen3.5-27B VALIDATOR_DTYPE=bfloat16 VALIDATOR_TP=4
+#     VRAM: ~54 GB — needs 3x or 4x 24GB GPUs
+#
+# GPU SELECTION:
+#   Set NVIDIA_VISIBLE_DEVICES to pick specific GPUs (e.g. "0", "0,1", "2,3")
+#   Default: "0" (single GPU for 9B)
+# ============================================================================
+
+services:
+  qwen35-validator:
+    image: vllm/vllm-openai:latest
+    container_name: qwen35-validator
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      # Select which GPUs vLLM sees (e.g. "0", "0,1", "2,3")
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-2,3}
+      # Bypass CUDA version check if container CUDA > host driver CUDA
+      - NVIDIA_DISABLE_REQUIRE=1
+    volumes:
+      - ${HF_HOME:-/media/data_2/all_cache/hf_home}:/root/.cache/huggingface
+    ports:
+      - "${VLLM_PORT:-8955}:8000"
+    ipc: host
+    restart: unless-stopped
+    command:
+      - --model
+      - ${VALIDATOR_MODEL:-Qwen/Qwen3.5-27B-FP8}
+      - --tensor-parallel-size
+      - "${VALIDATOR_TP:-2}"
+      - --max-model-len
+      - "4096"
+      - --gpu-memory-utilization
+      - "0.85"
+      - --enforce-eager
+      - --reasoning-parser
+      - qwen3
+      - --dtype
+      - ${VALIDATOR_DTYPE:-auto}
+      - --port
+      - "8000"
+      # Disable thinking by default (per-request can override)
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
+      # Cache prefix tokens (system prompt reused across all requests)
+      - --enable-prefix-caching
+      # Cache vision processor in shared memory
+      - --mm-processor-cache-type
+      - shm
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s

@@ -87,7 +87,9 @@ def populate_cmd(config: Optional[str], dry_run: bool):
             try:
                 # Use yt-dlp to search (returns video URLs)
                 result = subprocess.run(
-                    ["yt-dlp", "--flat-playlist", "-j", f"ytsearch{max_results}:{query}"],
+                    ["yt-dlp", "--flat-playlist", "-j",
+                     "--extractor-args", "youtube:search_params=CAASAhAB",
+                     f"ytsearch{max_results}:{query}"],
                     capture_output=True, text=True, timeout=120
                 )
                 for line in result.stdout.strip().split("\n"):

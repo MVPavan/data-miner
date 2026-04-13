@@ -306,6 +306,12 @@ def setup(run_config: str):
     step(8, "Deploy infrastructure (Postgres, Loki, Grafana)")
     kubectl(f"apply -f {MANIFESTS_DIR / 'infrastructure/'}")
     wait_for_pods(NAMESPACE, timeout=180, min_pods=3)
+    # Wait for Loki specifically — workers check connectivity at startup and
+    # skip the Loki handler permanently if Loki isn't ready yet.
+    kubectl(
+        f"wait --for=condition=ready pod -l app=loki -n {NAMESPACE} --timeout=60s",
+        timeout=70,
+    )
 
     # ── Step 9: Deploy workers ───────────────────────────────────────────
     step(9, "Deploy workers")
