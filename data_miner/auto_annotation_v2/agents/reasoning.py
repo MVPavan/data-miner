@@ -91,11 +91,19 @@ Positive prompt variants (any one matching is valid): {positive_prompts}
 
 You will see an annotated image with numbered bounding boxes.
 For EACH numbered candidate, determine:
-- "accept": the box correctly contains the target object with a tight fit
+- "accept": the box correctly contains the target object with a good fit
 - "needs_review": uncertain — the box might be correct but needs closer inspection
 - "reject": the box does NOT contain the target object, or is very poorly fitted
 
-Be strict. When in doubt, mark as "needs_review" rather than "accept".
+IMPORTANT: Read the positive prompt variants carefully. If a variant says
+"including any load", then the bounding box SHOULD encompass the object AND
+whatever it is carrying (e.g. pallets, boxes, cargo). A box that extends beyond
+the bare object to include the load is CORRECT and should be accepted, not
+rejected for being "too loose".
+
+Be strict about class identity (reject wrong objects), but accept boxes that
+are intentionally larger to include the carried load when the prompt says so.
+When in doubt, mark as "needs_review" rather than "accept".
 Return your assessment for ALL {num_candidates} candidates.
 
 You MUST respond with ONLY valid JSON (no extra text) matching this schema:
@@ -165,10 +173,16 @@ Candidate info:
 Evaluate carefully:
 1. Semantic match: does the box contain the target class? (yes/no/uncertain)
 2. Bbox quality: is the box tight/loose/too_small/uncertain?
+   IMPORTANT: Read the positive prompt variants. If a variant says "including
+   any load", then the bounding box SHOULD encompass the object AND whatever
+   it is carrying (pallets, boxes, cargo). A box that is intentionally larger
+   to include the load should be rated as "tight" (correct fit for the task),
+   NOT "loose" but be strict that this exception is only valid for load, not otherwise.
 3. If the label is wrong, suggest what it should be relabeled to.
 4. If the box needs adjustment, describe how in refinement_hint.
 
-Be precise and strict in your assessment.
+Be precise and strict about class identity, but respect the prompt intent
+when evaluating bbox fit.
 
 You MUST respond with ONLY valid JSON (no extra text) matching this schema:
 {schema}

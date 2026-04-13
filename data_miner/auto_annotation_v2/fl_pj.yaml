@@ -1,12 +1,23 @@
 classes:
   - name: forklift
-    synonyms: []
-    negatives: []
-    prompt_variants: ["forklift including any load on the forks"]
-  - name: pallet jack
-    synonyms: []
-    negatives: []
-    prompt_variants: ["pallet jack including any load on the forks"]
+    synonyms: [
+      "pallet jack",
+      "forklift including any load on the forks",
+      "pallet jack including any pallet load on the forks",
+    ]
+    negatives: [
+      "reach truck", "hand truck", "scissor lift", "boom lift",
+      "hand truck", "dolly", "shopping cart", "wheelchair"
+    ]
+    prompt_variants:
+      - "forklift including any load on the forks"
+      - "pallet jack including any pallet load on the forks"
+  # - name: pallet_jack
+  #   synonyms: ["pallet jack", "hand pallet truck", "pump truck"]
+  #   negatives: ["hand truck", "dolly", "shopping cart", "wheelchair"]
+  #   prompt_variants:
+  #     - "pallet jack including any pallet load on the forks"
+  #     - "manual pallet jack with or without load"
 
 detection_models:
   falcon:
@@ -50,6 +61,7 @@ vlm:
 
 proposal:
   models: [falcon, grounding_dino, sam]
+  # models: [sam]
 
 filtering:
   min_area: 0.0005
@@ -94,8 +106,9 @@ output:
 
 
 runtime:
-  output_dir: output/auto_annotation_v2/fl_pj_sample/v1
+  output_dir: output/auto_annotation_v2/fl_pj/frames_dedup_v1_cls_0.85/v1
   log_level: INFO
   image: null #output/sample/fl_pj_sample/-pFdYqqFUl8_003840.jpg
-  image_dir: output/sample/fl_pj_sample
+  image_dir: /media/data_2/datasets/datasets_pavan/fl_pj/frames_dedup_v1_cls_0.85/
+  # image_dir: output/sample/fl_pj_sample
   force_redo: all

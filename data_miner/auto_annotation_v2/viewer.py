@@ -36,8 +36,18 @@ ACTION_COLORS = {
     "reject": "#FF0000",
 }
 FALLBACK_COLORS = [
-    "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF",
-    "#800000", "#008000", "#000080", "#808000", "#800080", "#008080",
+    "#FF0000",
+    "#00FF00",
+    "#0000FF",
+    "#FFFF00",
+    "#FF00FF",
+    "#00FFFF",
+    "#800000",
+    "#008000",
+    "#000080",
+    "#808000",
+    "#800080",
+    "#008080",
 ]
 
 
@@ -61,7 +71,9 @@ def _discover_images(output_dir: Path) -> list[str]:
     return stems
 
 
-def _find_image_path(stem: str, output_dir: Path, image_dir: Path | None) -> Path | None:
+def _find_image_path(
+    stem: str, output_dir: Path, image_dir: Path | None
+) -> Path | None:
     """Try to find the original image file given its stem."""
     # Check trace for original path
     trace_path = output_dir / "traces" / f"{stem}.json"
@@ -111,8 +123,9 @@ def _bbox_to_px(bbox: dict, w: int, h: int) -> tuple[float, float, float, float]
     return x1, y1, x2, y2
 
 
-def _svg_rect(x1: float, y1: float, x2: float, y2: float,
-              color: str, label: str, idx: int) -> str:
+def _svg_rect(
+    x1: float, y1: float, x2: float, y2: float, color: str, label: str, idx: int
+) -> str:
     bw = x2 - x1
     bh = y2 - y1
     label_y = max(12, y1 - 4)
@@ -123,12 +136,13 @@ def _svg_rect(x1: float, y1: float, x2: float, y2: float,
         f'<text x="{x1:.1f}" y="{label_y:.1f}" fill="{color}" '
         f'font-size="13" font-weight="bold" '
         f'style="text-shadow: 1px 1px 2px black, -1px -1px 2px black;">'
-        f'{label}</text>'
+        f"{label}</text>"
     )
 
 
-def build_proposal_svg(candidates: list[dict], w: int, h: int,
-                       cid_index: dict[str, int] | None = None) -> str:
+def build_proposal_svg(
+    candidates: list[dict], w: int, h: int, cid_index: dict[str, int] | None = None
+) -> str:
     parts: list[str] = []
     for i, c in enumerate(candidates):
         x1, y1, x2, y2 = _bbox_to_px(c["bbox"], w, h)
@@ -141,8 +155,9 @@ def build_proposal_svg(candidates: list[dict], w: int, h: int,
     return "\n".join(parts)
 
 
-def build_filtering_svg(candidates: list[dict], w: int, h: int,
-                        cid_index: dict[str, int] | None = None) -> str:
+def build_filtering_svg(
+    candidates: list[dict], w: int, h: int, cid_index: dict[str, int] | None = None
+) -> str:
     parts: list[str] = []
     for i, c in enumerate(candidates):
         x1, y1, x2, y2 = _bbox_to_px(c["bbox"], w, h)
@@ -154,9 +169,13 @@ def build_filtering_svg(candidates: list[dict], w: int, h: int,
     return "\n".join(parts)
 
 
-def build_screening_svg(candidates: list[dict], verdicts: list[dict],
-                        w: int, h: int,
-                        cid_index: dict[str, int] | None = None) -> str:
+def build_screening_svg(
+    candidates: list[dict],
+    verdicts: list[dict],
+    w: int,
+    h: int,
+    cid_index: dict[str, int] | None = None,
+) -> str:
     verdict_map = {v["candidate_id"]: v for v in verdicts}
     cand_map = {c["candidate_id"]: c for c in candidates}
     parts: list[str] = []
@@ -174,19 +193,25 @@ def build_screening_svg(candidates: list[dict], verdicts: list[dict],
     return "\n".join(parts)
 
 
-def build_detailed_svg(candidates: list[dict], verdicts: list[dict],
-                       w: int, h: int,
-                       cid_index: dict[str, int] | None = None) -> str:
+def build_detailed_svg(
+    candidates: list[dict],
+    verdicts: list[dict],
+    w: int,
+    h: int,
+    cid_index: dict[str, int] | None = None,
+) -> str:
     return build_screening_svg(candidates, verdicts, w, h, cid_index)
 
 
-def build_refinement_svg(candidates: list[dict], w: int, h: int,
-                         cid_index: dict[str, int] | None = None) -> str:
+def build_refinement_svg(
+    candidates: list[dict], w: int, h: int, cid_index: dict[str, int] | None = None
+) -> str:
     return build_filtering_svg(candidates, w, h, cid_index)
 
 
-def build_final_svg(annotations: list[dict], w: int, h: int,
-                    cid_index: dict[str, int] | None = None) -> str:
+def build_final_svg(
+    annotations: list[dict], w: int, h: int, cid_index: dict[str, int] | None = None
+) -> str:
     parts: list[str] = []
     for i, a in enumerate(annotations):
         x1, y1, x2, y2 = _bbox_to_px(a["bbox"], w, h)
@@ -269,6 +294,7 @@ class ViewerState:
         self.image_path = _find_image_path(stem, self.output_dir, self.image_dir)
         if self.image_path and self.image_path.exists():
             from PIL import Image
+
             img = Image.open(self.image_path)
             self.image_size = img.size
             img.close()
@@ -365,15 +391,17 @@ def build_ui(state: ViewerState) -> None:
 
         if stage == "proposal" and d.get("proposal"):
             cands = d["proposal"]
-            return f"**{len(cands)} candidates** from detection models\n\n" + "\n\n---\n\n".join(
-                _format_candidate_details(c, cidx) for c in cands
+            return (
+                f"**{len(cands)} candidates** from detection models\n\n"
+                + "\n\n---\n\n".join(_format_candidate_details(c, cidx) for c in cands)
             )
 
         if stage == "filtering" and d.get("filtering"):
             cands = d["filtering"]
             proposal_count = len(d.get("proposal") or [])
-            return f"**{proposal_count} → {len(cands)}** after geometric + IoU filtering\n\n" + "\n\n---\n\n".join(
-                _format_candidate_details(c, cidx) for c in cands
+            return (
+                f"**{proposal_count} → {len(cands)}** after geometric + IoU filtering\n\n"
+                + "\n\n---\n\n".join(_format_candidate_details(c, cidx) for c in cands)
             )
 
         if stage == "screening":
@@ -384,14 +412,19 @@ def build_ui(state: ViewerState) -> None:
                 n_reject = sum(1 for v in verdicts if v["decision"] == "reject")
                 n_review = sum(1 for v in verdicts if v["decision"] == "needs_review")
                 header = f"**Screening:** {n_accept} accept, {n_review} review, {n_reject} reject\n\n"
-                return header + "\n\n---\n\n".join(_format_verdict_details(v, cidx) for v in verdicts)
+                return header + "\n\n---\n\n".join(
+                    _format_verdict_details(v, cidx) for v in verdicts
+                )
 
         if stage == "detailed":
             reasoning = d.get("vlm_reasoning") or {}
             verdicts = reasoning.get("detailed", [])
             if verdicts:
-                return f"**{len(verdicts)} detailed verdicts**\n\n" + "\n\n---\n\n".join(
-                    _format_verdict_details(v, cidx) for v in verdicts
+                return (
+                    f"**{len(verdicts)} detailed verdicts**\n\n"
+                    + "\n\n---\n\n".join(
+                        _format_verdict_details(v, cidx) for v in verdicts
+                    )
                 )
             return "No candidates needed detailed review."
 
@@ -400,8 +433,11 @@ def build_ui(state: ViewerState) -> None:
             candidates = ref_data.get("candidates", [])
             actions = ref_data.get("actions", [])
             if candidates:
-                return f"**{len(candidates)} candidates, {len(actions)} actions**\n\n" + "\n\n---\n\n".join(
-                    _format_candidate_details(c, cidx) for c in candidates
+                return (
+                    f"**{len(candidates)} candidates, {len(actions)} actions**\n\n"
+                    + "\n\n---\n\n".join(
+                        _format_candidate_details(c, cidx) for c in candidates
+                    )
                 )
             return "No candidates needed refinement."
 
@@ -409,8 +445,11 @@ def build_ui(state: ViewerState) -> None:
             val_data = d.get("vlm_validation") or {}
             verdicts = val_data.get("screening", [])
             if verdicts:
-                return f"**{len(verdicts)} validation verdicts**\n\n" + "\n\n---\n\n".join(
-                    _format_verdict_details(v, cidx) for v in verdicts
+                return (
+                    f"**{len(verdicts)} validation verdicts**\n\n"
+                    + "\n\n---\n\n".join(
+                        _format_verdict_details(v, cidx) for v in verdicts
+                    )
                 )
             return "No refined candidates to validate."
 
@@ -420,9 +459,8 @@ def build_ui(state: ViewerState) -> None:
             labels = d.get("labels", "")
             n_labels = len(labels.split("\n")) if labels.strip() else 0
             if annotations:
-                return (
-                    f"**{n_labels} YOLO labels saved**\n\n"
-                    + "\n\n---\n\n".join(_format_annotation_details(a, cidx) for a in annotations)
+                return f"**{n_labels} YOLO labels saved**\n\n" + "\n\n---\n\n".join(
+                    _format_annotation_details(a, cidx) for a in annotations
                 )
             return "No final annotations."
 
@@ -450,18 +488,94 @@ def build_ui(state: ViewerState) -> None:
     with ui.header().classes("bg-gray-900 text-white items-center"):
         ui.label("Auto Annotation v2 — Pipeline Viewer").classes("text-xl font-bold")
         ui.space()
-        ui.label().bind_text_from(state, "current_stem", lambda s: f"Image: {s or 'none'}")
+        ui.label().bind_text_from(
+            state, "current_stem", lambda s: f"Image: {s or 'none'}"
+        )
 
-    with ui.left_drawer(value=True).classes("bg-gray-800 text-white").props("width=260"):
-        ui.label("Images").classes("text-lg font-bold mb-2")
-        if not state.stems:
-            ui.label("No processed images found.").classes("text-gray-400")
-        else:
-            for stem in state.stems:
-                ui.button(
-                    stem[:30] + ("..." if len(stem) > 30 else ""),
-                    on_click=lambda s=stem: on_image_select(s),
-                ).classes("w-full text-left mb-1").props("flat dense")
+    with (
+        ui.left_drawer(value=True).classes("bg-gray-800 text-white").props("width=280")
+    ):
+        with ui.row().classes("w-full items-center justify-between mb-2"):
+            ui.label("Images").classes("text-lg font-bold")
+            ui.button(icon="refresh", on_click=lambda: _refresh_sidebar()).props(
+                "flat dense round"
+            ).tooltip("Re-scan output directory")
+        count_label = ui.label(f"{len(state.stems)} images").classes(
+            "text-sm text-gray-400 mb-2"
+        )
+        search_input = ui.input(placeholder="Search images...").classes(
+            "w-full mb-2"
+        ).props('dense clearable outlined dark')
+
+        # Store button refs keyed by stem (mutated on refresh)
+        stem_buttons: dict[str, ui.button] = {}
+
+        button_container = ui.scroll_area().classes("w-full").style(
+            "height: calc(100vh - 200px);"
+        )
+
+        def _highlight_active():
+            for s, b in stem_buttons.items():
+                if s == state.current_stem:
+                    b.classes(replace="w-full text-left mb-1 bg-blue-900")
+                else:
+                    b.classes(replace="w-full text-left mb-1")
+
+        def _filter_stems(e):
+            query = (e.value or "").lower()
+            visible = 0
+            for s, b in stem_buttons.items():
+                if query and query not in s.lower():
+                    b.set_visibility(False)
+                else:
+                    b.set_visibility(True)
+                    visible += 1
+            count_label.set_text(
+                f"{visible}/{len(state.stems)} images"
+                if query
+                else f"{len(state.stems)} images"
+            )
+
+        search_input.on_value_change(_filter_stems)
+
+        def _populate_buttons():
+            """Create sidebar buttons for all stems."""
+            stem_buttons.clear()
+            button_container.clear()
+            with button_container:
+                if not state.stems:
+                    ui.label("No processed images found.").classes("text-gray-400")
+                else:
+                    for stem in state.stems:
+                        btn = ui.button(
+                            stem[:36] + ("..." if len(stem) > 36 else ""),
+                            on_click=lambda s=stem: on_image_select(s),
+                        ).classes("w-full text-left mb-1").props("flat dense").tooltip(stem)
+                        stem_buttons[stem] = btn
+
+        def _refresh_sidebar():
+            """Re-scan output directory and rebuild sidebar."""
+            new_stems = _discover_images(state.output_dir)
+            added = set(new_stems) - set(state.stems)
+            state.stems = new_stems
+            _populate_buttons()
+            _highlight_active()
+            count_label.set_text(f"{len(state.stems)} images")
+            search_input.set_value("")
+            if added:
+                ui.notify(f"{len(added)} new image(s) found", type="positive")
+            else:
+                ui.notify("No new images", type="info")
+
+        # Wrap original on_image_select to also highlight
+        _orig_on_image_select = on_image_select
+
+        def on_image_select(stem: str):  # noqa: F811
+            _orig_on_image_select(stem)
+            _highlight_active()
+
+        _populate_buttons()
+        _highlight_active()
 
     with ui.column().classes("w-full p-4"):
         # Stage tabs
@@ -477,12 +591,16 @@ def build_ui(state: ViewerState) -> None:
             ui.label("Legend:").classes("font-bold")
             for name, color in SOURCE_COLORS.items():
                 with ui.row().classes("items-center gap-1"):
-                    ui.html(f'<div style="width:16px;height:16px;background:{color};border-radius:3px;"></div>')
+                    ui.html(
+                        f'<div style="width:16px;height:16px;background:{color};border-radius:3px;"></div>'
+                    )
                     ui.label(name).classes("text-sm")
             ui.label("|").classes("text-gray-500")
             for name, color in DECISION_COLORS.items():
                 with ui.row().classes("items-center gap-1"):
-                    ui.html(f'<div style="width:16px;height:16px;background:{color};border-radius:3px;"></div>')
+                    ui.html(
+                        f'<div style="width:16px;height:16px;background:{color};border-radius:3px;"></div>'
+                    )
                     ui.label(name).classes("text-sm")
 
         # Main content: image + detail panel side by side
@@ -520,19 +638,27 @@ def build_ui(state: ViewerState) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Interactive pipeline result viewer")
     parser.add_argument(
-        "--output-dir", type=str, default="output/auto_annotation_v2",
+        "--output-dir",
+        type=str,
+        default="output/auto_annotation_v2",
         help="Pipeline output directory (default: output/auto_annotation_v2)",
     )
     parser.add_argument(
-        "--image", type=str, default=None,
+        "--image",
+        type=str,
+        default=None,
         help="Single image path (will use its directory for lookup)",
     )
     parser.add_argument(
-        "--image-dir", type=str, default=None,
+        "--image-dir",
+        type=str,
+        default=None,
         help="Directory containing source images",
     )
     parser.add_argument(
-        "--port", type=int, default=8090,
+        "--port",
+        type=int,
+        default=8090,
         help="Port to serve on (default: 8090)",
     )
     args = parser.parse_args(argv)
