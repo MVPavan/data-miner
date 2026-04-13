@@ -92,10 +92,26 @@ def _load_sam(cfg: DetectionModelConfig) -> dict[str, Any]:
     return {"model": model, "processor": processor, "device": device}
 
 
+def _load_owlvit(cfg: DetectionModelConfig) -> dict[str, Any]:
+    from transformers import Owlv2ForObjectDetection, Owlv2Processor
+
+    model_id = cfg.model_id or "google/owlv2-base-patch16-ensemble"
+    device = _resolve_device(cfg)
+    processor = Owlv2Processor.from_pretrained(model_id)
+    torch_dtype = torch.float16 if device != "cpu" else torch.float32
+    model = (
+        Owlv2ForObjectDetection.from_pretrained(model_id, torch_dtype=torch_dtype)
+        .to(device)
+        .eval()
+    )
+    return {"model": model, "processor": processor, "device": device}
+
+
 _LOADERS = {
     "falcon": _load_falcon,
     "grounding_dino": _load_grounding_dino,
     "sam": _load_sam,
+    "owlvit": _load_owlvit,
 }
 
 
@@ -345,10 +361,74 @@ def _run_sam(
     return candidates
 
 
+def _run_owlvit(
+    loaded: dict[str, Any],
+    image: Image.Image,
+    class_pack: ClassPackConfig,
+    expression: str,
+    params: dict[str, Any],
+    model_name: str,
+) -> list[Candidate]:
+    model = loaded["model"]
+    processor = loaded["processor"]
+    device = loaded["device"]
+
+    all_names = class_pack.all_names()
+    text_queries = [[f"a photo of a {name}" for name in all_names]]
+
+    inputs = processor(text=text_queries, images=image, return_tensors="pt")
+    inputs = {k: v.to(device) if torch.is_tensor(v) else v for k, v in inputs.items()}
+
+    w, h = image.size
+    target_sizes = torch.tensor([[h, w]], device=device)
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+
+    results = processor.post_process_grounded_object_detection(
+        outputs=outputs,
+        target_sizes=target_sizes,
+        threshold=float(params.get("threshold", 0.1)),
+    )[0]
+
+    boxes = results["boxes"]
+    scores = results["scores"]
+    labels = results["labels"]
+
+    if len(boxes) == 0:
+        return []
+
+    candidates: list[Candidate] = []
+    for idx, (box_t, score_t, label_idx) in enumerate(
+        zip(boxes, scores, labels), start=1
+    ):
+        x1, y1, x2, y2 = [float(v) for v in box_t.tolist()]
+        label_int = int(label_idx)
+        label_str = all_names[label_int] if label_int < len(all_names) else class_pack.name
+        candidates.append(
+            Candidate(
+                candidate_id=f"{model_name}:{class_pack.name}:{expression}:{idx}",
+                class_name=class_pack.name,
+                label=label_str,
+                source_model=model_name,
+                expression=expression,
+                bbox=BoundingBox(
+                    x1=clamp(x1 / w),
+                    y1=clamp(y1 / h),
+                    x2=clamp(x2 / w),
+                    y2=clamp(y2 / h),
+                ),
+                score=float(score_t),
+            )
+        )
+    return candidates
+
+
 _RUNNERS = {
     "falcon": _run_falcon,
     "grounding_dino": _run_grounding_dino,
     "sam": _run_sam,
+    "owlvit": _run_owlvit,
 }
 
 

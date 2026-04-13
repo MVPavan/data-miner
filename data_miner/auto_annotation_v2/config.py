@@ -38,7 +38,7 @@ class DetectionModelConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["falcon", "grounding_dino", "sam"]
+    kind: Literal["falcon", "grounding_dino", "sam", "owlvit"]
     enabled: bool = True
     model_id: str | None = None
     device: str = "auto"

@@ -427,3 +427,5 @@ results = pipeline.run_batch_sync(images)
 `uv run python -m data_miner.auto_annotation_v2.viewer --image-dir output/sample/fl_pj_sample --port 8956`
 
 `uv run python -m data_miner.auto_annotation_v2.viewer --image-dir /media/data_2/datasets/datasets_pavan/fl_pj/frames_dedup_v1_cls_0.85 --port 8956`
+
+`uv run python -m data_miner.auto_annotation_v2.viewer_fast --image-dir /media/data_2/datasets/datasets_pavan/fl_pj/frames_dedup_v1_cls_0.85 --port 8957 --output-dir output/auto_annotation_v2/fl_pj/frames_dedup_v1_cls_0.85/v1`

@@ -8,7 +8,9 @@ from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Fast pipeline result viewer (FastAPI)")
+    parser = argparse.ArgumentParser(
+        description="Fast pipeline result viewer (FastAPI)"
+    )
     parser.add_argument(
         "--output-dir",
         type=str,

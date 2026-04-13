@@ -33,6 +33,13 @@ detection_models:
     device: auto
     params:
       threshold: 0.5
+  owlvit:
+    kind: owlvit
+    enabled: false
+    model_id: google/owlv2-base-patch16-ensemble
+    device: auto
+    params:
+      threshold: 0.1
 
 vlm:
   provider: openai-compatible

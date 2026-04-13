@@ -30,10 +30,11 @@
   #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
   /* Tabs */
-  #tabs { display: flex; background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0 12px; flex-shrink: 0; }
+  #tabs { display: flex; background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0 12px; flex-shrink: 0; align-items: center; }
   .tab { padding: 10px 14px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; color: #888; user-select: none; white-space: nowrap; }
   .tab:hover { color: var(--text); }
   .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  #current-image-label { margin-left: auto; font-size: 13px; color: #93c5fd; padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 400px; }
 
   /* Legend */
   #legend { display: flex; align-items: center; gap: 16px; padding: 8px 16px; font-size: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; flex-shrink: 0; }
@@ -86,6 +87,7 @@
     <div class="tab" data-stage="refinement">4. Refinement</div>
     <div class="tab" data-stage="validation">5. Validation</div>
     <div class="tab" data-stage="final">6. Final</div>
+    <span id="current-image-label" title=""></span>
   </div>
 
   <div id="legend">
@@ -215,6 +217,11 @@ async function selectImage(stem) {
   } else {
     $img.style.display = 'none';
   }
+
+  // Update current image label
+  const $curLabel = document.getElementById('current-image-label');
+  $curLabel.textContent = stem;
+  $curLabel.title = stem;
 
   renderStage();
 }
