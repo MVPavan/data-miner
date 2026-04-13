@@ -404,7 +404,9 @@ def _run_owlvit(
     ):
         x1, y1, x2, y2 = [float(v) for v in box_t.tolist()]
         label_int = int(label_idx)
-        label_str = all_names[label_int] if label_int < len(all_names) else class_pack.name
+        label_str = (
+            all_names[label_int] if label_int < len(all_names) else class_pack.name
+        )
         candidates.append(
             Candidate(
                 candidate_id=f"{model_name}:{class_pack.name}:{expression}:{idx}",
