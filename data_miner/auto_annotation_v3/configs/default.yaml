@@ -71,8 +71,8 @@ class_registry:
   - {id: 30, name: trolley,     tier: 3, prompt: "trolley"}
   - {id: 31, name: helicopter,  tier: 2, prompt: "helicopter"}
   - {id: 32, name: wallet,      tier: 2, prompt: "wallet"}
-  - {id: 33, name: forklift,    tier: 3, prompt: "forklift including any load"}
-  - {id: 34, name: palletjack,  tier: 3, prompt: "pallet jack including any load"}
+  - {id: 33, name: forklift,    tier: 3, prompt: "forklift"}
+  - {id: 34, name: palletjack,  tier: 3, prompt: "pallet jack"}
   - {id: 35, name: head,        tier: 2, prompt: "human head"}
   - {id: 63, name: laptop,      tier: 2, prompt: "laptop"}
   - {id: 67, name: cellphone,   tier: 2, prompt: "cellphone"}
