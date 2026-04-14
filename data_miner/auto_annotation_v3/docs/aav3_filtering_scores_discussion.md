@@ -42,6 +42,11 @@ Flow becomes:
 
 ## 2. Filtering pipeline — orchestration & hyperparams
 
+> ⚠ **Describes current state — structurally broken per §4–5.** Step 4 (dedup) and
+> step 7 (agreement) run in the wrong order, producing agreement ≈ 0 for all
+> survivors. §5 proposes collapsing them into a single cluster-and-collapse pass.
+> Read this as a map of what exists, not what's approved.
+
 Orchestrator: [`DetectWorker.process`](../stages/detect.py#L65-L135). Seven steps between parallel detector calls and VLM routing:
 
 | # | Step | Location | Hyperparam |
@@ -131,6 +136,13 @@ Agreement is computed **during** clustering and attached to the survivor — `ag
 
 ## 6. Final proposed hyperparameters
 
+> ⚠ **Values here assume the redesigns in §4–5 (cluster-and-collapse dedup),
+> §8 (`finalize` stage), and §10 (class-driven refine) are implemented.** Without
+> those, `min_model_agreement: 2` rejects everything (agreement measured as 0),
+> and the `refinement.class_rules` block shown below is superseded by §10.3's
+> `refine_rules` schema. Use §10.3 for the refinement block; the `auto_accept`,
+> `filtering`, `co_existence` blocks below are authoritative.
+
 ### Server-side (already in `servers/serve_*.py` — keep as-is)
 
 | Model | Current threshold | Keep |
@@ -170,10 +182,13 @@ filtering:
       - score                       # higher raw score (last resort)
     model_priority: [sam3, falcon, grounding_dino, owlvit2]
 
+# refinement block — see §10.3 `refine_rules` for the authoritative schema.
+# The `strategy` key below is DEAD CONFIG (not dispatched by refine.py);
+# kept here only to show what currently exists in configs/default.yaml.
 refinement:
   class_rules:
-    forklift:   {strategy: load_extension}
-    palletjack: {strategy: load_extension}
+    forklift:   {strategy: load_extension}   # ⚠ dead — replace per §10.3
+    palletjack: {strategy: load_extension}   # ⚠ dead — replace per §10.3
   auto_accept_iou: 0.3
   reject_iou:      0.1
 
@@ -426,6 +441,16 @@ calibration experiment.**
 
 ### 9.5 Recommendations — concrete next steps
 
+> **Status of Pattern 4 (detect-both-then-union)**: considered as an alternative
+> architecture and surveyed as "best evidence" by the subagent, but **not
+> adopted**. §10's class-match refine won out because (a) it doesn't require
+> adding `pallet` / `load` / `cargo` to the detector class registry — which
+> would complicate agreement counting, confusion-pair rules, and per-class
+> tuning — and (b) it keeps refinement on-demand rather than paying detection
+> cost on every image. Pattern 4 remains viable as a future optimization if
+> §10's VLM-seed approach proves too noisy in production.
+
+
 **Short-term (close the metadata/code gap):**
 - Either implement real strategy dispatch in `refine.py` OR remove
   `RefinementStrategy.LOAD_EXTENSION` and `class_rules.*.strategy` from
@@ -457,9 +482,14 @@ calibration experiment.**
 
 ### 9.6 Proposed `load_extension` flow — revised
 
+> **Scope note**: this is now the **per-prompt inner loop** invoked by §10.3's
+> class-driven refine stage. §10 supersedes this section's outer trigger
+> ("evaluate flags `needs_expansion`") — refine now triggers on class-match
+> instead. The 5-step mechanics below still apply, once per prompt in the
+> per-class prompt list.
+
 Replaces the dead `{strategy: load_extension}` config with a real
-implementation. Invoked on-demand when evaluate flags a candidate as
-`needs_expansion` for a load-bearing class.
+implementation. Invoked per-prompt inside §10.3's refine stage.
 
 ```
 1. VLM (already part of evaluate stage)
@@ -730,8 +760,9 @@ special handling.
 
 ### 10.7 Code changes required
 
-1. **Rename** `needs_refine` → `needs_review` in routing; `FinalAction`
-   already has `HUMAN_REVIEW` — align on a single enum across stages.
+1. **Rename** `needs_refine` → `review` in routing (matches §10.1 vocab);
+   `FinalAction.HUMAN_REVIEW` enum value stays, but the routing list / verdict
+   fields use the bare verb `review`. Single vocabulary across all stages.
 2. **Add** `EvaluateConfig` with `reject_below`, `accept_above`.
 3. **Replace** `RefinementConfig.class_rules` with `RefineRulesConfig`
    (per-class `prompts` + `merge_rules`).
