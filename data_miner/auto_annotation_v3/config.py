@@ -1,13 +1,17 @@
-"""Pydantic + YAML configuration system for auto_annotation_v3."""
+"""Pydantic + OmegaConf configuration system for auto_annotation_v3.
+
+Loads `configs/default.yaml` as the base config and deep-merges user overrides
+(from a user-provided YAML file and/or CLI dotlist) via OmegaConf. The merged
+dict is then validated by Pydantic for type safety.
+"""
 
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
-import yaml
+from omegaconf import DictConfig, OmegaConf
 from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
@@ -81,7 +85,11 @@ class AutoAcceptConfig(BaseModel):
 
     min_model_agreement: int = 2
     min_score: float = 0.3
-    applies_to: str = "tier_1_only"
+    tiers: list[int] = Field(default_factory=lambda: [1])
+    """Tiers eligible for auto-accept. Empty list disables auto-accept entirely.
+
+    Example: ``tiers: [1]`` → only tier-1 classes auto-accept.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -205,17 +213,49 @@ class OutputConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Runtime config (per-job inputs formerly passed as CLI flags)
+# ---------------------------------------------------------------------------
+
+
+class RuntimeConfig(BaseModel):
+    """Per-job runtime inputs (input source, job id, logging).
+
+    These fields typically change from run to run and are provided by the user
+    via their YAML config or as CLI dotlist overrides.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_dir: str | None = None
+    image_paths: list[str] = Field(default_factory=list)
+    job_id: str | None = None
+    log_level: str = "INFO"
+    log_file: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Top-level config
 # ---------------------------------------------------------------------------
 
 
 class AutoAnnotationV3Config(BaseModel):
-    """Full pipeline configuration."""
+    """Full pipeline configuration.
+
+    Class selection model:
+        - ``class_registry`` — the full catalog of known classes (id, name,
+          tier, prompt). Lives in ``configs/default.yaml``; rarely changed.
+        - ``detect_classes`` — a per-job list of class names selecting which
+          subset of the registry to actually run. Empty list → all classes.
+
+    Consumers should use the ``.classes`` property to iterate the active
+    subset (it's automatically filtered against ``detect_classes``).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     servers: ServersConfig
-    classes: list[ClassConfig]
+    class_registry: list[ClassConfig] = Field(default_factory=list)
+    detect_classes: list[str] = Field(default_factory=list)
     auto_accept: AutoAcceptConfig = Field(default_factory=AutoAcceptConfig)
     evaluation_groups: dict[str, EvaluationGroupConfig] = Field(default_factory=dict)
     co_existence: CoExistenceConfig = Field(default_factory=CoExistenceConfig)
@@ -225,23 +265,48 @@ class AutoAnnotationV3Config(BaseModel):
     workers: WorkersConfig = Field(default_factory=WorkersConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     prompts_dir: str = "prompts"
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+
+    # ------------------------------------------------------------------
+    # Active class/group filtering (computed at access time)
+    # ------------------------------------------------------------------
+
+    @property
+    def classes(self) -> list[ClassConfig]:
+        """Active classes — filtered to ``detect_classes`` if non-empty."""
+        if not self.detect_classes:
+            return self.class_registry
+        keep = set(self.detect_classes)
+        return [c for c in self.class_registry if c.name in keep]
+
+    @property
+    def active_evaluation_groups(self) -> dict[str, EvaluationGroupConfig]:
+        """Evaluation groups with each group's ``classes`` list filtered to
+        the active class set. Groups that would end up empty are dropped.
+        """
+        active_names = {c.name for c in self.classes}
+        out: dict[str, EvaluationGroupConfig] = {}
+        for name, grp in self.evaluation_groups.items():
+            kept = [c for c in grp.classes if c in active_names]
+            if kept:
+                out[name] = grp.model_copy(update={"classes": kept})
+        return out
 
     def class_by_name(self, name: str) -> ClassConfig | None:
-        """Look up a class by its name."""
-        for c in self.classes:
+        for c in self.class_registry:
             if c.name == name:
                 return c
         return None
 
     def class_by_id(self, class_id: int) -> ClassConfig | None:
-        """Look up a class by its integer id."""
-        for c in self.classes:
+        for c in self.class_registry:
             if c.id == class_id:
                 return c
         return None
 
-    def tier_1_names(self) -> list[str]:
-        return [c.name for c in self.classes if c.tier == 1]
+    def tier_names(self, tier: int) -> list[str]:
+        """Names of active classes at a given tier."""
+        return [c.name for c in self.classes if c.tier == tier]
 
 
 # ---------------------------------------------------------------------------
@@ -250,31 +315,43 @@ class AutoAnnotationV3Config(BaseModel):
 
 
 def default_config_path() -> Path:
-    return Path(__file__).parent / "default.yaml"
+    """Path to the packaged default config."""
+    return Path(__file__).parent / "configs" / "default.yaml"
 
 
-def load_config(path: str | Path | None = None) -> AutoAnnotationV3Config:
-    """Load config from default.yaml, optionally merged with a custom YAML file.
+def load_config(
+    user_config: str | Path | None = None,
+    overrides: list[str] | None = None,
+) -> AutoAnnotationV3Config:
+    """Load config via OmegaConf: defaults → user YAML → CLI dotlist.
 
-    The custom file is shallow-merged at the top level; nested keys override
-    only the keys they specify (lists replace entirely, dicts merge one level).
+    Args:
+        user_config: Path to a user YAML that overrides individual keys. Only
+            keys present in this file are overridden; everything else comes
+            from ``configs/default.yaml``. Deep-merged via OmegaConf.
+        overrides: List of OmegaConf dotlist strings (e.g.
+            ``["runtime.log_level=DEBUG", "workers.detect_count=2"]``).
+
+    Returns:
+        Validated :class:`AutoAnnotationV3Config` instance.
+
+    Example:
+        >>> cfg = load_config("my_job.yaml",
+        ...                    overrides=["runtime.log_level=DEBUG"])
     """
-    base_path = default_config_path()
-    with base_path.open() as f:
-        data: dict[str, Any] = yaml.safe_load(f)
+    base: DictConfig = OmegaConf.load(default_config_path())
 
-    if path is not None:
-        with Path(path).open() as f:
-            overrides: dict[str, Any] = yaml.safe_load(f) or {}
-        # Deep-merge one level: top-level dicts are merged, everything else replaced.
-        for key, value in overrides.items():
-            if (
-                isinstance(value, dict)
-                and isinstance(data.get(key), dict)
-            ):
-                data[key] = {**data[key], **value}
-            else:
-                data[key] = value
+    if user_config is not None:
+        user_cfg: DictConfig = OmegaConf.load(Path(user_config))
+        base = OmegaConf.merge(base, user_cfg)  # type: ignore[assignment]
+
+    if overrides:
+        cli_cfg = OmegaConf.from_dotlist(list(overrides))
+        base = OmegaConf.merge(base, cli_cfg)  # type: ignore[assignment]
+
+    # Resolve any interpolations, then convert to plain dict for Pydantic.
+    OmegaConf.resolve(base)
+    data: dict[str, Any] = OmegaConf.to_container(base, resolve=True)  # type: ignore[assignment]
 
     return AutoAnnotationV3Config.model_validate(data)
 

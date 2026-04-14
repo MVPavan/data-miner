@@ -1,8 +1,26 @@
-"""CLI for auto_annotation_v3 pipeline."""
+"""CLI for the auto_annotation_v3 pipeline.
+
+The CLI takes a user config YAML and merges it over the packaged defaults at
+``configs/default.yaml``. All previous CLI flags (``--image-dir``, ``--image``,
+``--job-id``, ``--log-level``) now live under the ``runtime:`` section of the
+YAML. Ad-hoc overrides can still be passed as OmegaConf dotlist arguments.
+
+Usage:
+    # Minimum — user provides input via their YAML
+    python -m data_miner.auto_annotation_v3 --config my_job.yaml
+
+    # Same, plus one-off override
+    python -m data_miner.auto_annotation_v3 --config my_job.yaml \\
+        runtime.log_level=DEBUG workers.detect_count=2
+
+    # Run with defaults only (rare — requires image_dir/image_paths override)
+    python -m data_miner.auto_annotation_v3 runtime.image_dir=/data/images
+"""
+
+from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from .pipeline import run_pipeline
 
@@ -12,54 +30,37 @@ def main() -> None:
         description="Auto Annotation V3 Pipeline",
         prog="python -m data_miner.auto_annotation_v3",
     )
-
-    # Input — exactly one of --image-dir or --image must be supplied
-    input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument(
-        "--image-dir",
-        type=str,
-        help="Directory of images to process",
-    )
-    input_group.add_argument(
-        "--image",
-        type=str,
-        nargs="+",
-        help="Individual image path(s)",
-    )
-
-    # Config
     parser.add_argument(
         "--config",
+        "-c",
         type=str,
         default=None,
-        help="Path to custom config YAML (shallow-merged over defaults)",
+        help=(
+            "Path to user YAML config. Deep-merged over the packaged "
+            "configs/default.yaml. All runtime options (image_dir, job_id, "
+            "log_level) go under a `runtime:` section."
+        ),
     )
-
-    # Job identity
     parser.add_argument(
-        "--job-id",
-        type=str,
-        default=None,
-        help="Job ID (auto-generated if not provided)",
-    )
-
-    # Logging
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging verbosity (default: INFO)",
+        "overrides",
+        nargs="*",
+        help=(
+            "OmegaConf dotlist overrides, e.g. "
+            "`runtime.log_level=DEBUG workers.detect_count=2`"
+        ),
     )
 
     args = parser.parse_args()
 
+    if args.config is None and not args.overrides:
+        parser.error(
+            "either --config <path> or at least one dotlist override "
+            "(e.g. runtime.image_dir=/path/to/images) is required"
+        )
+
     run_pipeline(
-        config_path=args.config,
-        image_dir=args.image_dir,
-        image_paths=args.image,
-        job_id=args.job_id,
-        log_level=args.log_level,
+        user_config=args.config,
+        overrides=args.overrides or None,
     )
 
 

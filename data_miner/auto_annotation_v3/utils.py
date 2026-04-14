@@ -300,7 +300,10 @@ def route_candidates(candidates: list, config: Any) -> dict:
         }
     """
     aa_cfg = config.auto_accept
-    tier_1_names = {c.name for c in config.classes if c.tier == 1}
+    eligible_tiers = set(aa_cfg.tiers)
+    eligible_names = {
+        c.name for c in config.classes if c.tier in eligible_tiers
+    }
     confusion_pairs: list[frozenset] = [
         frozenset(pair) for pair in config.co_existence.confusion_pairs
     ]
@@ -309,9 +312,9 @@ def route_candidates(candidates: list, config: Any) -> dict:
     needs_evaluation: list[str] = []
 
     for cand in candidates:
-        is_tier1 = cand.class_name in tier_1_names
+        is_eligible = cand.class_name in eligible_names
         qualifies = (
-            is_tier1
+            is_eligible
             and cand.agreement >= aa_cfg.min_model_agreement
             and cand.score >= aa_cfg.min_score
         )

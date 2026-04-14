@@ -23,9 +23,14 @@ logger = get_logger("pipeline")
 class AutoAnnotationPipelineV3:
     """Manages the full v3 annotation pipeline."""
 
-    def __init__(self, config: AutoAnnotationV3Config, job_id: str = None):
+    def __init__(self, config: AutoAnnotationV3Config, job_id: str | None = None):
         self.config = config
-        self.job_id = job_id or f"job_{uuid.uuid4().hex[:8]}"
+        # Prefer explicit job_id, then config.runtime.job_id, then autogen.
+        self.job_id = (
+            job_id
+            or config.runtime.job_id
+            or f"job_{uuid.uuid4().hex[:8]}"
+        )
 
         # Setup output directory
         self.job_dir = Path(config.output.job_dir) / self.job_id
@@ -87,22 +92,36 @@ class AutoAnnotationPipelineV3:
 
     async def run(
         self,
-        image_paths: list[str] = None,
-        image_dir: str = None,
+        image_paths: list[str] | None = None,
+        image_dir: str | None = None,
     ) -> None:
-        """Run the full pipeline."""
+        """Run the full pipeline.
+
+        Input sources are resolved in order of priority:
+        1. ``image_paths`` argument
+        2. ``image_dir`` argument
+        3. ``config.runtime.image_paths``
+        4. ``config.runtime.image_dir``
+        """
         # Connect to Redis
         await self.broker.connect()
 
         try:
-            # Submit images
-            if image_dir:
-                total = await self.submitter.submit_directory(image_dir, self.job_id)
-            elif image_paths:
+            # Resolve inputs: arg → config.runtime fallback
+            image_dir = image_dir or self.config.runtime.image_dir
+            image_paths = image_paths or list(self.config.runtime.image_paths)
+
+            if image_paths:
                 await self.submitter.submit_images(image_paths, self.job_id)
                 total = len(image_paths)
+            elif image_dir:
+                total = await self.submitter.submit_directory(image_dir, self.job_id)
             else:
-                raise ValueError("Must provide image_paths or image_dir")
+                raise ValueError(
+                    "No input provided — set runtime.image_dir or "
+                    "runtime.image_paths in config (or pass image_dir/"
+                    "image_paths to run())"
+                )
 
             logger.info("Submitted %d images for job %s", total, self.job_id)
 
@@ -160,14 +179,16 @@ class AutoAnnotationPipelineV3:
 
 
 def run_pipeline(
-    config_path: str = None,
-    image_dir: str = None,
-    image_paths: list[str] = None,
-    job_id: str = None,
-    log_level: str = "INFO",
+    user_config: str | None = None,
+    overrides: list[str] | None = None,
 ) -> None:
-    """Synchronous entry point for the v3 annotation pipeline."""
-    configure_logging(log_level)
-    config = load_config(config_path)
-    pipeline = AutoAnnotationPipelineV3(config, job_id)
-    asyncio.run(pipeline.run(image_paths=image_paths, image_dir=image_dir))
+    """Synchronous entry point for the v3 annotation pipeline.
+
+    Loads config from defaults → user YAML → CLI dotlist overrides, then runs
+    the pipeline. All runtime inputs (image_dir, job_id, log_level) must be
+    specified in the config's ``runtime:`` section.
+    """
+    config = load_config(user_config=user_config, overrides=overrides)
+    configure_logging(config.runtime.log_level, log_file=config.runtime.log_file)
+    pipeline = AutoAnnotationPipelineV3(config)
+    asyncio.run(pipeline.run())

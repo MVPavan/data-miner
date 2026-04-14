@@ -15,21 +15,21 @@ servers:
 
   falcon:
     port: 3002
-    gpu: "cuda:1"
+    gpu: "cuda:0"
     max_batch_size: 4
     batch_timeout_ms: 100
     model_id: "tiiuae/Falcon-Perception"
 
   sam3:
     port: 3003
-    gpu: "cuda:2"
+    gpu: "cuda:1"
     max_batch_size: 8
     batch_timeout_ms: 50
     model_id: "facebook/sam3"
 
   owlvit2:
     port: 3004
-    gpu: "cuda:0"
+    gpu: "cuda:1"
     max_batch_size: 8
     batch_timeout_ms: 50
     model_id: "google/owlv2-base-patch16-ensemble"
@@ -44,12 +44,12 @@ servers:
     timeout: 120.0
 
 # ---------------------------------------------------------------------------
-# Class definitions
+# Class registry — full catalog of known classes (rarely changes)
 # Tier 1: auto-acceptable with model agreement
 # Tier 2+: always VLM-evaluated
 # ---------------------------------------------------------------------------
 
-classes:
+class_registry:
   # ── Tier 1 ─────────────────────────────────────────────────────────────
   - {id: 0,  name: person,      tier: 1, prompt: "person"}
   - {id: 1,  name: bicycle,     tier: 1, prompt: "bicycle"}
@@ -78,13 +78,22 @@ classes:
   - {id: 67, name: cellphone,   tier: 2, prompt: "cellphone"}
 
 # ---------------------------------------------------------------------------
-# Auto-accept rules (Tier 1 + model agreement + min score)
+# Detect classes — subset of class_registry to actually run this job.
+# Empty list [] = detect ALL classes in class_registry.
+# Example: detect_classes: [person, forklift, palletjack]
+# ---------------------------------------------------------------------------
+
+detect_classes: []
+
+# ---------------------------------------------------------------------------
+# Auto-accept rules (which tiers skip VLM if models agree + score threshold)
+# tiers: [] disables auto-accept entirely; [1, 2] extends to tier-2.
 # ---------------------------------------------------------------------------
 
 auto_accept:
   min_model_agreement: 2
   min_score: 0.3
-  applies_to: tier_1_only
+  tiers: [1]
 
 # ---------------------------------------------------------------------------
 # Evaluation groups — classes handled in one VLM call each
@@ -227,3 +236,20 @@ output:
 # ---------------------------------------------------------------------------
 
 prompts_dir: prompts
+
+# ---------------------------------------------------------------------------
+# Runtime — values typically set per-job (override in your user config or via
+# CLI dotlist, e.g.  `key=value runtime.log_level=DEBUG`)
+# ---------------------------------------------------------------------------
+
+runtime:
+  # Input — provide exactly one of:
+  image_dir: null        # e.g. "/data/warehouse_images"
+  image_paths: []        # e.g. ["/data/img1.jpg", "/data/img2.jpg"]
+
+  # Job identity (auto-generated when null)
+  job_id: null
+
+  # Logging
+  log_level: INFO        # DEBUG | INFO | WARNING | ERROR
+  log_file: null         # optional path; null → console only

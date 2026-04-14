@@ -216,7 +216,7 @@ class EvaluateWorker(StageWorker):
     ) -> dict[str, list[Candidate]]:
         """Map candidates to their configured evaluation group."""
         class_to_group: dict[str, str] = {}
-        for group_name, group_cfg in self.config.evaluation_groups.items():
+        for group_name, group_cfg in self.config.active_evaluation_groups.items():
             for cls_name in group_cfg.classes:
                 class_to_group[cls_name] = group_name
 
@@ -242,7 +242,7 @@ class EvaluateWorker(StageWorker):
     ) -> dict:
         """One VLM call for a group of candidates: returns classification verdicts."""
         template = load_prompt(f"classify_{group_name}")
-        group_cfg = self.config.evaluation_groups.get(group_name)
+        group_cfg = self.config.active_evaluation_groups.get(group_name)
 
         class_list = ", ".join(group_cfg.classes) if group_cfg else ""
         class_descriptions = (group_cfg.description or "") if group_cfg else ""

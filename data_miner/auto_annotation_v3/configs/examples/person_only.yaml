@@ -1,0 +1,27 @@
+# Person-only detection job on the fl_pj_sample set.
+#
+# Run:
+#   python -m data_miner.auto_annotation_v3 \
+#       --config data_miner/auto_annotation_v3/configs/examples/person_only.yaml
+
+runtime:
+  image_dir: /media/data_2/vlm/code/data_miner/output/sample/fl_pj_sample
+  job_id: person_only_sample
+  log_level: INFO
+  log_file: /tmp/aa_v3_person_only.log
+
+# Detect ONLY the person class — everything else in the registry is skipped.
+detect_classes:
+  - person
+
+# Relax auto-accept so any single model finding a person at low confidence counts.
+auto_accept:
+  tiers: [1]
+  min_model_agreement: 1
+  min_score: 0.25
+
+# Sample is small; cap workers so we don't over-spawn.
+workers:
+  detect_count: 2
+  evaluate_count: 1
+  refine_count: 1
