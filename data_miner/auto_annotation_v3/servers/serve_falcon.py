@@ -199,24 +199,28 @@ class FalconApi(ls.LitAPI):
             "seed": int(request.get("seed", _DEFAULT_PARAMS["seed"])),
         }
 
-    def predict(self, x: dict) -> dict:
-        """Run Falcon generation on the prepared batch."""
-        batch_inputs = {
-            k: v.to(self.device) if torch.is_tensor(v) else v
-            for k, v in x["batch_inputs"].items()
-        }
-        task = x["task"]
+    def predict(self, batch: list[dict]) -> list[dict]:
+        """Run Falcon generation per-item in the batch.
 
-        _, aux_out = self.engine.generate(
-            **batch_inputs,
-            max_new_tokens=x["max_new_tokens"],
-            temperature=0.0,
-            stop_token_ids=self.stop_token_ids,
-            seed=x["seed"],
-            task=task,
-        )
-
-        return {"aux": aux_out[0], "task": task, "text": x["text"]}
+        LitServe collates concurrent requests into a list. We iterate to avoid
+        the complexity of tensor-stacking with variable image/text sizes.
+        """
+        results = []
+        for item in batch:
+            batch_inputs = {
+                k: v.to(self.device) if torch.is_tensor(v) else v
+                for k, v in item["batch_inputs"].items()
+            }
+            _, aux_out = self.engine.generate(
+                **batch_inputs,
+                max_new_tokens=item["max_new_tokens"],
+                temperature=0.0,
+                stop_token_ids=self.stop_token_ids,
+                seed=item["seed"],
+                task=item["task"],
+            )
+            results.append({"aux": aux_out[0], "task": item["task"], "text": item["text"]})
+        return results
 
     def encode_response(self, result: dict) -> dict:
         """Extract bboxes from Falcon aux output; normalize to [0, 1]."""

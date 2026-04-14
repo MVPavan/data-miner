@@ -163,18 +163,25 @@ class SAM3Api(ls.LitAPI):
             "threshold": threshold,
         }
 
-    def predict(self, x: dict) -> dict:
-        """Run SAM3 forward pass."""
-        with torch.no_grad():
-            outputs = self.model(**x["inputs"])
-        return {
-            "mode": x["mode"],
-            "outputs": outputs,
-            "inputs": x["inputs"],
-            "image_size": x["image_size"],
-            "label": x.get("label", "object"),
-            "threshold": x["threshold"],
-        }
+    def predict(self, batch: list[dict]) -> list[dict]:
+        """Run SAM3 forward pass per-item in the batch.
+
+        LitServe collates concurrent requests into a list. We iterate to avoid
+        the complexity of tensor-stacking with variable image/text sizes.
+        """
+        results = []
+        for item in batch:
+            with torch.no_grad():
+                outputs = self.model(**item["inputs"])
+            results.append({
+                "mode": item["mode"],
+                "outputs": outputs,
+                "inputs": item["inputs"],
+                "image_size": item["image_size"],
+                "label": item.get("label", "object"),
+                "threshold": item["threshold"],
+            })
+        return results
 
     def encode_response(self, result: dict) -> dict:
         """Post-process SAM3 outputs; normalize boxes to [0, 1]."""

@@ -114,17 +114,24 @@ class OWLv2Api(ls.LitAPI):
             "threshold": threshold,
         }
 
-    def predict(self, x: dict) -> dict:
-        """Run OWLv2 forward pass."""
-        with torch.no_grad():
-            outputs = self.model(**x["inputs"])
-        return {
-            "outputs": outputs,
-            "target_sizes": x["target_sizes"],
-            "image_size": x["image_size"],
-            "text_queries": x["text_queries"],
-            "threshold": x["threshold"],
-        }
+    def predict(self, batch: list[dict]) -> list[dict]:
+        """Run OWLv2 forward pass per-item in the batch.
+
+        LitServe collates concurrent requests into a list. We iterate to avoid
+        the complexity of tensor-stacking with variable image/text sizes.
+        """
+        results = []
+        for item in batch:
+            with torch.no_grad():
+                outputs = self.model(**item["inputs"])
+            results.append({
+                "outputs": outputs,
+                "target_sizes": item["target_sizes"],
+                "image_size": item["image_size"],
+                "text_queries": item["text_queries"],
+                "threshold": item["threshold"],
+            })
+        return results
 
     def encode_response(self, result: dict) -> dict:
         """Post-process OWLv2 outputs; normalize boxes to [0, 1]."""

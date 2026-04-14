@@ -82,20 +82,26 @@ class GDINOApi(ls.LitAPI):
             "text": text,
         }
 
-    def predict(self, batch: dict) -> dict:
-        """Run model forward pass (called with a *batched* item from LitServe)."""
-        # Move all tensors to the model device
-        inputs = {
-            k: v.to(self.device) if torch.is_tensor(v) else v
-            for k, v in batch["inputs"].items()
-        }
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-        return {
-            "outputs": outputs,
-            "input_ids": batch["input_ids"],
-            "image_size": batch["image_size"],
-        }
+    def predict(self, batch: list[dict]) -> list[dict]:
+        """Run model forward pass per-item in the batch.
+
+        LitServe collates concurrent requests into a list. We iterate to avoid
+        the complexity of tensor-stacking with variable image/text sizes.
+        """
+        results = []
+        for item in batch:
+            inputs = {
+                k: v.to(self.device) if torch.is_tensor(v) else v
+                for k, v in item["inputs"].items()
+            }
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+            results.append({
+                "outputs": outputs,
+                "input_ids": item["input_ids"],
+                "image_size": item["image_size"],
+            })
+        return results
 
     def encode_response(self, result: dict) -> dict:
         """Post-process detections and normalize boxes to [0, 1]."""
