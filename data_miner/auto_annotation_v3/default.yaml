@@ -1,0 +1,229 @@
+# Auto Annotation V3 — Default Configuration
+# Matches the architecture in auto_annotation_v3_architecture_revised.md
+
+# ---------------------------------------------------------------------------
+# Model servers (LitServe)
+# ---------------------------------------------------------------------------
+
+servers:
+  grounding_dino:
+    port: 3001
+    gpu: "cuda:0"
+    max_batch_size: 8
+    batch_timeout_ms: 50
+    model_id: "IDEA-Research/grounding-dino-base"
+
+  falcon:
+    port: 3002
+    gpu: "cuda:1"
+    max_batch_size: 4
+    batch_timeout_ms: 100
+    model_id: "tiiuae/Falcon-Perception"
+
+  sam3:
+    port: 3003
+    gpu: "cuda:2"
+    max_batch_size: 8
+    batch_timeout_ms: 50
+    model_id: "facebook/sam3"
+
+  owlvit2:
+    port: 3004
+    gpu: "cuda:0"
+    max_batch_size: 8
+    batch_timeout_ms: 50
+    model_id: "google/owlv2-base-patch16-ensemble"
+
+  vlm:
+    url: "http://localhost:8955/v1"
+    model: "Qwen/Qwen3.5-27B-FP8"
+    api_key: "dummy"
+    temperature: 0.0
+    max_tokens: 4096
+    max_retries: 2
+    timeout: 120.0
+
+# ---------------------------------------------------------------------------
+# Class definitions
+# Tier 1: auto-acceptable with model agreement
+# Tier 2+: always VLM-evaluated
+# ---------------------------------------------------------------------------
+
+classes:
+  # ── Tier 1 ─────────────────────────────────────────────────────────────
+  - {id: 0,  name: person,      tier: 1, prompt: "person"}
+  - {id: 1,  name: bicycle,     tier: 1, prompt: "bicycle"}
+  - {id: 2,  name: car,         tier: 1, prompt: "car"}
+  - {id: 3,  name: motorcycle,  tier: 1, prompt: "motorcycle"}
+  - {id: 4,  name: airplane,    tier: 1, prompt: "airplane"}
+  - {id: 5,  name: bus,         tier: 1, prompt: "bus"}
+  - {id: 6,  name: train,       tier: 1, prompt: "train"}
+  - {id: 7,  name: truck,       tier: 1, prompt: "truck"}
+  - {id: 8,  name: boat,        tier: 1, prompt: "boat"}
+  - {id: 14, name: bird,        tier: 1, prompt: "bird"}
+  - {id: 15, name: cat,         tier: 1, prompt: "cat"}
+  - {id: 16, name: dog,         tier: 1, prompt: "dog"}
+
+  # ── Tier 2+ ─────────────────────────────────────────────────────────────
+  - {id: 24, name: backpack,    tier: 2, prompt: "backpack"}
+  - {id: 26, name: handbag,     tier: 2, prompt: "handbag"}
+  - {id: 28, name: suitcase,    tier: 2, prompt: "suitcase"}
+  - {id: 30, name: trolley,     tier: 3, prompt: "trolley"}
+  - {id: 31, name: helicopter,  tier: 2, prompt: "helicopter"}
+  - {id: 32, name: wallet,      tier: 2, prompt: "wallet"}
+  - {id: 33, name: forklift,    tier: 3, prompt: "forklift including any load"}
+  - {id: 34, name: palletjack,  tier: 3, prompt: "pallet jack including any load"}
+  - {id: 35, name: head,        tier: 2, prompt: "human head"}
+  - {id: 63, name: laptop,      tier: 2, prompt: "laptop"}
+  - {id: 67, name: cellphone,   tier: 2, prompt: "cellphone"}
+
+# ---------------------------------------------------------------------------
+# Auto-accept rules (Tier 1 + model agreement + min score)
+# ---------------------------------------------------------------------------
+
+auto_accept:
+  min_model_agreement: 2
+  min_score: 0.3
+  applies_to: tier_1_only
+
+# ---------------------------------------------------------------------------
+# Evaluation groups — classes handled in one VLM call each
+# ---------------------------------------------------------------------------
+
+evaluation_groups:
+  industrial:
+    classes: [forklift, palletjack, trolley]
+    requires_crops: true
+    description: |
+      FORKLIFT: Powered truck with vertical MAST, counterweight body, overhead guard.
+      Always has visible mast even with forks lowered.
+      PALLET JACK: LOW-PROFILE, NO mast, forks slide under pallets at ground level.
+      Steering handle/tiller. Manual has pump handle, electric has motor housing.
+      TROLLEY: Wheeled cart with handle, no forks, flat platform or basket.
+      KEY: MAST → forklift. No mast + low forks → pallet jack. Platform + handle → trolley.
+    annotation_rules:
+      forklift: "Include any load (pallets, boxes) on the forks in bbox"
+      palletjack: "Include any load on the forks in bbox"
+
+  luggage:
+    classes: [backpack, handbag, suitcase, wallet]
+    requires_crops: true
+    description: |
+      BACKPACK: On back, two shoulder straps. Typically larger.
+      HANDBAG: In hand or single shoulder strap. Smaller.
+      SUITCASE: Rigid/semi-rigid, wheels, retractable handle.
+      WALLET: Small, flat, foldable. Fits in pocket. Very small on camera.
+    annotation_rules: {}
+
+  person_parts:
+    classes: [person, head]
+    requires_crops: false
+    description: |
+      HEAD: Annotate separately ONLY when body is NOT visible
+      (head visible through window, behind counter, in vehicle).
+      If full body visible → annotate as person only, NOT separately as head.
+    annotation_rules: {}
+
+  electronics:
+    classes: [laptop, cellphone, wallet]
+    requires_crops: true
+    description: |
+      LAPTOP: Open or closed portable computer on flat surface.
+      CELLPHONE: Rectangular device in hand, on surface, or near ear.
+      WALLET: Small flat foldable. Distinguish from phone by thickness/texture.
+    annotation_rules: {}
+
+  vehicles:
+    classes: [car, bus, truck, train, boat, airplane, motorcycle, bicycle, helicopter]
+    requires_crops: false
+    description: null
+    annotation_rules: {}
+
+  animals:
+    classes: [bird, cat, dog]
+    requires_crops: false
+    description: null
+    annotation_rules: {}
+
+# ---------------------------------------------------------------------------
+# Co-existence rules
+# ---------------------------------------------------------------------------
+
+co_existence:
+  # These classes are never suppressed against any other class
+  globally_exempt: [person, head]
+
+  # Pairs where the same physical object cannot be both classes simultaneously.
+  # When IoU > dedup threshold, VLM disambiguates.
+  confusion_pairs:
+    - [forklift, palletjack]
+    - [forklift, trolley]
+    - [backpack, handbag]
+    - [handbag, suitcase]
+    - [wallet, cellphone]
+    - [car, truck]
+
+# ---------------------------------------------------------------------------
+# Refinement (SAM-based bbox correction)
+# ---------------------------------------------------------------------------
+
+refinement:
+  class_rules:
+    forklift:   {strategy: load_extension}
+    palletjack: {strategy: load_extension}
+  auto_accept_iou: 0.3   # refined bbox accepted if IoU with original >= this
+  reject_iou: 0.1        # SAM result rejected as drift if IoU < this
+
+# ---------------------------------------------------------------------------
+# Geometric filtering
+# ---------------------------------------------------------------------------
+
+filtering:
+  min_area: 0.0005
+  max_area: 0.95
+  min_aspect_ratio: 0.1
+  max_aspect_ratio: 10.0
+  min_edge_distance: 0.0
+  iou_dedup_threshold: 0.7
+  max_per_class: 30
+
+# ---------------------------------------------------------------------------
+# Redis Streams
+# ---------------------------------------------------------------------------
+
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+  consumer_group: annotation_v3
+  streams:
+    detect:   stream:detect
+    evaluate: stream:evaluate
+    refine:   stream:refine
+    done:     stream:done
+
+# ---------------------------------------------------------------------------
+# Worker process counts
+# ---------------------------------------------------------------------------
+
+workers:
+  detect_count: 4
+  evaluate_count: 6
+  refine_count: 2
+
+# ---------------------------------------------------------------------------
+# Output directory layout
+# ---------------------------------------------------------------------------
+
+output:
+  job_dir: output/auto_annotation_v3
+  checkpoint_dir: checkpoints
+  labels_dir: labels
+  traces_dir: traces
+  review_dir: review
+
+# ---------------------------------------------------------------------------
+# Prompt management
+# ---------------------------------------------------------------------------
+
+prompts_dir: prompts

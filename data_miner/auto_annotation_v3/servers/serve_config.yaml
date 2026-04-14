@@ -1,0 +1,28 @@
+servers:
+  grounding_dino:
+    script: serve_gdino.py
+    port: 3001
+    gpu: 0
+    max_batch_size: 8
+    batch_timeout: 0.05
+
+  falcon:
+    script: serve_falcon.py
+    port: 3002
+    gpu: 1
+    max_batch_size: 4
+    batch_timeout: 0.1
+
+  sam3:
+    script: serve_sam3.py
+    port: 3003
+    gpu: 5
+    max_batch_size: 8
+    batch_timeout: 0.05
+
+  owlvit2:
+    script: serve_owlvit2.py
+    port: 3004
+    gpu: 0
+    max_batch_size: 8
+    batch_timeout: 0.05

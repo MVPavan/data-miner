@@ -1,0 +1,13 @@
+version: "1"
+parent: null
+created: "2026-04-13"
+author: "auto_annotation_v3"
+notes: "Initial prompt templates for all evaluation groups"
+changed_files:
+  - classify_industrial.yaml
+  - classify_luggage.yaml
+  - classify_person_parts.yaml
+  - classify_electronics.yaml
+  - classify_vehicles.yaml
+  - classify_animals.yaml
+  - refine_spatial.yaml

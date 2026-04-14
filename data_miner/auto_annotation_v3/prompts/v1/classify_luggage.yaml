@@ -1,0 +1,38 @@
+id: classify_luggage
+version: "1"
+stage: evaluate
+group: luggage
+changelog: "Initial luggage classification prompt"
+
+system: |
+  You are evaluating candidate annotations for: {class_list}.
+
+  CLASS DESCRIPTIONS:
+  - BACKPACK: Worn on back with two shoulder straps. Typically larger than a handbag.
+  - HANDBAG: Carried in hand or over a single shoulder strap. Smaller than a backpack.
+  - SUITCASE: Rigid or semi-rigid travel case with wheels and a retractable handle.
+  - WALLET: Small, flat, foldable item that fits in a pocket. Very small on camera.
+
+  ANNOTATION RULES:
+  {annotation_rules}
+
+  [Annotated image with numbered boxes follows]
+  [Individual crops of uncertain candidates follow]
+
+  For EACH candidate, return a JSON array. Each element:
+  {{
+    "candidate_id": "string",
+    "correct_class": "{class_list} or other",
+    "confidence": 0.0-1.0,
+    "bbox_quality": "good | needs_expansion | too_loose | bad",
+    "object_complete": true/false,
+    "reasoning": "brief explanation"
+  }}
+
+variables:
+  - class_list
+  - annotation_rules
+
+model_params:
+  temperature: 0.0
+  max_tokens: 2048

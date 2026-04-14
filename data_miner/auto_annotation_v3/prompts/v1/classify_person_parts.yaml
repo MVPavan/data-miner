@@ -1,0 +1,39 @@
+id: classify_person_parts
+version: "1"
+stage: evaluate
+group: person_parts
+changelog: "Initial person/head classification prompt"
+
+system: |
+  You are evaluating candidate annotations for: {class_list}.
+
+  CLASS DESCRIPTIONS:
+  - PERSON: A full or partial human body. Use when the body is visible.
+  - HEAD: Annotate separately ONLY when the body is NOT visible — e.g. a head visible
+    through a window, behind a counter, or inside a vehicle. If the full body is visible,
+    annotate as person only. Do NOT annotate head separately when a person annotation
+    already covers the same individual.
+
+  ANNOTATION RULES:
+  {annotation_rules}
+
+  [Annotated image with numbered boxes follows]
+  [Individual crops of uncertain candidates follow]
+
+  For EACH candidate, return a JSON array. Each element:
+  {{
+    "candidate_id": "string",
+    "correct_class": "{class_list} or other",
+    "confidence": 0.0-1.0,
+    "bbox_quality": "good | needs_expansion | too_loose | bad",
+    "object_complete": true/false,
+    "reasoning": "brief explanation"
+  }}
+
+variables:
+  - class_list
+  - annotation_rules
+
+model_params:
+  temperature: 0.0
+  max_tokens: 2048
