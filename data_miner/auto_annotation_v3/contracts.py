@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+
+
+class DetectorName(StrEnum):
+    """Canonical detector identifiers. YAML keys in ``servers.detectors`` and
+    any Python reference must use these values — no free-form strings."""
+
+    GROUNDING_DINO = "grounding_dino"
+    FALCON         = "falcon"
+    SAM3           = "sam3"
+    OWLVIT2        = "owlvit2"
 
 
 class BboxQuality(str, Enum):
@@ -395,3 +405,111 @@ class FinalAnnotation(BaseModel):
     source_model: str
     was_refined: bool = False
     trace: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Detector wire + internal models (Pydantic-everywhere; tensor-carrying
+# intermediates use arbitrary_types_allowed + a JSON-refusing serializer).
+# ---------------------------------------------------------------------------
+
+
+class DetectorRequest(BaseModel):
+    """Uniform wire request accepted by every detector server."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_path: str
+    prompts: list[str]
+    threshold: float | None = None
+
+
+class DetectorResponse(BaseModel):
+    """Uniform wire response from every detector server.
+
+    ``labels`` is parallel to ``boxes`` / ``scores`` and contains the canonical
+    class name the box was matched to (server is responsible for mapping its
+    internal label back to one of ``DetectorRequest.prompts`` and returning
+    the same string the caller sent). One entry per detection.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    boxes: list[list[float]]   # normalized [x1, y1, x2, y2]
+    scores: list[float]
+    labels: list[str]
+
+
+# --- SAM3-specific refine wire (sibling shape, used only by the refine stage) ---
+
+
+class SAM3RefineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image_path: str
+    bbox: list[float]          # normalized [x1, y1, x2, y2]
+    points: list[list[float]] | None = None   # [[x, y, label], ...]
+    threshold: float = 0.5
+
+
+class SAM3RefineResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    box: list[float] | None    # normalized [x1, y1, x2, y2] or None
+    score: float = 0.0
+
+
+# --- Internal stage handoff models (hold tensors / PIL / BatchFeature) ---
+#
+# These are NOT JSON-serializable. The @field_serializer on `obj`-typed
+# fields below is registered ``when_used="json"`` so that an accidental
+# ``model_dump_json()`` fails loud and fast rather than silently producing
+# unusable output. ``model_dump()`` (Python-mode) still works and is zero-cost.
+
+
+def _forbid_json(_self, _value):
+    raise TypeError(
+        "This model carries non-JSON payloads (tensors / PIL / BatchFeature). "
+        "It is for in-process use only; do not model_dump_json() it."
+    )
+
+
+class PreparedInput(BaseModel):
+    """Output of DetectorServerBase.decode_request → input to predict."""
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        frozen=True,
+    )
+
+    image: Any
+    processor_inputs: Any
+    image_size: tuple[int, int]
+    prompts: list[str]
+    threshold: float | None = None
+    extras: dict[str, Any] = Field(default_factory=dict)
+
+    @field_serializer("image", "processor_inputs", "extras", when_used="json")
+    def _ser_nonjson(self, v):
+        return _forbid_json(self, v)
+
+
+class RawPrediction(BaseModel):
+    """Output of DetectorServerBase.predict → input to encode_response."""
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        extra="forbid",
+        frozen=True,
+    )
+
+    outputs: Any
+    inputs: Any
+    image_size: tuple[int, int]
+    prompts: list[str]
+    threshold: float | None = None
+    extras: dict[str, Any] = Field(default_factory=dict)
+
+    @field_serializer("outputs", "inputs", "extras", when_used="json")
+    def _ser_nonjson(self, v):
+        return _forbid_json(self, v)

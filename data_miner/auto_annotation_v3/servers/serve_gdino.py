@@ -1,17 +1,10 @@
 """LitServe server for GroundingDINO zero-shot object detection.
 
-Endpoint: POST /predict
-Request:
-    {
-        "image_path": "/abs/path/to/image.jpg",
-        "text_prompt": "person . forklift . palletjack ."
-    }
-Response:
-    {
-        "boxes":  [[x1,y1,x2,y2], ...],   # normalized 0-1
-        "scores": [float, ...],
-        "labels": ["person", ...]
-    }
+Subclasses DetectorServerBase — uniform DetectorRequest/DetectorResponse wire.
+Per-class iteration lives here, not in the pipeline: the client sends the
+full class list in ``DetectorRequest.prompts`` and this server runs one
+forward pass per prompt (GDINO degrades on joint multi-class) and
+concatenates the results into a single DetectorResponse.
 
 Launch:
     python serve_gdino.py --port 3001 --device 0 --max-batch-size 8
@@ -20,173 +13,106 @@ Launch:
 from __future__ import annotations
 
 import logging
-import sys
 
-import litserve as ls
 import torch
 from PIL import Image
-from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
+
+from ..contracts import (
+    DetectorRequest,
+    DetectorResponse,
+    PreparedInput,
+    RawPrediction,
+)
+from .base import DetectorServerBase, run_server
 
 logger = logging.getLogger(__name__)
 
 _MODEL_ID = "IDEA-Research/grounding-dino-base"
 
 
-class GDINOApi(ls.LitAPI):
-    """LitAPI wrapper around GroundingDINO for zero-shot detection."""
+class GDINOApi(DetectorServerBase):
+    """GroundingDINO server — loops per prompt internally."""
 
-    # ------------------------------------------------------------------
-    # LitServe lifecycle
-    # ------------------------------------------------------------------
+    def _load_model(self) -> None:
+        from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
-    def setup(self, device: str) -> None:
-        """Load processor and model onto *device*."""
-        self.device = device
-        logger.info("Loading GroundingDINO processor from %s", _MODEL_ID)
-        try:
-            self.processor = AutoProcessor.from_pretrained(_MODEL_ID)
-        except Exception as exc:
-            logger.exception("Failed to load GroundingDINO processor")
-            raise RuntimeError(f"GroundingDINO processor load failed: {exc}") from exc
+        logger.info("Loading GroundingDINO processor %s", _MODEL_ID)
+        self.processor = AutoProcessor.from_pretrained(_MODEL_ID)
+        logger.info("Loading GroundingDINO model onto %s", self.device)
+        self.model = (
+            AutoModelForZeroShotObjectDetection.from_pretrained(_MODEL_ID)
+            .to(self.device)
+            .eval()
+        )
 
-        logger.info("Loading GroundingDINO model onto device=%s", device)
-        try:
-            self.model = (
-                AutoModelForZeroShotObjectDetection.from_pretrained(_MODEL_ID)
-                .to(device)
-                .eval()
-            )
-        except Exception as exc:
-            logger.exception("Failed to load GroundingDINO model")
-            raise RuntimeError(f"GroundingDINO model load failed: {exc}") from exc
-
-        logger.info("GroundingDINO ready on %s", device)
-
-    def decode_request(self, request: dict) -> dict:
-        """Open image, run processor, return tensor dict + metadata."""
-        image_path: str = request["image_path"]
-        text: str = request["text_prompt"]
-
-        try:
-            image = Image.open(image_path).convert("RGB")
-        except Exception as exc:
-            raise ValueError(f"Cannot open image '{image_path}': {exc}") from exc
-
-        # Processor expects text as a string (period-separated classes)
-        inputs = self.processor(images=image, text=text, return_tensors="pt")
+    def _prepare(self, image: Image.Image, req: DetectorRequest) -> PreparedInput:
+        # Build per-prompt processor inputs up-front. Each carries its own
+        # input_ids used by post_process to map detections back to the prompt.
+        per_prompt = []
+        for prompt in req.prompts:
+            text = f"{prompt.strip()} ."  # GDINO post-process requires trailing "."
+            inputs = self.processor(images=image, text=text, return_tensors="pt")
+            per_prompt.append({"prompt": prompt, "inputs": inputs, "text": text})
         w, h = image.size
-        return {
-            "inputs": inputs,
-            "input_ids": inputs["input_ids"],
-            "image_size": (w, h),
-            "text": text,
-        }
+        return PreparedInput(
+            image=image,
+            processor_inputs=per_prompt,
+            image_size=(w, h),
+            prompts=list(req.prompts),
+            threshold=req.threshold,
+        )
 
-    def predict(self, batch: list[dict]) -> list[dict]:
-        """Run model forward pass per-item in the batch.
-
-        LitServe collates concurrent requests into a list. We iterate to avoid
-        the complexity of tensor-stacking with variable image/text sizes.
-        """
-        results = []
-        for item in batch:
-            inputs = {
+    def _run_one_request(self, item: PreparedInput) -> RawPrediction:
+        per_prompt_outputs = []
+        for entry in item.processor_inputs:
+            moved = {
                 k: v.to(self.device) if torch.is_tensor(v) else v
-                for k, v in item["inputs"].items()
+                for k, v in entry["inputs"].items()
             }
             with torch.no_grad():
-                outputs = self.model(**inputs)
-            results.append({
+                outputs = self.model(**moved)
+            per_prompt_outputs.append({
+                "prompt": entry["prompt"],
                 "outputs": outputs,
-                "input_ids": item["input_ids"],
-                "image_size": item["image_size"],
+                "input_ids": moved["input_ids"],
             })
-        return results
+        return RawPrediction(
+            outputs=per_prompt_outputs,
+            inputs=None,
+            image_size=item.image_size,
+            prompts=item.prompts,
+            threshold=item.threshold,
+        )
 
-    def encode_response(self, result: dict) -> dict:
-        """Post-process detections and normalize boxes to [0, 1]."""
-        w, h = result["image_size"]
-        post = self.processor.post_process_grounded_object_detection(
-            result["outputs"],
-            result["input_ids"],
-            threshold=0.25,
-            text_threshold=0.2,
-            target_sizes=[(h, w)],
-        )[0]
+    def _to_response(self, result: RawPrediction) -> DetectorResponse:
+        w, h = result.image_size
+        threshold = result.threshold if result.threshold is not None else 0.25
 
-        raw_boxes = post["boxes"].cpu().tolist()   # absolute pixel coords
-        scores = post["scores"].cpu().tolist()
-        labels = post["labels"]                    # list[str]
+        all_boxes: list[list[float]] = []
+        all_scores: list[float] = []
+        all_labels: list[str] = []
 
-        # Normalize to [0, 1]
-        norm_boxes = [
-            [
-                max(0.0, min(1.0, x1 / w)),
-                max(0.0, min(1.0, y1 / h)),
-                max(0.0, min(1.0, x2 / w)),
-                max(0.0, min(1.0, y2 / h)),
-            ]
-            for x1, y1, x2, y2 in raw_boxes
-        ]
+        for entry in result.outputs:
+            prompt = entry["prompt"]
+            post = self.processor.post_process_grounded_object_detection(
+                entry["outputs"],
+                entry["input_ids"],
+                threshold=threshold,
+                text_threshold=0.2,
+                target_sizes=[(h, w)],
+            )[0]
+            raw_boxes = post["boxes"].cpu().tolist()
+            scores = post["scores"].cpu().tolist()
+            # Return the prompt we were given as the label — caller-uniform,
+            # no label-mapping needed on the client side.
+            all_boxes.extend(self._norm_box_px(b, w, h) for b in raw_boxes)
+            all_scores.extend(float(s) for s in scores)
+            all_labels.extend([prompt] * len(raw_boxes))
 
-        return {
-            "boxes": norm_boxes,
-            "scores": scores,
-            "labels": labels,
-        }
+        return DetectorResponse(
+            boxes=all_boxes, scores=all_scores, labels=all_labels
+        )
 
-
-# ---------------------------------------------------------------------------
-# Entry-point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import argparse
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        stream=sys.stdout,
-    )
-
-    parser = argparse.ArgumentParser(description="GroundingDINO LitServe server")
-    parser.add_argument("--port", type=int, default=3001, help="HTTP port to listen on")
-    parser.add_argument("--device", type=int, default=0, help="CUDA device index")
-    parser.add_argument(
-        "--max-batch-size", type=int, default=8, help="Dynamic batch ceiling"
-    )
-    parser.add_argument(
-        "--batch-timeout",
-        type=float,
-        default=0.05,
-        help="Max seconds to wait before dispatching an incomplete batch",
-    )
-    parser.add_argument(
-        "--model-id",
-        type=str,
-        default=_MODEL_ID,
-        help="HuggingFace model ID override",
-    )
-    args = parser.parse_args()
-
-    # Allow model-id override at launch time
-    if args.model_id != _MODEL_ID:
-        _MODEL_ID = args.model_id  # noqa: F811  (module-level reassign)
-
-    logger.info(
-        "Starting GroundingDINO server | port=%d device=%d batch=%d timeout=%.3f",
-        args.port,
-        args.device,
-        args.max_batch_size,
-        args.batch_timeout,
-    )
-
-    api = GDINOApi()
-    server = ls.LitServer(
-        api,
-        accelerator="cuda",
-        devices=[args.device],
-        max_batch_size=args.max_batch_size,
-        batch_timeout=args.batch_timeout,
-    )
-    server.run(port=args.port)
+    run_server(GDINOApi, default_port=3001)

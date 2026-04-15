@@ -49,12 +49,15 @@ PROMPTS: dict[str, str] = {
     "truck": "truck",
 }
 
-PORTS = {
-    "grounding_dino": 3001,
-    "falcon":         3002,
-    "sam3":           3003,
-    "owlvit2":        3004,
-}
+def _load_enabled_from_config() -> dict[str, int]:
+    """Read enabled detectors + ports from configs/default.yaml."""
+    from data_miner.auto_annotation_v3.config import load_config
+    cfg_path = Path(__file__).resolve().parents[1] / "configs" / "default.yaml"
+    cfg = load_config(cfg_path)
+    return {n.value: c.port for n, c in cfg.servers.enabled_detectors().items()}
+
+
+PORTS = _load_enabled_from_config()
 
 
 # ---------------------------------------------------------------------------
@@ -62,23 +65,9 @@ PORTS = {
 # ---------------------------------------------------------------------------
 
 def build_payload(model: str, image_path: str, classes: list[str]) -> dict:
-    prompts = [PROMPTS[c] for c in classes]
-    if model == "grounding_dino":
-        return {"image_path": image_path, "text_prompt": " . ".join(prompts) + " ."}
-    if model == "falcon":
-        return {"image_path": image_path, "text_prompt": " . ".join(prompts)}
-    if model == "sam3":
-        return {
-            "image_path": image_path,
-            "text_prompt": " . ".join(prompts),
-            "mode": "proposal",
-        }
-    if model == "owlvit2":
-        return {
-            "image_path": image_path,
-            "text_queries": [f"a photo of a {p}" for p in prompts],
-        }
-    raise ValueError(model)
+    """Uniform DetectorRequest wire — server handles per-prompt iteration
+    and any model-specific prompt formatting internally."""
+    return {"image_path": image_path, "prompts": [PROMPTS[c] for c in classes]}
 
 
 def _post(model: str, payload: dict, timeout: float = 60) -> dict:
@@ -93,17 +82,14 @@ def _post(model: str, payload: dict, timeout: float = 60) -> dict:
 # ---------------------------------------------------------------------------
 
 def canonicalise(model: str, raw_label: str) -> str:
-    """Normalise a server's per-detection label back to the canonical class
-    name used by this test (the keys of PROMPTS).
+    """Normalise server-echoed label back to canonical class name.
+
+    Servers echo the prompt they were given (uniform wire), so we reverse
+    the PROMPTS map. Special-case 'pallet jack' → 'palletjack'.
     """
     s = str(raw_label).lower().strip().strip(".")
-    # OWLv2 returns the full query like "a photo of a forklift" — peel the prefix.
-    if s.startswith("a photo of a "):
-        s = s[len("a photo of a "):].strip()
-    # Pallet jack vs palletjack — normalise.
-    if s in ("pallet jack",):
+    if s == "pallet jack":
         return "palletjack"
-    # Drop trailing spaces / punctuation.
     return s
 
 
@@ -226,7 +212,7 @@ def main() -> int:
     ap.add_argument("--classes", nargs="+", default=DEFAULT_CLASSES)
     ap.add_argument(
         "--models", nargs="+",
-        default=["grounding_dino", "falcon", "sam3", "owlvit2"],
+        default=sorted(PORTS.keys()),
     )
     ap.add_argument("--limit", type=int, default=0,
                     help="Cap to first N images (0=all)")

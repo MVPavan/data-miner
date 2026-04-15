@@ -33,6 +33,9 @@ from ..workers.base import StageWorker
 from ..contracts import (
     BoundingBox,
     Candidate,
+    DetectorName,
+    DetectorRequest,
+    DetectorResponse,
     DetectResult,
     EvaluateResult,
     FinalAction,
@@ -42,6 +45,8 @@ from ..contracts import (
     RefineResult,
     RefinementInstruction,
     RefinementResult,
+    SAM3RefineRequest,
+    SAM3RefineResponse,
     StageMessage,
 )
 from ..config import (
@@ -120,7 +125,7 @@ class RefineWorker(StageWorker):
             )
 
         image_w, image_h = detect.image_size[0], detect.image_size[1]
-        sam_port = self.config.servers.sam3.port
+        sam_port = self.config.servers.detectors[DetectorName.SAM3].port
         refine_classes = self.config.refine_rules.classes
 
         # Build candidate lookup + identify those eligible for refine.
@@ -527,18 +532,20 @@ class RefineWorker(StageWorker):
         bbox: BoundingBox,
     ) -> BoundingBox | None:
         url = f"http://localhost:{sam_port}/predict"
-        payload = {
-            "image_path": str(image_path),
-            "mode": "refine",
-            "bbox": [bbox.x1, bbox.y1, bbox.x2, bbox.y2],   # normalized — see serve_sam3._norm_to_pixels
-        }
-        async with session.post(url, json=payload) as resp:
+        req = SAM3RefineRequest(
+            image_path=str(image_path),
+            bbox=[bbox.x1, bbox.y1, bbox.x2, bbox.y2],
+        )
+        async with session.post(url, json=req.model_dump()) as resp:
             resp.raise_for_status()
             data = await resp.json()
-        box = data.get("box")
-        if not box or len(box) != 4:
+        resp_model = SAM3RefineResponse.model_validate(data)
+        if resp_model.box is None or len(resp_model.box) != 4:
             return None
-        return BoundingBox(x1=box[0], y1=box[1], x2=box[2], y2=box[3])
+        return BoundingBox(
+            x1=resp_model.box[0], y1=resp_model.box[1],
+            x2=resp_model.box[2], y2=resp_model.box[3],
+        )
 
     async def _sam_presence(
         self,
@@ -555,32 +562,27 @@ class RefineWorker(StageWorker):
         """
         if not load_vocab:
             return 0.0
-        url = f"http://localhost:{sam_port}/predict"
-        text_prompt = ". ".join(v.strip() for v in load_vocab if v.strip())
-        if not text_prompt:
+        prompts = [v.strip() for v in load_vocab if v.strip()]
+        if not prompts:
             return 0.0
 
-        payload = {
-            "image_path": str(image_path),
-            "mode": "proposal",
-            "text_prompt": text_prompt,
-            "threshold": 0.0,   # keep all; we'll filter on overlap
-        }
-        async with session.post(url, json=payload) as resp:
+        url = f"http://localhost:{sam_port}/predict"
+        req = DetectorRequest(
+            image_path=str(image_path), prompts=prompts, threshold=0.0,
+        )
+        async with session.post(url, json=req.model_dump()) as resp:
             resp.raise_for_status()
             data = await resp.json()
 
-        boxes = data.get("boxes") or []
-        scores = data.get("scores") or []
+        resp_model = DetectorResponse.model_validate(data)
         best = 0.0
-        for b, s in zip(boxes, scores):
+        for b, s in zip(resp_model.boxes, resp_model.scores):
             try:
                 cand_box = BoundingBox(x1=b[0], y1=b[1], x2=b[2], y2=b[3])
             except Exception:
                 continue
-            if bbox_iou(load_bbox, cand_box) >= 0.3:
-                if float(s) > best:
-                    best = float(s)
+            if bbox_iou(load_bbox, cand_box) >= 0.3 and float(s) > best:
+                best = float(s)
         return best
 
     # ------------------------------------------------------------------

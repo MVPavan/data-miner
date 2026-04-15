@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _HERE = Path(__file__).parent.resolve()
-_DEFAULT_CONFIG = _HERE / "serve_config.yaml"
+_DEFAULT_CONFIG = _HERE.parent / "configs" / "default.yaml"
 _HEALTH_TIMEOUT_S = 120       # max seconds to wait for all servers to come up
 _HEALTH_POLL_INTERVAL_S = 2   # seconds between /health polls
 _HEALTH_ENDPOINT = "/health"
@@ -63,14 +63,38 @@ _HEALTH_ENDPOINT = "/health"
 # ---------------------------------------------------------------------------
 
 def load_config(config_path: Path) -> dict[str, Any]:
-    """Load and validate serve_config.yaml."""
+    """Load detectors from ``configs/default.yaml → servers.detectors``.
+
+    Returns ``{detector_name: cfg_dict}`` with disabled detectors filtered out.
+    Normalises the ``gpu`` field ("cuda:1" → "1") for CUDA_VISIBLE_DEVICES.
+    """
     if not config_path.exists():
         raise FileNotFoundError(f"Config not found: {config_path}")
     with config_path.open() as fh:
         raw = yaml.safe_load(fh)
     if not isinstance(raw, dict) or "servers" not in raw:
         raise ValueError(f"Config must contain a top-level 'servers' mapping: {config_path}")
-    return raw["servers"]
+    servers = raw["servers"]
+    detectors = servers.get("detectors")
+    if not isinstance(detectors, dict):
+        raise ValueError(
+            f"Expected servers.detectors mapping in {config_path}; got {type(detectors)}"
+        )
+    out: dict[str, dict] = {}
+    for name, cfg in detectors.items():
+        if not cfg.get("enabled", True):
+            logger.info("Detector '%s' is disabled — skipping", name)
+            continue
+        gpu = str(cfg.get("gpu", "0"))
+        if gpu.startswith("cuda:"):
+            gpu = gpu.split(":", 1)[1]
+        cfg = dict(cfg)
+        cfg["gpu"] = gpu
+        cfg.setdefault("batch_timeout", cfg.get("batch_timeout_ms", 50) / 1000.0)
+        out[name] = cfg
+    if not out:
+        raise ValueError(f"No enabled detectors found in {config_path}")
+    return out
 
 
 def apply_overrides(
@@ -127,9 +151,10 @@ def build_command(name: str, cfg: dict[str, Any]) -> list[str]:
     if not script_path.exists():
         raise FileNotFoundError(f"Server script not found: {script_path}")
 
+    # Launch as a module so relative imports (from ..contracts) resolve.
+    module = f"data_miner.auto_annotation_v3.servers.{script_path.stem}"
     cmd = [
-        sys.executable,
-        str(script_path),
+        sys.executable, "-m", module,
         "--port", str(cfg["port"]),
         "--device", "0",  # CUDA_VISIBLE_DEVICES masks to single GPU indexed as 0
         "--max-batch-size", str(cfg.get("max_batch_size", 8)),

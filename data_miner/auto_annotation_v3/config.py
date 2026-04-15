@@ -12,23 +12,32 @@ from pathlib import Path
 from typing import Any, Literal
 
 from omegaconf import DictConfig, OmegaConf
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .contracts import DetectorName
 
 # ---------------------------------------------------------------------------
 # Model server configs
 # ---------------------------------------------------------------------------
 
 
-class ServerConfig(BaseModel):
-    """Config for one LitServe model server (GDINO, Falcon, SAM3, OWLv2)."""
+class DetectorConfig(BaseModel):
+    """Config for one LitServe detector server.
+
+    Keyed by :class:`DetectorName` in ``servers.detectors``. The ``script``
+    field is read by ``launch_all.py`` and is the only knowledge the launcher
+    needs about a detector — no separate ``serve_config.yaml``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    enabled: bool = True
     port: int
     gpu: str
     max_batch_size: int = 8
     batch_timeout_ms: int = 50
     model_id: str
+    script: str   # e.g. "serve_gdino.py" — relative to servers/ dir
 
 
 class VLMConfig(BaseModel):
@@ -46,14 +55,35 @@ class VLMConfig(BaseModel):
 
 
 class ServersConfig(BaseModel):
-    """All model server endpoints."""
+    """All model server endpoints (detectors + VLM).
+
+    Detectors are keyed by :class:`DetectorName` — adding a new detector is a
+    YAML entry whose key matches the enum value. Unknown keys raise at
+    config-load time (not at runtime).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    grounding_dino: ServerConfig
-    falcon: ServerConfig
-    sam3: ServerConfig
+    detectors: dict[DetectorName, DetectorConfig] = Field(default_factory=dict)
     vlm: VLMConfig = Field(default_factory=VLMConfig)
+
+    @field_validator("detectors", mode="before")
+    @classmethod
+    def _validate_detector_keys(cls, v):
+        if not isinstance(v, dict):
+            return v
+        valid = {m.value for m in DetectorName}
+        for key in v.keys():
+            key_s = key.value if hasattr(key, "value") else str(key)
+            if key_s not in valid:
+                raise ValueError(
+                    f"Unknown detector '{key_s}'. Must be one of: {sorted(valid)}. "
+                    f"Add a new entry to DetectorName in contracts.py if this is new."
+                )
+        return v
+
+    def enabled_detectors(self) -> dict[DetectorName, DetectorConfig]:
+        return {n: c for n, c in self.detectors.items() if c.enabled}
 
 
 # ---------------------------------------------------------------------------

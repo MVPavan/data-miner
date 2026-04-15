@@ -6,26 +6,42 @@
 # ---------------------------------------------------------------------------
 
 servers:
-  grounding_dino:
-    port: 3001
-    gpu: "cuda:0"
-    max_batch_size: 8
-    batch_timeout_ms: 50
-    model_id: "IDEA-Research/grounding-dino-base"
+  detectors:
+    grounding_dino:
+      enabled: true
+      port: 3001
+      gpu: "cuda:0"
+      max_batch_size: 8
+      batch_timeout_ms: 50
+      model_id: "IDEA-Research/grounding-dino-base"
+      script: "serve_gdino.py"
 
-  falcon:
-    port: 3002
-    gpu: "cuda:0"
-    max_batch_size: 4
-    batch_timeout_ms: 100
-    model_id: "tiiuae/Falcon-Perception"
+    falcon:
+      enabled: true
+      port: 3002
+      gpu: "cuda:0"
+      max_batch_size: 4
+      batch_timeout_ms: 100
+      model_id: "tiiuae/Falcon-Perception"
+      script: "serve_falcon.py"
 
-  sam3:
-    port: 3003
-    gpu: "cuda:1"
-    max_batch_size: 8
-    batch_timeout_ms: 50
-    model_id: "facebook/sam3"
+    sam3:
+      enabled: true
+      port: 3003
+      gpu: "cuda:1"
+      max_batch_size: 8
+      batch_timeout_ms: 50
+      model_id: "facebook/sam3"
+      script: "serve_sam3.py"
+
+    owlvit2:
+      enabled: false          # parked — kept discoverable but off
+      port: 3004
+      gpu: "cuda:1"
+      max_batch_size: 8
+      batch_timeout_ms: 50
+      model_id: "google/owlv2-base-patch16-ensemble"
+      script: "serve_owlvit2.py"
 
   vlm:
     url: "http://localhost:8955/v1"

@@ -63,59 +63,31 @@ def _litserve_health(port: int) -> bool:
         return False
 
 
-def litserve_gdino(image_path: str, port: int = 3001) -> list[dict]:
-    text_prompt = " . ".join(DETECTION_CLASSES) + " ."
-    r = requests.post(
-        f"http://127.0.0.1:{port}/predict",
-        json={"image_path": str(Path(image_path).resolve()), "text_prompt": text_prompt},
-        timeout=30,
-    )
+def _litserve_detect(model: str, image_path: str, port: int, timeout: int = 60) -> list[dict]:
+    """Uniform DetectorRequest → DetectorResponse call for any detector."""
+    payload = {
+        "image_path": str(Path(image_path).resolve()),
+        "prompts": list(DETECTION_CLASSES),
+    }
+    r = requests.post(f"http://127.0.0.1:{port}/predict", json=payload, timeout=timeout)
     r.raise_for_status()
-    data = r.json()
-    return _parse_server_response(data, "grounding_dino_litserve")
+    return _parse_server_response(r.json(), f"{model}_litserve")
+
+
+def litserve_gdino(image_path: str, port: int = 3001) -> list[dict]:
+    return _litserve_detect("grounding_dino", image_path, port, timeout=30)
 
 
 def litserve_falcon(image_path: str, port: int = 3002) -> list[dict]:
-    text_prompt = " . ".join(DETECTION_CLASSES)
-    r = requests.post(
-        f"http://127.0.0.1:{port}/predict",
-        json={"image_path": str(Path(image_path).resolve()), "text_prompt": text_prompt},
-        timeout=60,
-    )
-    r.raise_for_status()
-    data = r.json()
-    return _parse_server_response(data, "falcon_litserve")
+    return _litserve_detect("falcon", image_path, port, timeout=60)
 
 
 def litserve_sam3(image_path: str, port: int = 3003) -> list[dict]:
-    text_prompt = " . ".join(DETECTION_CLASSES)
-    r = requests.post(
-        f"http://127.0.0.1:{port}/predict",
-        json={
-            "mode": "proposal",
-            "image_path": str(Path(image_path).resolve()),
-            "text_prompt": text_prompt,
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    data = r.json()
-    return _parse_server_response(data, "sam3_litserve")
+    return _litserve_detect("sam3", image_path, port, timeout=30)
 
 
 def litserve_owlvit2(image_path: str, port: int = 3004) -> list[dict]:
-    queries = [f"a photo of a {cls}" for cls in DETECTION_CLASSES]
-    r = requests.post(
-        f"http://127.0.0.1:{port}/predict",
-        json={
-            "image_path": str(Path(image_path).resolve()),
-            "text_queries": queries,
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    data = r.json()
-    return _parse_server_response(data, "owlvit2_litserve")
+    return _litserve_detect("owlvit2", image_path, port, timeout=30)
 
 
 def _parse_server_response(data: dict, source: str) -> list[dict]:

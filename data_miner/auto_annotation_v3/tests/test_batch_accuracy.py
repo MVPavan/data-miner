@@ -40,6 +40,14 @@ SAMPLE_DIR = Path("/media/data_2/vlm/code/data_miner/output/sample/fl_pj_sample"
 IMAGES = sorted(SAMPLE_DIR.glob("*.jpg"))[:4]
 
 
+def _load_enabled_detectors() -> dict[str, int]:
+    """Read enabled detectors + ports from configs/default.yaml."""
+    from data_miner.auto_annotation_v3.config import load_config
+    cfg_path = Path(__file__).resolve().parents[1] / "configs" / "default.yaml"
+    cfg = load_config(cfg_path)
+    return {n.value: c.port for n, c in cfg.servers.enabled_detectors().items()}
+
+
 def litserve_batched(name: str, port: int, payload_fn) -> tuple[list, list, float]:
     """Send 4 concurrent requests to the server, collect results in image order."""
 
@@ -165,24 +173,14 @@ def main() -> int:
     for i, img in enumerate(IMAGES):
         print(f"  {i+1}. {img.name}")
 
-    results = {
-        "GDINO": run_test(
-            "GDINO", 3001, lambda p: {"image_path": p, "text_prompt": "person ."}
-        ),
-        "Falcon": run_test(
-            "Falcon", 3002, lambda p: {"image_path": p, "text_prompt": "person"}
-        ),
-        "SAM3": run_test(
-            "SAM3",
-            3003,
-            lambda p: {"mode": "proposal", "image_path": p, "text_prompt": "person"},
-        ),
-        "OWLv2": run_test(
-            "OWLv2",
-            3004,
-            lambda p: {"image_path": p, "text_queries": ["a photo of a person"]},
-        ),
-    }
+    # Uniform DetectorRequest wire for all detectors.
+    def _payload(p: str) -> dict:
+        return {"image_path": p, "prompts": ["person"]}
+
+    enabled = _load_enabled_detectors()
+    results = {}
+    for model, port in enabled.items():
+        results[model] = run_test(model.upper(), port, _payload)
 
     print(f"\n\n{'#' * 72}")
     print(f"# OVERALL: BATCHED-vs-SEQUENTIAL ACCURACY")
