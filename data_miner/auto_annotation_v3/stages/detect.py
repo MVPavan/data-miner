@@ -27,9 +27,8 @@ from ..checkpoint import CheckpointManager
 from ..output import OutputWriter
 from ..utils import (
     geometric_filter,
-    dedup_by_iou,
+    cluster_and_collapse,
     limit_per_class,
-    compute_agreement,
     route_candidates,
     apply_cross_class_rules,
     get_image_size,
@@ -87,7 +86,7 @@ class DetectWorker(StageWorker):
             self.save_checkpoint(msg.image_id, "detect", detect_result)
             if self.output_writer:
                 self._write_auto_accepted_output(msg.image_id, detect_result)
-            return msg.forward("done")
+            return msg.forward("finalize")
 
         # 2. Merge all per-model candidates.
         all_candidates: list[Candidate] = []
@@ -100,8 +99,12 @@ class DetectWorker(StageWorker):
         filtered = geometric_filter(all_candidates, self.config)
         after_geometric = len(filtered)
 
-        # 4. Per-class IoU dedup (keeps highest-score box when IoU > threshold).
-        deduped = dedup_by_iou(filtered, self.config.filtering.iou_dedup_threshold)
+        # 4. Per-class cluster-and-collapse: groups detections of the same
+        #    class across all models by IoU>=threshold, attaches agreement
+        #    metadata, and picks one representative per cluster via the
+        #    tiebreak cascade (replaces the old dedup_by_iou + compute_agreement
+        #    pair that ran agreement after witnesses had been suppressed).
+        deduped = cluster_and_collapse(filtered, self.config.filtering.iou_dedup)
         after_dedup = len(deduped)
 
         # 5. Per-class cap (keeps top-N by score).
@@ -112,10 +115,7 @@ class DetectWorker(StageWorker):
         #    classes heavily overlap, unless a class is globally exempt).
         cross_filtered = apply_cross_class_rules(capped, self.config)
 
-        # 7. Compute model agreement for each surviving candidate.
-        compute_agreement(cross_filtered)
-
-        # 8. Route: auto_accept (tier-1, high agreement) vs needs_evaluation.
+        # 7. Route: auto_accept (tier-1, high agreement) vs needs_evaluation.
         routing_result = route_candidates(cross_filtered, self.config)
 
         # 9. Build and checkpoint DetectResult.
@@ -144,16 +144,30 @@ class DetectWorker(StageWorker):
                 len(routing_result["needs_evaluation"]),
             )
             return msg.forward("evaluate")
-        else:
-            # All surviving candidates are auto-accepted — skip VLM entirely.
+
+        # All surviving candidates were auto-accepted by detect — skip VLM.
+        # If any of them belongs to a class with a refine rule, forward to
+        # refine (which will adjudicate without an evaluate checkpoint).
+        # Otherwise write final output and finish.
+        refine_classes = set(self.config.refine_rules.classes.keys())
+        auto_accept_ids = set(routing_result["auto_accepted"])
+        needs_refine = any(
+            c.candidate_id in auto_accept_ids and c.class_name in refine_classes
+            for c in cross_filtered
+        )
+        if needs_refine:
             self.logger.info(
-                "%s: all %d candidates auto-accepted — forwarding to done",
-                msg.image_id,
-                len(routing_result["auto_accepted"]),
+                "%s: %d auto-accepted, forwarding to refine for class-rule extension",
+                msg.image_id, len(auto_accept_ids),
             )
-            if self.output_writer:
-                self._write_auto_accepted_output(msg.image_id, detect_result)
-            return msg.forward("done")
+            return msg.forward("refine")
+
+        self.logger.info(
+            "%s: all %d candidates auto-accepted — forwarding to done",
+            msg.image_id,
+            len(routing_result["auto_accepted"]),
+        )
+        return msg.forward("finalize")
 
     # ------------------------------------------------------------------
     # Parallel model calls
@@ -164,7 +178,13 @@ class DetectWorker(StageWorker):
         image_id: str,
         image_path: str,
     ) -> dict[str, list[Candidate]]:
-        """Call every configured detection server; respect per-model proposal cache."""
+        """Call every configured detection server per-class; respect proposal cache.
+
+        Per-class looping (one HTTP call per model×class) is required because
+        joint multi-class prompts catastrophically degrade SAM3 (→0 detections)
+        and Falcon (→everything labelled "person"). See tests/test_multiclass_proposal.py.
+        Within a single model, per-class calls run concurrently via asyncio.gather.
+        """
         server_map = self._get_detection_servers()
         model_results: dict[str, list[Candidate]] = {}
 
@@ -185,7 +205,9 @@ class DetectWorker(StageWorker):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 tasks = {
                     model_name: asyncio.create_task(
-                        self._call_detector(session, model_name, cfg, image_path)
+                        self._call_detector_per_class(
+                            session, model_name, cfg, image_path
+                        )
                     )
                     for model_name, cfg in pending.items()
                 }
@@ -240,45 +262,84 @@ class DetectWorker(StageWorker):
     # Per-model HTTP call
     # ------------------------------------------------------------------
 
-    async def _call_detector(
+    async def _call_detector_per_class(
         self,
         session: aiohttp.ClientSession,
         model_name: str,
         server_cfg: Any,
         image_path: str,
     ) -> list[Candidate]:
-        """POST to one model server and parse the response into Candidates."""
-        url = f"http://localhost:{server_cfg.port}/predict"
-        payload = self._build_payload(model_name, image_path)
+        """Fire one request per active class to this model, concurrently.
 
+        Attaches class_name from the *query* (not the returned label), bypassing
+        Falcon's autoregressive label noise and SAM3's phrase-mismatch empties.
+        """
+        url = f"http://localhost:{server_cfg.port}/predict"
+        active_classes = list(self.config.classes)
+        if not active_classes:
+            return []
+
+        tasks = [
+            asyncio.create_task(
+                self._call_one_class(session, url, model_name, image_path, cls)
+            )
+            for cls in active_classes
+        ]
+        per_class_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        candidates: list[Candidate] = []
+        for cls, result in zip(active_classes, per_class_results):
+            if isinstance(result, Exception):
+                self.logger.warning(
+                    "%s/%s per-class call failed: %s",
+                    model_name, cls.name, result,
+                )
+                continue
+            candidates.extend(result)
+        return candidates
+
+    async def _call_one_class(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        model_name: str,
+        image_path: str,
+        cls: Any,
+    ) -> list[Candidate]:
+        """One HTTP call for (model, class). Returns Candidates keyed to cls.name."""
+        payload = self._build_payload_for_class(model_name, image_path, cls.prompt)
         async with session.post(url, json=payload) as resp:
             resp.raise_for_status()
             data: dict = await resp.json()
+        return self._parse_response_for_class(data, model_name, cls.name)
 
-        return self._parse_response(data, model_name)
-
-    def _build_payload(self, model_name: str, image_path: str) -> dict:
-        """Construct the JSON payload for each model's expected API."""
+    def _build_payload_for_class(
+        self, model_name: str, image_path: str, prompt: str
+    ) -> dict:
+        """Per-class payload. Joint multi-class prompts are not supported here —
+        see test_multiclass_proposal.py for why."""
         if model_name in ("grounding_dino", "falcon"):
-            text_prompt = " . ".join(c.prompt for c in self.config.classes)
-            return {"image_path": image_path, "text_prompt": text_prompt}
-
+            # GroundingDINO's post_process expects a trailing "." delimiter;
+            # Falcon accepts either but matches what we test.
+            text = prompt + " ." if model_name == "grounding_dino" else prompt
+            return {"image_path": image_path, "text_prompt": text}
         if model_name == "sam3":
-            text_prompt = " . ".join(c.prompt for c in self.config.classes)
             return {
                 "image_path": image_path,
-                "text_prompt": text_prompt,
+                "text_prompt": prompt,
                 "mode": "proposal",
             }
-
         if model_name == "owlvit2":
-            queries = [f"a photo of a {c.prompt}" for c in self.config.classes]
-            return {"image_path": image_path, "text_queries": queries}
-
+            return {
+                "image_path": image_path,
+                "text_queries": [f"a photo of a {prompt}"],
+            }
         raise ValueError(f"Unknown model name: {model_name!r}")
 
-    def _parse_response(self, data: dict, model_name: str) -> list[Candidate]:
-        """Convert raw server response dict into a list of Candidate objects."""
+    def _parse_response_for_class(
+        self, data: dict, model_name: str, class_name: str
+    ) -> list[Candidate]:
+        """Each returned box is the class we queried for — no label resolution."""
         boxes: list = data.get("boxes", [])
         scores: list = data.get("scores", [])
         labels: list = data.get("labels", [])
@@ -287,25 +348,15 @@ class DetectWorker(StageWorker):
             return []
 
         candidates: list[Candidate] = []
-        for i, (box, score, label) in enumerate(zip(boxes, scores, labels)):
-            # Resolve label string to canonical class name via alias map.
-            class_name = self._resolve_label(label)
-            if class_name is None:
-                self.logger.debug(
-                    "Model %s: unrecognised label %r at index %d — skipped",
-                    model_name, label, i,
-                )
-                continue
-
-            # Validate box has 4 elements.
+        for i, box in enumerate(boxes):
             if len(box) != 4:
                 self.logger.debug(
-                    "Model %s: malformed box at index %d: %r — skipped",
-                    model_name, i, box,
+                    "Model %s/%s: malformed box at index %d: %r — skipped",
+                    model_name, class_name, i, box,
                 )
                 continue
-
-            label_str = label if isinstance(label, str) else class_name
+            score = float(scores[i]) if i < len(scores) else 1.0
+            label_str = str(labels[i]) if i < len(labels) else class_name
             candidate_id = f"{model_name}:{class_name}:{i}"
 
             candidates.append(
@@ -321,11 +372,10 @@ class DetectWorker(StageWorker):
                         x2=float(box[2]),
                         y2=float(box[3]),
                     ),
-                    score=float(score),
+                    score=score,
                     status=CandidateStatus.PROPOSED,
                 )
             )
-
         return candidates
 
     # ------------------------------------------------------------------

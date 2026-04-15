@@ -17,9 +17,6 @@ from ..contracts import (
     FinalAction,
     FinalAnnotation,
     PromptRef,
-    RefinementInstruction,
-    RefinementNeeded,
-    RefinementStrategy,
     StageMessage,
     VLMVerdict,
 )
@@ -77,15 +74,14 @@ class EvaluateWorker(StageWorker):
                 vlm_total_tokens=0,
                 prompts_used=[],
                 verdicts=[],
-                refinement_needed=[],
-                refinement_instructions={},
                 accepted=list(detect.routing.auto_accepted),
+                review=[],
                 rejected=[],
                 relabels={},
                 stage_timing_ms=(time.monotonic() - t0) * 1000,
             )
             self.save_checkpoint(msg.image_id, "evaluate", eval_result)
-            return msg.forward("done")
+            return self._route_after_evaluate(msg, detect, eval_result)
 
         # 3. Open image once; share across all VLM calls.
         image = Image.open(msg.image_path).convert("RGB")
@@ -130,56 +126,12 @@ class EvaluateWorker(StageWorker):
                 )
                 all_verdicts.extend(result["verdicts"])
 
-            # ---- Resolve verdicts to routing buckets ----
-            accepted, rejected, needs_refine, relabels = self._resolve_verdicts(
+            # ---- Resolve verdicts to three-way routing (accept / review / reject) ----
+            accepted, review, rejected, relabels = self._resolve_verdicts(
                 all_verdicts, detect
             )
 
-            # ---- VLM Call 2: Spatial refinement instructions (sequential) ----
-            refinement_instructions: dict[str, RefinementInstruction] = {}
-            for cand_id in needs_refine:
-                cand = next(
-                    (c for c in detect.candidates if c.candidate_id == cand_id), None
-                )
-                if cand is None:
-                    continue
-                class_rule = self.config.refinement.class_rules.get(cand.class_name)
-                if not class_rule:
-                    # No refinement rule — accept as-is rather than leaving in limbo.
-                    accepted.append(cand_id)
-                    continue
-                try:
-                    instr = await self._get_refinement_point(
-                        session, image, cand, image_w, image_h
-                    )
-                    refinement_instructions[cand_id] = instr
-                    vlm_calls += 1
-                except Exception as exc:
-                    self.logger.warning(
-                        "Refinement instruction failed for %s: %s", cand_id, exc
-                    )
-                    # Fall back to accepting without refinement.
-                    accepted.append(cand_id)
-
-        # 5. Build RefinementNeeded list from candidates that got instructions.
-        refinement_needed: list[RefinementNeeded] = []
-        for cand_id, instr in refinement_instructions.items():
-            cand = next(
-                (c for c in detect.candidates if c.candidate_id == cand_id), None
-            )
-            class_rule_str = ""
-            if cand is not None:
-                rule_dict = self.config.refinement.class_rules.get(cand.class_name, {})
-                class_rule_str = rule_dict.get("strategy", str(rule_dict))
-            refinement_needed.append(
-                RefinementNeeded(
-                    candidate_id=cand_id,
-                    reason="bbox_needs_expansion",
-                    class_rule=class_rule_str,
-                )
-            )
-
-        # 6. Merge auto-accepted candidates from detect with VLM-accepted ones.
+        # Merge auto-accepted candidates from detect with VLM-accepted ones.
         all_accepted = list(detect.routing.auto_accepted) + accepted
 
         elapsed_ms = (time.monotonic() - t0) * 1000
@@ -189,23 +141,46 @@ class EvaluateWorker(StageWorker):
             vlm_total_tokens=vlm_total_tokens,
             prompts_used=prompts_used,
             verdicts=all_verdicts,
-            refinement_needed=refinement_needed,
-            refinement_instructions=refinement_instructions,
             accepted=all_accepted,
+            review=review,
             rejected=rejected,
             relabels=relabels,
             stage_timing_ms=elapsed_ms,
         )
         self.save_checkpoint(msg.image_id, "evaluate", eval_result)
 
-        # 7. Route: refine stage if any instructions exist, otherwise finalize.
-        if refinement_instructions:
-            return msg.forward("refine")
+        return self._route_after_evaluate(msg, detect, eval_result)
 
-        if self.output_writer is not None:
-            self._write_final_output(msg.image_id, detect, eval_result)
+    # ------------------------------------------------------------------
+    # Post-evaluate routing — class-driven refine trigger
+    # ------------------------------------------------------------------
 
-        return msg.forward("done")
+    def _route_after_evaluate(
+        self,
+        msg: StageMessage,
+        detect: DetectResult,
+        eval_result: EvaluateResult,
+    ) -> StageMessage | None:
+        """Forward to refine if any non-rejected survivor's class is in
+        refine_rules; otherwise write final output and forward to done.
+        """
+        refine_classes = set(self.config.refine_rules.classes.keys())
+        if refine_classes:
+            survivors_post_relabel = []
+            for cand in detect.candidates:
+                if cand.candidate_id in eval_result.rejected:
+                    continue
+                if cand.candidate_id not in (
+                    set(eval_result.accepted) | set(eval_result.review)
+                ):
+                    continue
+                cls = eval_result.relabels.get(cand.candidate_id, cand.class_name)
+                if cls in refine_classes:
+                    survivors_post_relabel.append(cand.candidate_id)
+            if survivors_post_relabel:
+                return msg.forward("refine")
+
+        return msg.forward("finalize")
 
     # ------------------------------------------------------------------
     # Grouping helpers
@@ -379,20 +354,25 @@ class EvaluateWorker(StageWorker):
         verdicts: list[VLMVerdict],
         detect: DetectResult,
     ) -> tuple[list[str], list[str], list[str], dict[str, str]]:
-        """Partition verdict IDs into accepted / rejected / needs_refine buckets.
+        """Partition verdict IDs into accept / review / reject buckets.
+
+        Pure confidence-driven three-way (§10.2). ``bbox_quality`` and
+        ``object_complete`` remain on the verdict for telemetry but no longer
+        drive routing — spatial decisions belong to the refine stage.
 
         Returns
         -------
-        accepted, rejected, needs_refine, relabels
+        accepted, review, rejected, relabels
         """
         accepted: list[str] = []
+        review: list[str] = []
         rejected: list[str] = []
-        needs_refine: list[str] = []
         relabels: dict[str, str] = {}
 
         cand_by_id: dict[str, Candidate] = {
             c.candidate_id: c for c in detect.candidates
         }
+        eval_cfg = self.config.evaluate
 
         for v in verdicts:
             cand = cand_by_id.get(v.candidate_id)
@@ -406,108 +386,17 @@ class EvaluateWorker(StageWorker):
                 canonical = resolve_canonical_class(v.correct_class, self.alias_map)
                 if canonical is not None and canonical != original_class:
                     relabels[v.candidate_id] = canonical
-                # If unresolvable, continue to confidence-based routing below.
+                # Unresolvable → fall through to confidence routing.
 
-            # ---- Confidence / quality based routing ----
-            if v.confidence < 0.3:
+            # ---- Confidence-driven three-way routing ----
+            if v.confidence < eval_cfg.reject_below:
                 rejected.append(v.candidate_id)
-            elif v.bbox_quality == BboxQuality.BAD:
-                rejected.append(v.candidate_id)
-            elif (
-                v.bbox_quality == BboxQuality.NEEDS_EXPANSION and not v.object_complete
-            ):
-                needs_refine.append(v.candidate_id)
-            elif v.confidence >= 0.5:
+            elif v.confidence >= eval_cfg.accept_above:
                 accepted.append(v.candidate_id)
             else:
-                # Moderate confidence without a clear quality issue — try refinement.
-                needs_refine.append(v.candidate_id)
+                review.append(v.candidate_id)
 
-        return accepted, rejected, needs_refine, relabels
-
-    # ------------------------------------------------------------------
-    # VLM Call 2: Spatial refinement instructions
-    # ------------------------------------------------------------------
-
-    async def _get_refinement_point(
-        self,
-        session: aiohttp.ClientSession,
-        image: Image.Image,
-        cand: Candidate,
-        image_w: int,
-        image_h: int,
-    ) -> RefinementInstruction:
-        """Ask the VLM where the object extends beyond the current bbox."""
-        template = load_prompt("refine_spatial")
-
-        px1, py1, px2, py2 = bbox_to_pixels(cand.bbox, image_w, image_h)
-
-        rendered, _prompt_hash = template.render_and_hash(
-            class_name=cand.class_name,
-            image_width=image_w,
-            image_height=image_h,
-            x1=px1,
-            y1=py1,
-            x2=px2,
-            y2=py2,
-        )
-
-        # Crop with generous padding so spatial context is visible.
-        crop = crop_candidate(image, cand.bbox, padding=0.15)
-
-        messages = [
-            {"role": "system", "content": rendered},
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": pil_to_data_url(crop)},
-                    },
-                    {
-                        "type": "text",
-                        "text": "Where does the load extend beyond the box?",
-                    },
-                ],
-            },
-        ]
-
-        vlm_cfg = self.config.servers.vlm
-        payload = {
-            "model": vlm_cfg.model,
-            "messages": messages,
-            "temperature": template.model_params.get("temperature", vlm_cfg.temperature),
-            "max_tokens": template.model_params.get("max_tokens", 256),
-        }
-
-        vlm_url = f"{vlm_cfg.url}/chat/completions"
-        async with session.post(
-            vlm_url,
-            json=payload,
-            headers={"Authorization": f"Bearer {vlm_cfg.api_key}"},
-        ) as resp:
-            resp.raise_for_status()
-            vlm_response = await resp.json()
-
-        response_text = vlm_response["choices"][0]["message"]["content"]
-        point_data = parse_vlm_json(response_text)
-
-        # Determine strategy from class rule config.
-        class_rule_dict = self.config.refinement.class_rules.get(cand.class_name, {})
-        strategy_str = class_rule_dict.get("strategy", RefinementStrategy.LOAD_EXTENSION)
-        try:
-            strategy = RefinementStrategy(strategy_str)
-        except ValueError:
-            strategy = RefinementStrategy.LOAD_EXTENSION
-
-        return RefinementInstruction(
-            candidate_id=cand.candidate_id,
-            strategy=strategy,
-            direction=point_data.get("direction"),
-            point_x=int(point_data["point_x"]) if point_data.get("point_x") is not None else None,
-            point_y=int(point_data["point_y"]) if point_data.get("point_y") is not None else None,
-            vlm_reasoning=str(point_data.get("reasoning", "")),
-        )
+        return accepted, review, rejected, relabels
 
     # ------------------------------------------------------------------
     # Output helpers
@@ -560,11 +449,13 @@ class EvaluateWorker(StageWorker):
             },
         )
 
-        # Rejected candidates go to the review queue.
+        # Candidates routed to `review` (uncertain confidence) go to the
+        # human-review queue. Rejected candidates are dropped silently —
+        # finalize stage (Phase 3) is the canonical place for drop logging.
         review_candidates = [
             cand
             for cand in detect.candidates
-            if cand.candidate_id in evaluate.rejected
+            if cand.candidate_id in evaluate.review
         ]
         if review_candidates:
             self.output_writer.write_review(image_id, review_candidates)

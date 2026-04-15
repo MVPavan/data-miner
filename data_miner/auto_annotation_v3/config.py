@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from omegaconf import DictConfig, OmegaConf
 from pydantic import BaseModel, ConfigDict, Field
@@ -84,7 +84,16 @@ class AutoAcceptConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     min_model_agreement: int = 2
-    min_score: float = 0.3
+    min_score: float = 0.0
+    """Global score floor; usually 0 because per-model floors are incomparable.
+    Used as a fallback when ``per_model_score`` does not list a model.
+    """
+    per_model_score: dict[str, float] = Field(default_factory=dict)
+    """Per-detector score floor. Keys are ``source_model`` strings as set by the
+    detector workers (e.g. ``grounding_dino``, ``owlvit2``, ``sam3``, ``falcon``).
+    A candidate qualifies for auto-accept only if its score >= the floor for
+    its own model. Models absent from the map fall back to ``min_score``.
+    """
     tiers: list[int] = Field(default_factory=lambda: [1])
     """Tiers eligible for auto-accept. Empty list disables auto-accept entirely.
 
@@ -127,19 +136,104 @@ class CoExistenceConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RefinementConfig(BaseModel):
-    """SAM refinement thresholds and per-class strategies."""
+class EvaluateConfig(BaseModel):
+    """Confidence thresholds for the evaluate stage's three-way routing.
+
+    Replaces the hard-coded 0.3 / 0.5 cascade in the old verdict resolver.
+    Pure confidence-based — bbox_quality / object_complete are no longer
+    routing inputs (they remain on the verdict for telemetry only).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    class_rules: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    auto_accept_iou: float = 0.3
-    reject_iou: float = 0.1
+    reject_below: float = 0.3
+    accept_above: float = 0.5
+
+
+class MergeRulesConfig(BaseModel):
+    """Geometric sanity gates applied after a refine prompt produces a merged bbox."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_area_ratio: float = 3.0
+    """Hard cap on (merged_area / original_area)."""
+    max_gap_diag_frac: float = 0.02
+    """Maximum allowed gap (as fraction of image diagonal) between original
+    bbox and proposed load bbox before merge is considered geometrically
+    implausible. Overlapping (IoU > 0) always passes the gap gate.
+    """
+    aspect_ratio_range: list[float] = Field(default_factory=lambda: [0.25, 4.0])
+
+
+class RefinePromptConfig(BaseModel):
+    """One prompt for the per-class refine inner loop."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    description: str
+    """Free-form rule shown to the VLM. Should explicitly say when to
+    ``action: skip`` (no extension needed) vs ``action: propose`` (return
+    a target_region + load_vocab).
+    """
+    load_vocab: list[str] = Field(default_factory=list)
+    """Default load-vocabulary noun phrases queried against the SAM3
+    presence head on the proposed load bbox. The VLM may override per-call.
+    """
+    presence_threshold: float = 0.5
+
+
+class RefineRuleConfig(BaseModel):
+    """Per-class refine rule: one or more sequential prompts + merge sanity."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompts: list[RefinePromptConfig] = Field(default_factory=list)
+    merge_rules: MergeRulesConfig = Field(default_factory=MergeRulesConfig)
+
+
+class RefineRulesConfig(BaseModel):
+    """Top-level container — keys are class names, values are per-class rules.
+
+    A candidate enters the refine stage iff its (post-relabel) ``class_name``
+    is a key in this map AND its evaluate verdict is not ``reject``. Pure
+    class-match trigger; no `strategy` enum, no VLM-signal driven routing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    classes: dict[str, RefineRuleConfig] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
 # Filter config (ported from v2)
 # ---------------------------------------------------------------------------
+
+
+class IouDedupConfig(BaseModel):
+    """IoU-based clustering + tiebreak cascade for cross-model dedup.
+
+    Replaces the old flat ``iou_dedup_threshold`` float. Used by
+    ``utils.cluster_and_collapse`` to build per-class IoU clusters across all
+    detector models, attach agreement metadata, and pick one representative
+    per cluster via the ``tiebreak_by`` cascade.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    threshold: float = 0.7
+    tiebreak_by: list[Literal["agreement", "model_priority", "score"]] = Field(
+        default_factory=lambda: ["agreement", "model_priority", "score"]
+    )
+    """Discriminator cascade applied in order; first one that distinguishes
+    the cluster members picks the survivor.
+    """
+    model_priority: list[str] = Field(
+        default_factory=lambda: ["sam3", "falcon", "grounding_dino", "owlvit2"]
+    )
+    """Model order from most-trusted (lowest index) to least. Earlier wins
+    when ``model_priority`` is the active discriminator.
+    """
 
 
 class FilterConfig(BaseModel):
@@ -152,7 +246,7 @@ class FilterConfig(BaseModel):
     min_aspect_ratio: float = 0.1
     max_aspect_ratio: float = 10.0
     min_edge_distance: float = 0.0
-    iou_dedup_threshold: float = 0.7
+    iou_dedup: IouDedupConfig = Field(default_factory=IouDedupConfig)
     max_per_class: int = 30
 
 
@@ -175,6 +269,7 @@ class RedisConfig(BaseModel):
             "detect": "stream:detect",
             "evaluate": "stream:evaluate",
             "refine": "stream:refine",
+            "finalize": "stream:finalize",
             "done": "stream:done",
         }
     )
@@ -193,6 +288,7 @@ class WorkersConfig(BaseModel):
     detect_count: int = 4
     evaluate_count: int = 6
     refine_count: int = 2
+    finalize_count: int = 2
 
 
 # ---------------------------------------------------------------------------
@@ -257,9 +353,10 @@ class AutoAnnotationV3Config(BaseModel):
     class_registry: list[ClassConfig] = Field(default_factory=list)
     detect_classes: list[str] = Field(default_factory=list)
     auto_accept: AutoAcceptConfig = Field(default_factory=AutoAcceptConfig)
+    evaluate: EvaluateConfig = Field(default_factory=EvaluateConfig)
     evaluation_groups: dict[str, EvaluationGroupConfig] = Field(default_factory=dict)
     co_existence: CoExistenceConfig = Field(default_factory=CoExistenceConfig)
-    refinement: RefinementConfig = Field(default_factory=RefinementConfig)
+    refine_rules: RefineRulesConfig = Field(default_factory=RefineRulesConfig)
     filtering: FilterConfig = Field(default_factory=FilterConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     workers: WorkersConfig = Field(default_factory=WorkersConfig)

@@ -15,6 +15,7 @@ from .workers.monitor import PipelineMonitor
 from .stages.detect import DetectWorker
 from .stages.evaluate import EvaluateWorker
 from .stages.refine import RefineWorker
+from .stages.finalize import FinalizeWorker
 from .utils import configure_logging, get_logger
 
 logger = get_logger("pipeline")
@@ -55,24 +56,24 @@ class AutoAnnotationPipelineV3:
         """Create worker instances based on config."""
         workers = []
 
-        # Detect workers
+        # Detect workers (output_writer=None — finalize is the single sink)
         for i in range(self.config.workers.detect_count):
             w = DetectWorker(
                 config=self.config,
                 broker=self.broker,
                 checkpoint_mgr=self.checkpoint,
-                output_writer=self.output_writer,
+                output_writer=None,
                 worker_id=f"detect-{i}",
             )
             workers.append(w)
 
-        # Evaluate workers
+        # Evaluate workers (output_writer=None — finalize is the single sink)
         for i in range(self.config.workers.evaluate_count):
             w = EvaluateWorker(
                 config=self.config,
                 broker=self.broker,
                 checkpoint_mgr=self.checkpoint,
-                output_writer=self.output_writer,
+                output_writer=None,
                 worker_id=f"evaluate-{i}",
             )
             workers.append(w)
@@ -83,8 +84,19 @@ class AutoAnnotationPipelineV3:
                 config=self.config,
                 broker=self.broker,
                 checkpoint_mgr=self.checkpoint,
-                output_writer=self.output_writer,
+                output_writer=None,   # outputs are written by finalize
                 worker_id=f"refine-{i}",
+            )
+            workers.append(w)
+
+        # Finalize workers — sole owner of YOLO label / trace / review writes.
+        for i in range(self.config.workers.finalize_count):
+            w = FinalizeWorker(
+                config=self.config,
+                broker=self.broker,
+                checkpoint_mgr=self.checkpoint,
+                output_writer=self.output_writer,
+                worker_id=f"finalize-{i}",
             )
             workers.append(w)
 

@@ -11,3 +11,5 @@ changed_files:
   - classify_vehicles.yaml
   - classify_animals.yaml
   - refine_spatial.yaml
+  - refine_prompt.yaml
+  - refine_adjudicate.yaml

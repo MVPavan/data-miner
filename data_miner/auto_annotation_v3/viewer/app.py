@@ -169,6 +169,7 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
             "detect": _load_json(img_ckpt / "detect.json"),
             "evaluate": _load_json(img_ckpt / "evaluate.json"),
             "refine": _load_json(img_ckpt / "refine.json"),
+            "finalize": _load_json(img_ckpt / "finalize.json"),
             "proposals": _list_proposals(ckpt_dir, image_id),
             "trace": _load_json(job_dir / "traces" / f"{image_id}.json"),
             "review": _load_json(job_dir / "review" / f"{image_id}.json"),

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("data_miner.auto_annotation_v3.worker")
 
 # Canonical stage progression — must match STAGE_ORDER in checkpoint.py.
-_PIPELINE_STAGES: list[str] = ["detect", "evaluate", "refine", "done"]
+_PIPELINE_STAGES: list[str] = ["detect", "evaluate", "refine", "finalize", "done"]
 
 
 # ---------------------------------------------------------------------------

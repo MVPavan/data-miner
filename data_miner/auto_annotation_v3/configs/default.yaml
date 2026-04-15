@@ -92,8 +92,21 @@ detect_classes: []
 
 auto_accept:
   min_model_agreement: 2
-  min_score: 0.3
+  min_score: 0.0              # global fallback; per-model floors below
+  per_model_score:            # detector scores are NOT comparable — use per-model floors
+    grounding_dino: 0.35
+    owlvit2:        0.25
+    sam3:           0.60
+    falcon:         0.0       # Falcon has no calibrated score; rely on agreement
   tiers: [1]
+
+# ---------------------------------------------------------------------------
+# Evaluate stage — confidence-based three-way routing
+# ---------------------------------------------------------------------------
+
+evaluate:
+  reject_below: 0.3            # < this confidence → reject
+  accept_above: 0.5            # >= this confidence → accept; in-between → review
 
 # ---------------------------------------------------------------------------
 # Evaluation groups — classes handled in one VLM call each
@@ -176,12 +189,40 @@ co_existence:
 # Refinement (SAM-based bbox correction)
 # ---------------------------------------------------------------------------
 
-refinement:
-  class_rules:
-    forklift:   {strategy: load_extension}
-    palletjack: {strategy: load_extension}
-  auto_accept_iou: 0.3   # refined bbox accepted if IoU with original >= this
-  reject_iou: 0.1        # SAM result rejected as drift if IoU < this
+# Refinement is class-driven: a candidate enters refine iff its (post-relabel)
+# class is keyed below AND its evaluate verdict is not `reject`. Each class has
+# one or more sequential prompts; each prompt's VLM may `skip` (no-op) or
+# `propose` a target_region that gets segmented by SAM3, presence-checked
+# against the load_vocab, and merge-sanity-checked before becoming the new bbox.
+refine_rules:
+  classes:
+    forklift:
+      prompts:
+        - id: load_extension
+          description: |
+            If cargo, pallets, boxes, drums, or barrels are physically on the
+            forks of this forklift, return action="propose" with target_region
+            covering the load and load_vocab listing the load type.
+            If the forks are empty (no load), return action="skip".
+          load_vocab: [pallet, cardboard box, wooden crate, drum, barrel]
+          presence_threshold: 0.5
+      merge_rules:
+        max_area_ratio: 3.0
+        max_gap_diag_frac: 0.02
+        aspect_ratio_range: [0.25, 4.0]
+    palletjack:
+      prompts:
+        - id: load_extension
+          description: |
+            If cargo is on the pallet jack forks, return action="propose"
+            with target_region covering the load. If empty, return
+            action="skip".
+          load_vocab: [pallet, box, crate]
+          presence_threshold: 0.5
+      merge_rules:
+        max_area_ratio: 3.0
+        max_gap_diag_frac: 0.02
+        aspect_ratio_range: [0.25, 4.0]
 
 # ---------------------------------------------------------------------------
 # Geometric filtering
@@ -193,7 +234,10 @@ filtering:
   min_aspect_ratio: 0.1
   max_aspect_ratio: 10.0
   min_edge_distance: 0.0
-  iou_dedup_threshold: 0.7
+  iou_dedup:
+    threshold: 0.7
+    tiebreak_by: [agreement, model_priority, score]
+    model_priority: [sam3, falcon, grounding_dino, owlvit2]
   max_per_class: 30
 
 # ---------------------------------------------------------------------------

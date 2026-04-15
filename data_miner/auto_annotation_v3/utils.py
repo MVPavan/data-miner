@@ -189,42 +189,128 @@ def geometric_filter(candidates: list, config: Any) -> list:
 # ---------------------------------------------------------------------------
 
 
-def dedup_by_iou(candidates: list, iou_threshold: float = 0.7) -> list:
-    """Per-class IoU dedup.
+def cluster_and_collapse(candidates: list, iou_dedup_cfg: Any) -> list:
+    """Per-class IoU clustering + tiebreak cascade — replaces dedup + agreement.
 
-    Sort by score descending, greedily suppress boxes that overlap an already-kept
-    box of the same class above iou_threshold. candidates must have .class_name,
-    .score, and .bbox attributes.
+    For each class, builds connected components over the IoU>=threshold graph
+    across ALL detector models (no per-model grouping). Each component is one
+    physical object; its agreement metadata (count + sorted list of distinct
+    source models) is computed during clustering and attached to the survivor.
+
+    The survivor is chosen by walking ``iou_dedup_cfg.tiebreak_by`` in order
+    and applying the first discriminator that distinguishes a single winner:
+
+    - ``agreement``     — most distinct source_models wins.
+    - ``model_priority`` — earliest in ``iou_dedup_cfg.model_priority`` wins
+      (lower index = higher trust).
+    - ``score``         — highest raw score wins (last-resort fallback).
+
+    Inputs:
+      candidates: list of objects with .class_name, .source_model, .score, .bbox
+      iou_dedup_cfg: an IouDedupConfig (or duck-typed equivalent) with
+        ``threshold``, ``tiebreak_by``, ``model_priority``.
+
+    Returns:
+      list of survivors; each has ``agreement`` and ``agreeing_models`` set.
     """
-    if iou_threshold <= 0 or len(candidates) <= 1:
+    threshold = iou_dedup_cfg.threshold
+    tiebreak_by = list(iou_dedup_cfg.tiebreak_by)
+    priority_index = {m: i for i, m in enumerate(iou_dedup_cfg.model_priority)}
+    fallback_priority = len(iou_dedup_cfg.model_priority)  # unknown models last
+
+    if threshold <= 0 or not candidates:
+        # Still attach singleton agreement metadata so downstream is consistent.
+        for c in candidates:
+            c.agreement = 1
+            c.agreeing_models = [c.source_model]
         return list(candidates)
 
-    # Group by class
+    logger = get_logger("utils.cluster_and_collapse")
+
+    # Group by class.
     by_class: dict[str, list] = {}
     for c in candidates:
         by_class.setdefault(c.class_name, []).append(c)
 
-    logger = get_logger("utils.dedup_by_iou")
-    kept_all: list = []
-    for class_name, group in by_class.items():
-        sorted_group = sorted(group, key=lambda c: c.score, reverse=True)
-        kept: list = []
-        for cand in sorted_group:
-            suppressed = any(
-                bbox_iou(cand.bbox, k.bbox) >= iou_threshold for k in kept
-            )
-            if not suppressed:
-                kept.append(cand)
-        if len(kept) < len(sorted_group):
-            logger.debug(
-                "IoU dedup class '%s': %d → %d",
-                class_name,
-                len(sorted_group),
-                len(kept),
-            )
-        kept_all.extend(kept)
+    survivors: list = []
 
-    return kept_all
+    for class_name, group in by_class.items():
+        # Union-find over IoU >= threshold within this class.
+        n = len(group)
+        parent = list(range(n))
+
+        def _find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def _union(a: int, b: int) -> None:
+            ra, rb = _find(a), _find(b)
+            if ra != rb:
+                parent[ra] = rb
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if bbox_iou(group[i].bbox, group[j].bbox) >= threshold:
+                    _union(i, j)
+
+        # Bucket members by cluster root.
+        clusters: dict[int, list[int]] = {}
+        for i in range(n):
+            clusters.setdefault(_find(i), []).append(i)
+
+        for member_idxs in clusters.values():
+            members = [group[i] for i in member_idxs]
+            agreeing_models = sorted({m.source_model for m in members})
+            agreement = len(agreeing_models)
+
+            # Cascade tiebreak: filter winners by each discriminator until 1 remains.
+            pool = list(members)
+            for key in tiebreak_by:
+                if len(pool) == 1:
+                    break
+                if key == "agreement":
+                    # Within a cluster, every member shares the same agreement
+                    # value (cluster-level metadata) — this discriminator only
+                    # distinguishes across clusters, so it's a no-op here. Kept
+                    # for symmetry / future cross-cluster ranking use.
+                    continue
+                elif key == "model_priority":
+                    best = min(
+                        priority_index.get(m.source_model, fallback_priority)
+                        for m in pool
+                    )
+                    pool = [
+                        m
+                        for m in pool
+                        if priority_index.get(m.source_model, fallback_priority)
+                        == best
+                    ]
+                elif key == "score":
+                    best_score = max(m.score for m in pool)
+                    pool = [m for m in pool if m.score == best_score]
+                else:
+                    raise ValueError(f"Unknown tiebreak discriminator: {key!r}")
+
+            # Stable final fallback: take the first remaining (lexical by id).
+            if len(pool) > 1:
+                pool.sort(key=lambda m: m.candidate_id)
+            survivor = pool[0]
+            survivor.agreement = agreement
+            survivor.agreeing_models = agreeing_models
+            survivors.append(survivor)
+
+        if len(clusters) < n:
+            logger.debug(
+                "Cluster-and-collapse class '%s': %d → %d (%d clusters)",
+                class_name,
+                n,
+                len(clusters),
+                len(clusters),
+            )
+
+    return survivors
 
 
 def limit_per_class(candidates: list, max_per_class: int = 30) -> list:
@@ -254,30 +340,6 @@ def limit_per_class(candidates: list, max_per_class: int = 30) -> list:
 # ---------------------------------------------------------------------------
 # Cross-class routing (new for v3)
 # ---------------------------------------------------------------------------
-
-
-def compute_agreement(candidates: list) -> list:
-    """For each candidate, count overlapping detections of the same class from other models.
-
-    Sets candidate.agreement (int) and candidate.agreeing_models (list[str]).
-    Two candidates 'agree' if they share the same class_name and IoU > 0.5.
-    Mutates candidates in-place and returns the same list.
-    """
-    for i, cand in enumerate(candidates):
-        agreeing: list[str] = []
-        for j, other in enumerate(candidates):
-            if i == j:
-                continue
-            if other.class_name != cand.class_name:
-                continue
-            if other.source_model == cand.source_model:
-                continue
-            if bbox_iou(cand.bbox, other.bbox) > 0.5:
-                if other.source_model not in agreeing:
-                    agreeing.append(other.source_model)
-        cand.agreement = len(agreeing)
-        cand.agreeing_models = agreeing
-    return candidates
 
 
 def route_candidates(candidates: list, config: Any) -> dict:
@@ -311,12 +373,16 @@ def route_candidates(candidates: list, config: Any) -> dict:
     auto_accepted: list[str] = []
     needs_evaluation: list[str] = []
 
+    per_model_score = getattr(aa_cfg, "per_model_score", {}) or {}
+    fallback_score = aa_cfg.min_score
+
     for cand in candidates:
         is_eligible = cand.class_name in eligible_names
+        score_floor = per_model_score.get(cand.source_model, fallback_score)
         qualifies = (
             is_eligible
             and cand.agreement >= aa_cfg.min_model_agreement
-            and cand.score >= aa_cfg.min_score
+            and cand.score >= score_floor
         )
         if qualifies:
             auto_accepted.append(cand.candidate_id)

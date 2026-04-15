@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,12 +33,6 @@ class FinalAction(str, Enum):
     ACCEPT = "accept"
     REJECT = "reject"
     HUMAN_REVIEW = "human_review"
-
-
-class RefinementStrategy(str, Enum):
-    LOAD_EXTENSION = "load_extension"
-    SAM_POINT = "sam_point"
-    SAM_BOX = "sam_box"
 
 
 # ---------------------------------------------------------------------------
@@ -167,13 +161,27 @@ class VLMVerdict(BaseModel):
 
 
 class RefinementInstruction(BaseModel):
-    """Spatial refinement instruction produced by the VLM for one candidate."""
+    """Per-prompt VLM directive produced inside the refine stage.
+
+    The class-driven refine flow asks the VLM, for each prompt configured
+    against the candidate's class, whether to ``skip`` (no extension needed)
+    or ``propose`` a ``target_region`` to extend the bbox to. Generated
+    inside ``RefineWorker`` — evaluate no longer emits these.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: str
-    strategy: RefinementStrategy
-    direction: str | None = None  # left | right | up | down
+    prompt_id: str
+    action: Literal["skip", "propose"] = "skip"
+    target_region: BoundingBox | None = None
+    """VLM-proposed bbox over the area to extend into. Optional point fallback
+    via ``point_x`` / ``point_y`` when VLM returns a single pixel instead.
+    """
+    load_vocab: list[str] = Field(default_factory=list)
+    """Short noun phrases for the load (e.g. ``["pallet", "wooden crate"]``).
+    Used as the SAM3 presence-head query on the proposed region.
+    """
     point_x: int | None = None
     point_y: int | None = None
     vlm_reasoning: str = ""
@@ -215,6 +223,11 @@ class EvaluateResult(BaseModel):
         default_factory=dict
     )
     accepted: list[str] = Field(default_factory=list)
+    review: list[str] = Field(default_factory=list)
+    """Candidates with moderate confidence — pending human review or further
+    refinement. Replaces the older ``needs_refine`` semantics now that refine
+    is class-driven rather than VLM-signal driven (§10.1 vocab).
+    """
     rejected: list[str] = Field(default_factory=list)
     relabels: dict[str, str] = Field(default_factory=dict)
     stage_timing_ms: float = 0.0
@@ -225,8 +238,30 @@ class EvaluateResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class PromptStepResult(BaseModel):
+    """Trace of one prompt's pass through the refine inner loop."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_id: str
+    action: Literal["skip", "propose"]
+    outcome: Literal[
+        "skipped",
+        "sam_no_mask",
+        "presence_failed",
+        "merge_failed",
+        "merged",
+        "vlm_error",
+        "sam_error",
+    ]
+    presence_score: float | None = None
+    proposed_bbox: BoundingBox | None = None
+    merged_bbox: BoundingBox | None = None
+    notes: str = ""
+
+
 class RefinementResult(BaseModel):
-    """Per-candidate result after SAM refinement."""
+    """Per-candidate result after the refine stage's per-prompt loop."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -235,7 +270,19 @@ class RefinementResult(BaseModel):
     refined_bbox: BoundingBox | None = None
     iou_with_original: float = 0.0
     accepted: bool = False
-    method: str  # sam_point | sam_box | load_extension
+    method: str = "class_driven"
+    prompt_steps: list[PromptStepResult] = Field(default_factory=list)
+    adjudicate_verdict: Literal["accept", "review", "reject"] = "accept"
+    """Final-VLM adjudication of the refined-vs-original bbox per the class's
+    annotation rule. Combined with evaluate's verdict per the §10.4 table to
+    yield the candidate's final routing.
+    """
+    final_verdict: Literal["accept", "review", "reject"] = "accept"
+    """Combined verdict (evaluate × adjudicate per §10.4). Drives whether the
+    final bbox is the refined or the original, and whether it lands in the
+    review queue.
+    """
+    final_bbox_source: Literal["refined", "original"] = "original"
 
 
 class RefineResult(BaseModel):
@@ -249,6 +296,35 @@ class RefineResult(BaseModel):
     vlm_calls: int = 0
     sam_calls: int = 0
     prompt_used: PromptRef | None = None
+    stage_timing_ms: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Stage 4: FINALIZE — post-refine canonical list + dedup/geometry recheck
+# ---------------------------------------------------------------------------
+
+
+class FinalizeDrop(BaseModel):
+    """One candidate dropped during the finalize stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str
+    class_name: str
+    reason: str  # geometric_filter | dedup | cross_class | per_class_cap | rejected_upstream
+    bbox: BoundingBox | None = None
+
+
+class FinalizeResult(BaseModel):
+    """Stage 4 output: post-refine canonical annotation list + drop log."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_id: str
+    final_annotations: list[FinalAnnotation] = Field(default_factory=list)
+    review_items: list[dict[str, Any]] = Field(default_factory=list)
+    dropped: list[FinalizeDrop] = Field(default_factory=list)
+    filter_stats: dict[str, int] = Field(default_factory=dict)
     stage_timing_ms: float = 0.0
 
 

@@ -32,6 +32,7 @@ class StreamConfig:
     detect: str = "stream:detect"
     evaluate: str = "stream:evaluate"
     refine: str = "stream:refine"
+    finalize: str = "stream:finalize"
     done: str = "stream:done"
     dead_letter: str = "stream:dead_letter"
 
@@ -46,6 +47,7 @@ class StreamConfig:
             detect=mapping.get("detect", "stream:detect"),
             evaluate=mapping.get("evaluate", "stream:evaluate"),
             refine=mapping.get("refine", "stream:refine"),
+            finalize=mapping.get("finalize", "stream:finalize"),
             done=mapping.get("done", "stream:done"),
             dead_letter=mapping.get("dead_letter", "stream:dead_letter"),
         )
@@ -77,6 +79,7 @@ class RedisMessageBroker:
         "detect",
         "evaluate",
         "refine",
+        "finalize",
         "done",
         "dead_letter",
     )

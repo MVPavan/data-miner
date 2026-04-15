@@ -92,7 +92,8 @@
     <div class="tab" data-stage="detect">2. Detect</div>
     <div class="tab" data-stage="evaluate">3. Evaluate</div>
     <div class="tab" data-stage="refine">4. Refine</div>
-    <div class="tab" data-stage="final">5. Final (YOLO)</div>
+    <div class="tab" data-stage="finalize">5. Finalize</div>
+    <div class="tab" data-stage="final">6. Final (YOLO)</div>
     <div class="tab" data-stage="meta">Meta</div>
     <span id="current-image-label" title=""></span>
   </div>
@@ -534,6 +535,42 @@ function renderRefine() {
   return { svg, detail: header + cards };
 }
 
+function renderFinalize() {
+  const fz = S.data.finalize;
+  if (!fz) return { svg: '', detail: '<div class="detail-header">No finalize.json checkpoint.</div>' };
+  const annotations = fz.final_annotations || [];
+  const dropped = fz.dropped || [];
+  const reviewItems = fz.review_items || [];
+  const stats = fz.filter_stats || {};
+  const { map: id2name } = classIdToName();
+
+  let svg = '';
+  for (let i = 0; i < annotations.length; i++) {
+    const a = annotations[i];
+    const name = a.class_name || id2name[a.class_id] || `class_${a.class_id}`;
+    const color = FALLBACK[(a.class_id ?? i) % FALLBACK.length];
+    svg += svgRect(a.bbox, color, `#${i} ${name}${a.was_refined ? ' (refined)' : ''}`);
+  }
+  for (const d of dropped) {
+    if (d.bbox) svg += svgRect(d.bbox, '#888', `dropped: ${d.reason}`, true);
+  }
+
+  const statsRow = Object.entries(stats)
+    .map(([k, v]) => `<span class="value">${escHTML(k)}=${v}</span>`).join(' | ');
+  const header = `<div class="detail-header">
+    <b>${annotations.length}</b> final | <b>${dropped.length}</b> dropped | <b>${reviewItems.length}</b> review
+    <br>${statsRow}
+    <br>timing: ${(fz.stage_timing_ms||0).toFixed(1)} ms
+  </div>`;
+  const dropCards = dropped.map(d => `<div class="detail-card reject">
+    <div class="field"><span class="label">id:</span> <span class="value">${escHTML(d.candidate_id)}</span> | <span class="label">class:</span> <span class="value">${escHTML(d.class_name)}</span> | <span class="label">reason:</span> <span class="value">${escHTML(d.reason)}</span></div>
+  </div>`).join('');
+  const reviewCards = reviewItems.map(r => `<div class="detail-card">
+    <div class="field"><span class="label">review:</span> <span class="value">${escHTML(r.candidate_id||'')}</span> | <span class="label">class:</span> <span class="value">${escHTML(r.class_name||'')}</span> | <span class="label">reason:</span> <span class="value">${escHTML(r.reason||'')}</span></div>
+  </div>`).join('');
+  return { svg, detail: header + dropCards + reviewCards };
+}
+
 function renderFinal() {
   const labels = (S.data.labels || '').trim();
   const trace = S.data.trace || {};
@@ -633,6 +670,7 @@ function renderStage() {
     case 'detect':    r = renderDetect();    break;
     case 'evaluate':  r = renderEvaluate();  break;
     case 'refine':    r = renderRefine();    break;
+    case 'finalize':  r = renderFinalize();  break;
     case 'final':     r = renderFinal();     break;
     case 'meta':      r = renderMeta();      break;
   }

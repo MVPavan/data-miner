@@ -25,7 +25,7 @@ logger = logging.getLogger("data_miner.auto_annotation_v3.checkpoint")
 T = TypeVar("T", bound=BaseModel)
 
 # Canonical pipeline stage order — used for downstream invalidation.
-STAGE_ORDER: list[str] = ["detect", "evaluate", "refine"]
+STAGE_ORDER: list[str] = ["detect", "evaluate", "refine", "finalize"]
 
 
 # ---------------------------------------------------------------------------
