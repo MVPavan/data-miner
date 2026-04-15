@@ -160,6 +160,11 @@ def build_command(name: str, cfg: dict[str, Any]) -> list[str]:
         "--max-batch-size", str(cfg.get("max_batch_size", 8)),
         "--batch-timeout", str(cfg.get("batch_timeout", 0.05)),
     ]
+    # Forward DetectorConfig.options as extra --key value CLI args. Keys map
+    # to dashed flags (e.g. detection_only → --detection-only). Only flat
+    # scalars (bool/int/float/str) are passed.
+    for k, v in (cfg.get("options") or {}).items():
+        cmd.extend([f"--{k.replace('_', '-')}", str(v)])
     return cmd
 
 

@@ -38,6 +38,11 @@ class DetectorConfig(BaseModel):
     batch_timeout_ms: int = 50
     model_id: str
     script: str   # e.g. "serve_gdino.py" — relative to servers/ dir
+    options: dict[str, Any] = Field(default_factory=dict)
+    """Model-specific extras forwarded to the server as ``--key value`` CLI
+    args by ``launch_all.py``. Keep the keys flat and value types simple
+    (bool/int/float/str). Example: ``{"detection_only": true}`` for sam3_dart.
+    """
 
 
 class VLMConfig(BaseModel):

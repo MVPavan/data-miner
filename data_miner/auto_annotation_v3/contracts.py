@@ -19,7 +19,14 @@ class DetectorName(StrEnum):
     GROUNDING_DINO = "grounding_dino"
     FALCON         = "falcon"
     SAM3           = "sam3"
+    SAM3_DART      = "sam3_dart"
     OWLVIT2        = "owlvit2"
+
+    @property
+    def is_sam3_family(self) -> bool:
+        """Both SAM3 variants serve the same wire contract (proposal + refine).
+        Used by refine.py / detect.py to find whichever is currently enabled."""
+        return self in (DetectorName.SAM3, DetectorName.SAM3_DART)
 
 
 class BboxQuality(str, Enum):

@@ -26,13 +26,25 @@ servers:
       script: "serve_falcon.py"
 
     sam3:
-      enabled: true
+      enabled: false          # superseded by sam3_dart; flip to true to rollback
       port: 3003
       gpu: "cuda:1"
       max_batch_size: 8
       batch_timeout_ms: 50
       model_id: "facebook/sam3"
       script: "serve_sam3.py"
+
+    sam3_dart:
+      enabled: true
+      port: 3013
+      gpu: "cuda:1"           # same slot sam3 used to occupy
+      max_batch_size: 8       # LitServe needs ≥2 to enter batched mode (predict gets list)
+      batch_timeout_ms: 50
+      model_id: "facebook/sam3"
+      script: "serve_sam3_dart.py"
+      options:
+        detection_only: true  # M4; flip to false for M3 (masks preserved)
+        presence_threshold: 0.05
 
     owlvit2:
       enabled: false          # parked — kept discoverable but off
@@ -105,6 +117,7 @@ auto_accept:
   per_model_score:            # detector scores are NOT comparable — use per-model floors
     grounding_dino: 0.35
     sam3:           0.60
+    sam3_dart:      0.60      # DART uses the same SAM3 weights; same score floor
     falcon:         0.0       # Falcon has no calibrated score; rely on agreement
   tiers: [1]
 
@@ -245,7 +258,7 @@ filtering:
   iou_dedup:
     threshold: 0.7
     tiebreak_by: [agreement, model_priority, score]
-    model_priority: [sam3, falcon, grounding_dino]
+    model_priority: [sam3_dart, sam3, falcon, grounding_dino]
   max_per_class: 30
 
 # ---------------------------------------------------------------------------

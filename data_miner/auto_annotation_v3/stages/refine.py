@@ -101,6 +101,23 @@ class RefineWorker(StageWorker):
     # Core process
     # ------------------------------------------------------------------
 
+    def _sam_port(self) -> int:
+        """Port of whichever SAM3-family server is enabled.
+
+        Prefers ``sam3_dart`` when both are enabled (it's strictly a drop-in
+        replacement with the same wire). Raises if none are enabled — the
+        refine stage has no fallback without SAM.
+        """
+        detectors = self.config.servers.detectors
+        for name in (DetectorName.SAM3_DART, DetectorName.SAM3):
+            cfg = detectors.get(name)
+            if cfg is not None and cfg.enabled:
+                return cfg.port
+        raise RuntimeError(
+            "Refine stage requires an enabled SAM3 server "
+            "(sam3 or sam3_dart) in servers.detectors."
+        )
+
     async def process(self, msg: StageMessage) -> StageMessage | None:
         t0 = time.monotonic()
 
@@ -125,7 +142,7 @@ class RefineWorker(StageWorker):
             )
 
         image_w, image_h = detect.image_size[0], detect.image_size[1]
-        sam_port = self.config.servers.detectors[DetectorName.SAM3].port
+        sam_port = self._sam_port()
         refine_classes = self.config.refine_rules.classes
 
         # Build candidate lookup + identify those eligible for refine.
