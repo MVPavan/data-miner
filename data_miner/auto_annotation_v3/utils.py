@@ -492,6 +492,36 @@ def get_image_size(image_path: str) -> tuple[int, int]:
         return img.size  # PIL reads header only when .size is accessed before load()
 
 
+def draw_focus_on_image(
+    image: Image.Image,
+    candidate: Any,
+    color: tuple[int, int, int] = (255, 0, 0),
+    label: str = "TARGET",
+) -> Image.Image:
+    """Draw ONLY this candidate's bbox on a copy of *image* — for per-candidate
+    VLM overview input. Keeps the rest of the scene visible (spatial context)
+    without any other bboxes that could confuse which one is being asked about.
+    """
+    rendered = image.copy().convert("RGB")
+    draw = ImageDraw.Draw(rendered)
+    w, h = rendered.size
+
+    try:
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18
+        )
+    except (OSError, IOError):
+        font = ImageFont.load_default()
+
+    px = bbox_to_pixels(candidate.bbox, w, h)
+    draw.rectangle(px, outline=color, width=4)
+    draw.text(
+        (px[0], max(0, px[1] - 20)),
+        label, fill=color, font=font,
+    )
+    return rendered
+
+
 def draw_candidates_on_image(
     image: Image.Image,
     candidates: list,

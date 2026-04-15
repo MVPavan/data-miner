@@ -22,10 +22,9 @@ from ..contracts import (
 )
 from ..prompt_manager import load_prompt
 from ..utils import (
-    bbox_to_pixels,
     build_class_alias_map,
     crop_candidate,
-    draw_candidates_on_image,
+    draw_focus_on_image,
     parse_vlm_json,
     pil_to_data_url,
     resolve_canonical_class,
@@ -92,39 +91,45 @@ class EvaluateWorker(StageWorker):
         prompts_used: list[PromptRef] = []
         all_verdicts: list[VLMVerdict] = []
 
-        # 4. Group candidates by evaluation group, then classify in parallel.
-        groups = self._group_by_eval_group(to_eval)
+        # 4. Per-candidate concurrent VLM classification.
+        # Group lookup is still used to inject the group's class context (class
+        # list, descriptions, annotation rules) into each per-candidate prompt —
+        # but the request itself carries only that one candidate's crop.
+        class_to_group = self._build_class_to_group()
 
         vlm_cfg = self.config.servers.vlm
         timeout = aiohttp.ClientTimeout(total=vlm_cfg.timeout)
+        sem = asyncio.Semaphore(max(1, self.config.evaluate.concurrency))
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
-
-            # ---- VLM Call 1: Classification + Quality (one call per group) ----
-            group_tasks = [
-                self._classify_group(session, msg, detect, image, group_name, candidates)
-                for group_name, candidates in groups.items()
-                if candidates
+            tasks = [
+                self._classify_one(session, sem, image, cand, class_to_group)
+                for cand in to_eval
             ]
-            group_results = await asyncio.gather(*group_tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for result in group_results:
+            seen_prompts: set[tuple[str, str]] = set()
+            for cand, result in zip(to_eval, results):
                 if isinstance(result, Exception):
-                    self.logger.error(
-                        "Group classification failed: %s", result, exc_info=result
+                    self.logger.warning(
+                        "Per-candidate classify failed for %s: %s",
+                        cand.candidate_id, result,
                     )
+                    continue
+                if result is None:
                     continue
                 vlm_calls += 1
                 vlm_total_tokens += result["tokens"]
-                prompts_used.append(
-                    PromptRef(
+                key = (result["group"], result["prompt_hash"])
+                if key not in seen_prompts:
+                    seen_prompts.add(key)
+                    prompts_used.append(PromptRef(
                         group=result["group"],
                         prompt_id=result["prompt_id"],
                         version=result["prompt_version"],
                         hash=result["prompt_hash"],
-                    )
-                )
-                all_verdicts.extend(result["verdicts"])
+                    ))
+                all_verdicts.append(result["verdict"])
 
             # ---- Resolve verdicts to three-way routing (accept / review / reject) ----
             accepted, review, rejected, relabels = self._resolve_verdicts(
@@ -186,40 +191,48 @@ class EvaluateWorker(StageWorker):
     # Grouping helpers
     # ------------------------------------------------------------------
 
-    def _group_by_eval_group(
-        self, candidates: list[Candidate]
-    ) -> dict[str, list[Candidate]]:
-        """Map candidates to their configured evaluation group."""
-        class_to_group: dict[str, str] = {}
+    def _build_class_to_group(self) -> dict[str, str]:
+        """class_name → evaluation_group_name (used to inject per-group context
+        into each per-candidate VLM prompt)."""
+        out: dict[str, str] = {}
         for group_name, group_cfg in self.config.active_evaluation_groups.items():
             for cls_name in group_cfg.classes:
-                class_to_group[cls_name] = group_name
-
-        groups: dict[str, list[Candidate]] = {}
-        for cand in candidates:
-            group = class_to_group.get(cand.class_name, "default")
-            groups.setdefault(group, []).append(cand)
-
-        return groups
+                out[cls_name] = group_name
+        return out
 
     # ------------------------------------------------------------------
-    # VLM Call 1: Classification + Quality
+    # Per-candidate VLM call (replaces the old grouped multi-image call —
+    # one HTTP request per candidate, fired concurrently and bounded by an
+    # asyncio.Semaphore. vLLM's continuous batcher merges the in-flight
+    # requests into one forward pass, so wall-clock cost is similar while
+    # each prompt stays small enough to fit max_model_len.)
     # ------------------------------------------------------------------
 
-    async def _classify_group(
+    async def _classify_one(
         self,
         session: aiohttp.ClientSession,
-        msg: StageMessage,
-        detect: DetectResult,
+        sem: asyncio.Semaphore,
         image: Image.Image,
-        group_name: str,
-        candidates: list[Candidate],
-    ) -> dict:
-        """One VLM call for a group of candidates: returns classification verdicts."""
-        template = load_prompt(f"classify_{group_name}")
-        group_cfg = self.config.active_evaluation_groups.get(group_name)
+        cand: Candidate,
+        class_to_group: dict[str, str],
+    ) -> dict | None:
+        """One VLM call for one candidate. Returns dict or None on failure.
 
-        class_list = ", ".join(group_cfg.classes) if group_cfg else ""
+        Always sends a bbox-highlighted overview. Sends an additional close-up
+        crop when the candidate's evaluation group has ``requires_crops: true``.
+        Picks the matching prompt template (`classify_one` vs
+        `classify_one_with_crop`).
+        """
+        group_name = class_to_group.get(cand.class_name, "default")
+        group_cfg = self.config.active_evaluation_groups.get(group_name)
+        with_crop = bool(group_cfg and group_cfg.requires_crops)
+
+        template = load_prompt(
+            "classify_one_with_crop" if with_crop else "classify_one"
+        )
+
+        # Per-group class context substituted into the shared template.
+        class_list = ", ".join(group_cfg.classes) if group_cfg else cand.class_name
         class_descriptions = (group_cfg.description or "") if group_cfg else ""
         annotation_rules = self._format_rules(group_cfg) if group_cfg else ""
 
@@ -229,33 +242,26 @@ class EvaluateWorker(StageWorker):
             annotation_rules=annotation_rules,
         )
 
-        # Build image content list: annotated overview + optional per-candidate crops.
-        images_content: list[dict] = []
-
-        annotated = draw_candidates_on_image(image.copy(), candidates)
-        images_content.append(
-            {"type": "image_url", "image_url": {"url": pil_to_data_url(annotated)}}
-        )
-
-        if group_cfg and group_cfg.requires_crops:
-            for cand in candidates:
-                crop = crop_candidate(image, cand.bbox)
-                images_content.append(
-                    {"type": "image_url", "image_url": {"url": pil_to_data_url(crop)}}
-                )
+        # Overview: full image with ONLY this candidate's bbox highlighted.
+        overview = draw_focus_on_image(image, cand)
+        content = [
+            {"type": "image_url",
+             "image_url": {"url": pil_to_data_url(overview)}},
+        ]
+        if with_crop:
+            crop = crop_candidate(image, cand.bbox)
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": pil_to_data_url(crop)},
+            })
+        content.append({
+            "type": "text",
+            "text": f"Classify the TARGET (proposed class: {cand.class_name}).",
+        })
 
         messages = [
             {"role": "system", "content": rendered},
-            {
-                "role": "user",
-                "content": images_content
-                + [
-                    {
-                        "type": "text",
-                        "text": f"Evaluate these {len(candidates)} candidates.",
-                    }
-                ],
-            },
+            {"role": "user", "content": content},
         ]
 
         vlm_cfg = self.config.servers.vlm
@@ -263,87 +269,50 @@ class EvaluateWorker(StageWorker):
             "model": vlm_cfg.model,
             "messages": messages,
             "temperature": template.model_params.get("temperature", vlm_cfg.temperature),
-            "max_tokens": template.model_params.get("max_tokens", vlm_cfg.max_tokens),
+            "max_tokens": template.model_params.get("max_tokens", 384),
         }
-
         vlm_url = f"{vlm_cfg.url}/chat/completions"
-        async with session.post(
-            vlm_url,
-            json=payload,
-            headers={"Authorization": f"Bearer {vlm_cfg.api_key}"},
-        ) as resp:
-            resp.raise_for_status()
-            vlm_response = await resp.json()
 
-        response_text = vlm_response["choices"][0]["message"]["content"]
-        verdicts_raw = parse_vlm_json(response_text)
+        async with sem:
+            try:
+                async with session.post(
+                    vlm_url, json=payload,
+                    headers={"Authorization": f"Bearer {vlm_cfg.api_key}"},
+                ) as resp:
+                    resp.raise_for_status()
+                    vlm_response = await resp.json()
+            except Exception as exc:
+                self.logger.warning(
+                    "VLM classify_one failed for %s: %s", cand.candidate_id, exc,
+                )
+                return None
 
-        verdicts: list[VLMVerdict] = []
-        if isinstance(verdicts_raw, list):
-            for v in verdicts_raw:
-                try:
-                    verdicts.append(
-                        VLMVerdict(
-                            candidate_id=str(v.get("candidate_id", "")),
-                            correct_class=str(v.get("correct_class", "")),
-                            confidence=float(v.get("confidence", 0.0)),
-                            bbox_quality=BboxQuality(
-                                v.get("bbox_quality", BboxQuality.GOOD)
-                            ),
-                            object_complete=bool(v.get("object_complete", True)),
-                            reasoning=str(v.get("reasoning", "")),
-                        )
-                    )
-                except Exception as exc:
-                    self.logger.warning(
-                        "Skipping malformed verdict entry for group '%s': %s — %s",
-                        group_name,
-                        v,
-                        exc,
-                    )
-
-        verdicts = self._map_verdict_ids(verdicts, candidates)
-
-        tokens: int = vlm_response.get("usage", {}).get("total_tokens", 0)
+        try:
+            data = parse_vlm_json(vlm_response["choices"][0]["message"]["content"])
+            if isinstance(data, list):
+                data = data[0] if data else {}
+            verdict = VLMVerdict(
+                candidate_id=cand.candidate_id,
+                correct_class=str(data.get("correct_class", cand.class_name)),
+                confidence=float(data.get("confidence", 0.0)),
+                bbox_quality=BboxQuality(data.get("bbox_quality", BboxQuality.GOOD)),
+                object_complete=bool(data.get("object_complete", True)),
+                reasoning=str(data.get("reasoning", "")),
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "Malformed verdict for %s: %s", cand.candidate_id, exc,
+            )
+            return None
 
         return {
             "group": group_name,
             "prompt_id": template.id,
             "prompt_version": template.version,
             "prompt_hash": prompt_hash,
-            "verdicts": verdicts,
-            "tokens": tokens,
+            "verdict": verdict,
+            "tokens": vlm_response.get("usage", {}).get("total_tokens", 0),
         }
-
-    def _map_verdict_ids(
-        self, verdicts: list[VLMVerdict], candidates: list[Candidate]
-    ) -> list[VLMVerdict]:
-        """Remap VLM-returned IDs (numeric or partial) to real candidate_ids."""
-        cand_id_set = {c.candidate_id for c in candidates}
-        mapped: list[VLMVerdict] = []
-        for v in verdicts:
-            if v.candidate_id in cand_id_set:
-                mapped.append(v)
-                continue
-            # Attempt numeric-index interpretation (VLM may return "0", "1", …).
-            try:
-                idx = int(v.candidate_id)
-                if 0 <= idx < len(candidates):
-                    # VLMVerdict has model_config extra="forbid", so mutate in place
-                    # by replacing the model instance.
-                    mapped.append(
-                        v.model_copy(
-                            update={"candidate_id": candidates[idx].candidate_id}
-                        )
-                    )
-                    continue
-            except (ValueError, TypeError):
-                pass
-            self.logger.warning(
-                "Could not map verdict candidate_id %r to any known candidate",
-                v.candidate_id,
-            )
-        return mapped
 
     # ------------------------------------------------------------------
     # Verdict resolution

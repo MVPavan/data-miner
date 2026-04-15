@@ -46,6 +46,21 @@
   .chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border); }
   .chk input { accent-color: var(--accent); }
   .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; display: inline-block; }
+  /* Dropdown filter (used when chips don't scale, e.g. many classes) */
+  .dd { position: relative; display: inline-block; }
+  .dd-trigger { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .dd-trigger:hover { border-color: var(--accent); }
+  .dd-trigger .dd-count { color: var(--muted); }
+  .dd-panel { position: absolute; top: 100%; left: 0; margin-top: 4px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; z-index: 100; min-width: 220px; max-height: 360px; overflow-y: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .dd-panel.hidden { display: none; }
+  .dd-search { width: 100%; padding: 4px 8px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 12px; outline: none; margin-bottom: 6px; }
+  .dd-actions { display: flex; gap: 6px; margin-bottom: 6px; }
+  .dd-actions button { flex: 1; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+  .dd-actions button:hover { background: var(--bg); border-color: var(--accent); }
+  .dd-list { display: flex; flex-direction: column; gap: 2px; }
+  .dd-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; cursor: pointer; border-radius: 3px; font-size: 12px; }
+  .dd-row:hover { background: var(--bg3); }
+  .dd-row input { accent-color: var(--accent); }
 
   /* Content */
   #content { flex: 1; display: flex; overflow: hidden; padding: 12px; gap: 12px; min-height: 0; }
@@ -130,10 +145,13 @@ const S = {
   imgW: 0, imgH: 0,
   // toolbar toggles (per-tab)
   toggles: {
-    proposalModels: {},   // model_name -> bool
     detectRouting: { auto_accepted: true, needs_evaluation: true, other: true },
-    evaluateVerdict: { accepted: true, refinement: true, rejected: true },
+    evaluateVerdict: { accepted: true, review: true, rejected: true },
     refineShow: { original: true, refined: true, rejected: true },
+    // Global cross-tab filters: only show overlays whose class/source_model
+    // is enabled here. Keys initialised on first data load.
+    classFilter: {},      // class_name -> bool (true = visible)
+    modelFilter: {},      // source_model -> bool (true = visible)
   },
 };
 
@@ -155,9 +173,9 @@ const ROUTING_COLORS = {
   other:            '#888888',
 };
 const VERDICT_COLORS = {
-  accepted:   '#00C800',
-  refinement: '#FFA500',
-  rejected:   '#FF0000',
+  accepted: '#00C800',
+  review:   '#FFA500',
+  rejected: '#FF0000',
 };
 const REFINE_COLORS = {
   original: '#888888',
@@ -248,12 +266,6 @@ async function selectImage(stem) {
     renderSidebar();
   }
 
-  // Initialise per-model toggles for this image (preserve user choices for known models).
-  const props = S.data.proposals || {};
-  for (const m of Object.keys(props)) {
-    if (S.toggles.proposalModels[m] === undefined) S.toggles.proposalModels[m] = true;
-  }
-
   if (S.data.image_url) {
     $img.src = S.data.image_url;
     $img.style.display = 'block';
@@ -298,17 +310,11 @@ function renderToolbar() {
   $toolbar.innerHTML = '';
   if (!S.data) return;
 
+  _initGlobalFilters();
   const stage = S.currentStage;
   if (stage === 'proposals') {
-    const props = S.data.proposals || {};
-    const models = Object.keys(props).sort();
-    if (!models.length) { $toolbar.innerHTML = '<span style="color:#888">No per-model proposals saved.</span>'; return; }
-    addToolbarGroup('Models', models.map((m, i) => ({
-      label: `${m} (${(props[m].candidates || []).length})`,
-      color: colorFor(MODEL_COLORS, m, i),
-      checked: !!S.toggles.proposalModels[m],
-      onChange: v => { S.toggles.proposalModels[m] = v; renderStage(); },
-    })));
+    // The per-tab Models toggle was removed — it duplicated the global Model
+    // filter rendered below. Per-model overlay control is unified there.
   } else if (stage === 'detect') {
     addToolbarGroup('Routing', [
       { label: 'auto_accepted', color: ROUTING_COLORS.auto_accepted, checked: S.toggles.detectRouting.auto_accepted, onChange: v => { S.toggles.detectRouting.auto_accepted = v; renderStage(); } },
@@ -318,7 +324,7 @@ function renderToolbar() {
   } else if (stage === 'evaluate') {
     addToolbarGroup('Verdicts', [
       { label: 'accepted', color: VERDICT_COLORS.accepted, checked: S.toggles.evaluateVerdict.accepted, onChange: v => { S.toggles.evaluateVerdict.accepted = v; renderStage(); } },
-      { label: 'refinement', color: VERDICT_COLORS.refinement, checked: S.toggles.evaluateVerdict.refinement, onChange: v => { S.toggles.evaluateVerdict.refinement = v; renderStage(); } },
+      { label: 'review',   color: VERDICT_COLORS.review,   checked: S.toggles.evaluateVerdict.review,   onChange: v => { S.toggles.evaluateVerdict.review   = v; renderStage(); } },
       { label: 'rejected', color: VERDICT_COLORS.rejected, checked: S.toggles.evaluateVerdict.rejected, onChange: v => { S.toggles.evaluateVerdict.rejected = v; renderStage(); } },
     ]);
   } else if (stage === 'refine') {
@@ -328,7 +334,113 @@ function renderToolbar() {
       { label: 'rejected', color: REFINE_COLORS.rejected, checked: S.toggles.refineShow.rejected, onChange: v => { S.toggles.refineShow.rejected = v; renderStage(); } },
     ]);
   }
+
+  // ----- Global filters: classes + source_models (apply on every tab) -----
+  const { classes, models } = _collectClassesAndModels();
+  if (classes.length) {
+    addToolbarDropdown('Class', classes,
+      i => FALLBACK[i % FALLBACK.length],
+      S.toggles.classFilter);
+  }
+  if (models.length) {
+    addToolbarDropdown('Model', models,
+      i => colorFor(MODEL_COLORS, models[i], i),
+      S.toggles.modelFilter);
+  }
 }
+
+/**
+ * Compact dropdown filter — scales to many keys (10s–100s).
+ * Trigger button shows "Label: n/N ▾"; click opens a popover with a search
+ * box, select-all/clear actions, and a checkbox list.
+ */
+function addToolbarDropdown(label, keys, colorFn, store) {
+  const grp = document.createElement('div');
+  grp.className = 'toolbar-group';
+
+  // ensure all keys default to true
+  for (const k of keys) if (!(k in store)) store[k] = true;
+
+  const dd = document.createElement('div');
+  dd.className = 'dd';
+
+  const trigger = document.createElement('button');
+  trigger.className = 'dd-trigger';
+  const updateTrigger = () => {
+    const on = keys.filter(k => store[k] !== false).length;
+    trigger.innerHTML = `${escHTML(label)}: <span class="dd-count">${on}/${keys.length}</span> ▾`;
+  };
+  updateTrigger();
+
+  const panel = document.createElement('div');
+  panel.className = 'dd-panel hidden';
+
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.placeholder = `Search ${label.toLowerCase()}…`;
+  search.className = 'dd-search';
+
+  const actions = document.createElement('div');
+  actions.className = 'dd-actions';
+  actions.innerHTML = `<button data-act="all">Select all</button><button data-act="none">Clear</button>`;
+
+  const list = document.createElement('div');
+  list.className = 'dd-list';
+
+  const renderRows = () => {
+    const q = search.value.toLowerCase();
+    list.innerHTML = '';
+    keys.forEach((k, i) => {
+      if (q && !k.toLowerCase().includes(q)) return;
+      const row = document.createElement('label');
+      row.className = 'dd-row';
+      row.innerHTML = `<input type="checkbox" ${store[k] !== false ? 'checked' : ''}>` +
+        `<span class="swatch" style="background:${colorFn(i)}"></span>` +
+        `<span>${escHTML(k)}</span>`;
+      row.querySelector('input').addEventListener('change', e => {
+        store[k] = e.target.checked;
+        updateTrigger();
+        renderStage();
+      });
+      list.appendChild(row);
+    });
+  };
+  renderRows();
+
+  search.addEventListener('input', renderRows);
+  actions.addEventListener('click', e => {
+    const act = e.target.dataset.act;
+    if (!act) return;
+    const setTo = act === 'all';
+    for (const k of keys) store[k] = setTo;
+    updateTrigger();
+    renderRows();
+    renderStage();
+  });
+
+  trigger.addEventListener('click', e => {
+    e.stopPropagation();
+    // close other open panels
+    document.querySelectorAll('.dd-panel').forEach(p => {
+      if (p !== panel) p.classList.add('hidden');
+    });
+    panel.classList.toggle('hidden');
+  });
+
+  panel.appendChild(search);
+  panel.appendChild(actions);
+  panel.appendChild(list);
+  dd.appendChild(trigger);
+  dd.appendChild(panel);
+  grp.innerHTML = `<span class="group-label">${escHTML(label)}:</span>`;
+  grp.appendChild(dd);
+  $toolbar.appendChild(grp);
+}
+
+// Close any open dropdown when clicking outside.
+document.addEventListener('click', () => {
+  document.querySelectorAll('.dd-panel').forEach(p => p.classList.add('hidden'));
+});
 
 function addToolbarGroup(label, items) {
   const grp = document.createElement('div');
@@ -359,6 +471,69 @@ function svgRect(b, color, label, dashed) {
 function bboxPx(b) {
   if (!b) return [0,0,0,0];
   return [b.x1 * S.imgW, b.y1 * S.imgH, b.x2 * S.imgW, b.y2 * S.imgH];
+}
+
+// ---------------------------------------------------------------------------
+// Global cross-tab filters (class + source_model)
+// ---------------------------------------------------------------------------
+function _collectClassesAndModels() {
+  // Walk the loaded data and return {classes:[...], models:[...]} unique sorted.
+  const classes = new Set(), models = new Set();
+  if (!S.data) return { classes: [], models: [] };
+
+  // Per-model proposals.
+  for (const [m, p] of Object.entries(S.data.proposals || {})) {
+    models.add(m);
+    for (const c of (p.candidates || [])) classes.add(c.class_name);
+  }
+  // Detect candidates.
+  for (const c of ((S.data.detect || {}).candidates || [])) {
+    if (c.class_name) classes.add(c.class_name);
+    if (c.source_model) models.add(c.source_model);
+  }
+  // Finalize annotations.
+  for (const a of ((S.data.finalize || {}).final_annotations || [])) {
+    if (a.class_name) classes.add(a.class_name);
+    if (a.source_model) models.add(a.source_model);
+  }
+  // Final tab trace annotations.
+  const tann = ((S.data.trace || {}).annotations) || [];
+  for (const a of tann) {
+    if (a.class_name) classes.add(a.class_name);
+    if (a.source_model) models.add(a.source_model);
+  }
+  return { classes: [...classes].sort(), models: [...models].sort() };
+}
+
+function _initGlobalFilters() {
+  // Add any newly-seen class/model with default=true; keep existing toggles.
+  const { classes, models } = _collectClassesAndModels();
+  for (const c of classes) {
+    if (!(c in S.toggles.classFilter)) S.toggles.classFilter[c] = true;
+  }
+  for (const m of models) {
+    if (!(m in S.toggles.modelFilter)) S.toggles.modelFilter[m] = true;
+  }
+}
+
+function _candById() {
+  const m = {};
+  for (const c of ((S.data.detect || {}).candidates || [])) {
+    m[c.candidate_id] = c;
+  }
+  return m;
+}
+
+// True iff this candidate's class and source_model both pass the filter.
+// `source_model` may be omitted for items that don't track it (e.g. finalize
+// dropped entries) — model filter is only applied when the field is present.
+function passesFilter(item) {
+  if (!item) return false;
+  const cls = item.class_name;
+  const mdl = item.source_model;
+  if (cls && S.toggles.classFilter[cls] === false) return false;
+  if (mdl && S.toggles.modelFilter[mdl] === false) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,9 +568,10 @@ function renderProposals() {
     const color = colorFor(MODEL_COLORS, m, i);
     const cands = (props[m].candidates) || [];
     total += cands.length;
-    if (!S.toggles.proposalModels[m]) continue;
-    shown += cands.length;
+    if (S.toggles.modelFilter[m] === false) continue;
     cands.forEach((c, j) => {
+      if (!passesFilter({ class_name: c.class_name, source_model: m })) return;
+      shown++;
       svg += svgRect(c.bbox, color, `${m} ${(c.label||c.class_name||'?')} ${(c.score||0).toFixed(2)}`);
     });
     detailParts.push(`<div class="detail-card">
@@ -426,6 +602,7 @@ function renderDetect() {
   for (const c of cands) {
     const b = bucketOf(c);
     if (!S.toggles.detectRouting[b]) continue;
+    if (!passesFilter(c)) continue;
     shown++;
     svg += svgRect(c.bbox, ROUTING_COLORS[b], `${c.class_name} (${c.source_model}) ${(c.score||0).toFixed(2)} agr=${c.agreement||0}`);
   }
@@ -457,13 +634,13 @@ function renderEvaluate() {
 
   const accepted = new Set(ev.accepted || []);
   const rejected = new Set(ev.rejected || []);
-  const refineSet = new Set((ev.refinement_needed || []).map(r => r.candidate_id));
+  const reviewSet = new Set(ev.review || []);
   const verdicts = ev.verdicts || [];
   const verdictById = Object.fromEntries(verdicts.map(v => [v.candidate_id, v]));
 
   function bucketOf(cid) {
     if (accepted.has(cid)) return 'accepted';
-    if (refineSet.has(cid)) return 'refinement';
+    if (reviewSet.has(cid)) return 'review';
     if (rejected.has(cid)) return 'rejected';
     return null;
   }
@@ -475,22 +652,30 @@ function renderEvaluate() {
     if (!b || !S.toggles.evaluateVerdict[b]) continue;
     const c = candById[v.candidate_id];
     if (!c) continue;
+    if (!passesFilter(c)) continue;
     shown++;
     const relabel = (ev.relabels || {})[v.candidate_id];
     const label = `${v.correct_class || c.class_name}${relabel ? ` (was ${c.class_name})` : ''} ${(v.confidence||0).toFixed(2)} ${b}`;
     svg += svgRect(c.bbox, VERDICT_COLORS[b], label);
   }
 
+  // Surface VLM-call gaps: candidates that detect routed to evaluate but for
+  // which no verdict was returned (typically due to a failed/timeout group call).
+  const needsEvalIds = new Set(((det && det.routing && det.routing.needs_evaluation) || []));
+  const verdictIds = new Set(verdicts.map(v => v.candidate_id));
+  const missing = [...needsEvalIds].filter(id => !verdictIds.has(id)).length;
+  const unbucketed = verdicts.filter(v => bucketOf(v.candidate_id) === null).length;
   const header = `<div class="detail-header">
     <b>${verdicts.length}</b> VLM verdicts |
-    <b>${accepted.size}</b> accepted |
-    <b>${refineSet.size}</b> need refine |
-    <b>${rejected.size}</b> rejected
+    <b>${accepted.size}</b> accept |
+    <b>${reviewSet.size}</b> review |
+    <b>${rejected.size}</b> reject${unbucketed ? ` | <span style="color:#FFA500">${unbucketed} unbucketed</span>` : ''}
+    ${missing ? `<br><span style="color:#FF6347"><b>⚠ ${missing} candidates routed to evaluate had no verdict</b> — likely VLM call failed (see worker logs)</span>` : ''}
     <br>VLM calls: ${ev.vlm_calls||0} | tokens: ${ev.vlm_total_tokens||0} | timing: ${(ev.stage_timing_ms||0).toFixed(1)} ms
   </div>`;
   const cards = verdicts.map(v => {
     const b = bucketOf(v.candidate_id);
-    const cls = b === 'accepted' ? 'accept' : (b === 'rejected' ? 'reject' : (b === 'refinement' ? 'refine' : ''));
+    const cls = b === 'accepted' ? 'accept' : (b === 'rejected' ? 'reject' : (b === 'review' ? 'refine' : ''));
     return `<div class="detail-card ${cls}">
       <div class="field"><span class="label">id:</span> <span class="value">${escHTML(v.candidate_id)}</span></div>
       <div class="field"><span class="label">Verdict:</span> <span class="value" style="color:${VERDICT_COLORS[b]||'#888'}">${b||'unknown'}</span> | <span class="label">Class:</span> <span class="value">${escHTML(v.correct_class||'?')}</span></div>
@@ -506,8 +691,11 @@ function renderRefine() {
   if (!rf) return { svg: '', detail: '<div class="detail-header">No refine.json checkpoint.</div>' };
   const results = rf.results || [];
 
+  const candById = _candById();
   let svg = '';
   for (const r of results) {
+    const src = candById[r.candidate_id];
+    if (!passesFilter(src)) continue;
     if (r.accepted) {
       if (S.toggles.refineShow.original && r.original_bbox) {
         svg += svgRect(r.original_bbox, REFINE_COLORS.original, `orig ${escHTML(r.candidate_id)}`, true);
@@ -547,11 +735,13 @@ function renderFinalize() {
   let svg = '';
   for (let i = 0; i < annotations.length; i++) {
     const a = annotations[i];
+    if (!passesFilter(a)) continue;
     const name = a.class_name || id2name[a.class_id] || `class_${a.class_id}`;
     const color = FALLBACK[(a.class_id ?? i) % FALLBACK.length];
     svg += svgRect(a.bbox, color, `#${i} ${name}${a.was_refined ? ' (refined)' : ''}`);
   }
   for (const d of dropped) {
+    if (!passesFilter(d)) continue;  // class_name only — model not tracked
     if (d.bbox) svg += svgRect(d.bbox, '#888', `dropped: ${d.reason}`, true);
   }
 
@@ -584,6 +774,7 @@ function renderFinal() {
     const cards = traceAnns.map((a, i) => {
       const name = a.class_name || id2name[a.class_id] || `class_${a.class_id}`;
       const color = FALLBACK[(a.class_id ?? i) % FALLBACK.length];
+      if (!passesFilter({ class_name: name, source_model: a.source_model })) return '';
       svg += svgRect(a.bbox, color, `#${i} ${name} ${a.action||''} ${(a.confidence||0).toFixed(2)}`);
       const reasoning = (a.trace || []).map(t => `<li>${escHTML(t)}</li>`).join('');
       return `<div class="detail-card accept">
@@ -611,6 +802,7 @@ function renderFinal() {
     const [cid, cx, cy, w, h] = parts;
     const bbox = { x1: cx - w/2, y1: cy - h/2, x2: cx + w/2, y2: cy + h/2 };
     const name = id2name[cid] || `class_${cid}`;
+    if (!passesFilter({ class_name: name })) return;
     const color = FALLBACK[cid % FALLBACK.length];
     svg += svgRect(bbox, color, `#${i} ${name}`);
     cards.push(`<div class="detail-card accept">

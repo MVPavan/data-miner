@@ -53,7 +53,6 @@ class ServersConfig(BaseModel):
     grounding_dino: ServerConfig
     falcon: ServerConfig
     sam3: ServerConfig
-    owlvit2: ServerConfig
     vlm: VLMConfig = Field(default_factory=VLMConfig)
 
 
@@ -112,7 +111,11 @@ class EvaluationGroupConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     classes: list[str]
-    requires_crops: bool = True
+    requires_crops: bool = False
+    """When True, per-candidate evaluate sends a close-up crop in addition to
+    the bbox-highlighted overview. Default off — overview alone is enough for
+    most groups; turn on only where small detail matters (luggage, electronics).
+    """
     description: str | None = None
     annotation_rules: dict[str, str] = Field(default_factory=dict)
 
@@ -148,6 +151,11 @@ class EvaluateConfig(BaseModel):
 
     reject_below: float = 0.3
     accept_above: float = 0.5
+    concurrency: int = 8
+    """Max in-flight per-candidate VLM requests per worker. Bounds vLLM
+    scheduler load; vLLM does its own continuous batching across the
+    in-flight requests so each one runs as a small, isolated forward pass.
+    """
 
 
 class MergeRulesConfig(BaseModel):
@@ -229,7 +237,7 @@ class IouDedupConfig(BaseModel):
     the cluster members picks the survivor.
     """
     model_priority: list[str] = Field(
-        default_factory=lambda: ["sam3", "falcon", "grounding_dino", "owlvit2"]
+        default_factory=lambda: ["sam3", "falcon", "grounding_dino"]
     )
     """Model order from most-trusted (lowest index) to least. Earlier wins
     when ``model_priority`` is the active discriminator.

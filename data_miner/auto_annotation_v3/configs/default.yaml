@@ -27,13 +27,6 @@ servers:
     batch_timeout_ms: 50
     model_id: "facebook/sam3"
 
-  owlvit2:
-    port: 3004
-    gpu: "cuda:1"
-    max_batch_size: 8
-    batch_timeout_ms: 50
-    model_id: "google/owlv2-base-patch16-ensemble"
-
   vlm:
     url: "http://localhost:8955/v1"
     model: "Qwen/Qwen3.5-27B-FP8"
@@ -95,7 +88,6 @@ auto_accept:
   min_score: 0.0              # global fallback; per-model floors below
   per_model_score:            # detector scores are NOT comparable — use per-model floors
     grounding_dino: 0.35
-    owlvit2:        0.25
     sam3:           0.60
     falcon:         0.0       # Falcon has no calibrated score; rely on agreement
   tiers: [1]
@@ -115,7 +107,7 @@ evaluate:
 evaluation_groups:
   industrial:
     classes: [forklift, palletjack, trolley]
-    requires_crops: true
+    requires_crops: false       # large machines — overview alone is enough
     description: |
       FORKLIFT: Powered truck with vertical MAST, counterweight body, overhead guard.
       Always has visible mast even with forks lowered.
@@ -129,7 +121,7 @@ evaluation_groups:
 
   luggage:
     classes: [backpack, handbag, suitcase, wallet]
-    requires_crops: true
+    requires_crops: true        # small objects — close-up helps texture/shape
     description: |
       BACKPACK: On back, two shoulder straps. Typically larger.
       HANDBAG: In hand or single shoulder strap. Smaller.
@@ -148,7 +140,7 @@ evaluation_groups:
 
   electronics:
     classes: [laptop, cellphone, wallet]
-    requires_crops: true
+    requires_crops: true        # small flat objects — close-up disambiguates
     description: |
       LAPTOP: Open or closed portable computer on flat surface.
       CELLPHONE: Rectangular device in hand, on surface, or near ear.
@@ -237,7 +229,7 @@ filtering:
   iou_dedup:
     threshold: 0.7
     tiebreak_by: [agreement, model_priority, score]
-    model_priority: [sam3, falcon, grounding_dino, owlvit2]
+    model_priority: [sam3, falcon, grounding_dino]
   max_per_class: 30
 
 # ---------------------------------------------------------------------------

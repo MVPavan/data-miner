@@ -1,262 +1,207 @@
 # Auto Annotation V3
 
-3-stage annotation pipeline with LitServe model serving, Redis Streams orchestration, versioned prompt management, and JSON checkpoints.
+4-stage annotation pipeline: LitServe model servers, Redis Streams orchestration,
+versioned prompts, JSON checkpoints, class-driven SAM refinement.
 
 ## Architecture
 
 ```
-                        Model Serving Layer (LitServe)
+                    Model serving (LitServe)
   ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
   │ GDINO :3001  │ │ Falcon :3002 │ │  SAM3 :3003  │ │ OWLv2 :3004  │
-  │ GPU:0 bs=8   │ │ GPU:1 bs=4   │ │ GPU:2 bs=8   │ │ GPU:0 bs=8   │
-  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
-         │                │                │                 │
-  ┌──────┴────────────────┴────────────────┴─────────────────┴──────┐
-  │                   vLLM  (Qwen 3.5 27B)  :8955                  │
-  └─────────────────────────────────────────────────────────────────┘
-         │                │                │                 │
-  ┌─────────────────────────────────────────────────────────────────┐
-  │              Redis Streams (Message Broker)                     │
-  │  stream:detect ──▶ stream:evaluate ──▶ stream:refine ──▶ done  │
-  └─────────────────────────────────────────────────────────────────┘
-         │                │                │
-  ┌──────┴──────┐  ┌──────┴───────┐  ┌────┴──────┐
-  │Detect ×4-6  │  │Evaluate ×6-8 │  │Refine ×2  │
-  │HTTP clients │  │HTTP → vLLM   │  │HTTP → SAM │
-  └─────────────┘  └──────────────┘  └───────────┘
+  │ GPU:0 bs=8   │ │ GPU:0 bs=4   │ │ GPU:1 bs=8   │ │ GPU:1 bs=8   │
+  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘
+                    vLLM (Qwen 3.5 27B) :8955
+                    Redis Streams (broker)
+                            │
+   detect ──▶ evaluate ──▶ refine ──▶ finalize ──▶ done
+   (×4)        (×6)        (×2)        (×2)
 ```
 
-Workers are stateless CPU processes making HTTP calls. No models loaded in workers. GPU management is fully delegated to LitServe servers.
+Workers are stateless CPU processes; all GPU work lives in the LitServe servers.
 
-## Quick Start
+## Quick start
 
 ```bash
-# 1. Launch all model servers (requires GPUs)
-python -m data_miner.auto_annotation_v3.servers.launch_all
+# 1. Launch model servers (one-time per session — health-checks then blocks)
+python -m data_miner.auto_annotation_v3.servers.launch_all \
+    --log-dir /tmp/aav3_logs
 
-# 2. Start Redis (if not already running)
-redis-server &
+# 2. Redis + vLLM should already be running (check)
+python -c "import redis; print(redis.Redis().ping())"
+curl -s http://localhost:8955/v1/models | head -c 80
 
-# 3. Run pipeline
-python -m data_miner.auto_annotation_v3 --image-dir /data/images --config custom.yaml
+# 3. Run the pipeline
+python -m data_miner.auto_annotation_v3 \
+    runtime.image_dir=/path/to/images \
+    runtime.job_id=my_job \
+    'detect_classes=[forklift,palletjack,person]'
 
-# 4. Compare prompt versions
-python -m data_miner.auto_annotation_v3.compare --job-a output/job_1 --job-b output/job_2
+# 4. Browse results
+python -m data_miner.auto_annotation_v3.viewer \
+    --job-dir output/auto_annotation_v3/my_job --port 8998
 ```
 
-## Pipeline Stages
+CLI overrides use OmegaConf dotlist syntax (override any config key).
 
-### Stage 1: DETECT
+## How-to recipes
 
-Calls all 4 model servers in parallel via async HTTP, then:
-1. Stores raw per-model proposals (`proposals/{model}.json`)
-2. Geometric filtering (area, aspect ratio, edge distance)
-3. Per-class IoU dedup (score-ranked, source-aware)
-4. Cross-class routing (confusion pairs, co-existence rules)
-5. Agreement computation (how many models agree per candidate)
-6. Tier routing: Tier-1 + agreement >= 2 + score >= 0.3 -> auto-accept, else -> VLM evaluation
-
-### Stage 2: EVALUATE
-
-Two focused VLM calls per image (not one packed call):
-1. **Call 1 - Classification + Quality** (per evaluation group, parallel): class, confidence, bbox quality, completeness
-2. **Call 2 - Spatial Refinement** (per candidate needing it): pixel coordinate for SAM point prompt
-3. Verdict resolution: accepted / rejected / needs refinement / relabeled
-
-### Stage 3: REFINE
-
-SAM3-based bbox refinement using VLM-provided point coordinates:
-1. Call SAM3 `/predict` in refine mode (box + foreground point)
-2. IoU-based auto-accept/reject (no VLM validation loop)
-3. Write final YOLO labels, audit traces, and human review queue
-
-## Project Structure
-
-```
-auto_annotation_v3/
-├── __init__.py                 # Public API exports
-├── __main__.py                 # python -m entry point
-├── cli.py                      # CLI argument parsing
-├── pipeline.py                 # Pipeline orchestrator (launches workers)
-├── config.py                   # Pydantic config + YAML loading
-├── default.yaml                # Default configuration (23 classes, 6 eval groups)
-├── contracts.py                # Pydantic data models (Candidate, BoundingBox, etc.)
-├── utils.py                    # Bbox math, filtering, dedup, image ops, YOLO export
-├── checkpoint.py               # CheckpointManager (atomic writes, resume logic)
-├── output.py                   # OutputWriter (YOLO labels, traces, review queue)
-├── prompt_manager.py           # Versioned prompt templates with inheritance
-├── compare.py                  # A/B comparison across pipeline runs
-├── compare_litserve.py         # LitServe vs direct inference validation
-│
-├── servers/                    # LitServe model servers (one per model)
-│   ├── serve_gdino.py          # GroundingDINO  :3001
-│   ├── serve_falcon.py         # Falcon-Perception :3002
-│   ├── serve_sam3.py           # SAM3 (dual mode: proposal + refine) :3003
-│   ├── serve_owlvit2.py        # OWLv2 :3004
-│   ├── serve_config.yaml       # Server topology config
-│   └── launch_all.py           # Launch + health check + watchdog
-│
-├── workers/                    # Redis Streams worker infrastructure
-│   ├── messaging.py            # RedisMessageBroker (async Redis Streams)
-│   ├── base.py                 # StageWorker ABC (read/process/forward loop)
-│   ├── submitter.py            # JobSubmitter (submit images to detect stream)
-│   └── monitor.py              # PipelineMonitor (progress tracking)
-│
-├── stages/                     # Pipeline stage implementations
-│   ├── detect.py               # DetectWorker (4 models parallel, filter, route)
-│   ├── evaluate.py             # EvaluateWorker (VLM classify + spatial)
-│   └── refine.py               # RefineWorker (SAM refinement, final output)
-│
-└── prompts/                    # Versioned prompt templates
-    ├── active -> v1/           # Symlink to current version
-    └── v1/
-        ├── manifest.yaml
-        ├── classify_industrial.yaml
-        ├── classify_luggage.yaml
-        ├── classify_person_parts.yaml
-        ├── classify_electronics.yaml
-        ├── classify_vehicles.yaml
-        ├── classify_animals.yaml
-        └── refine_spatial.yaml
+### Run on one image
+```bash
+python -m data_miner.auto_annotation_v3 \
+    runtime.image_paths='[/path/img.jpg]' runtime.job_id=single
 ```
 
-## Output Structure
+### Restrict / extend classes
+```bash
+'detect_classes=[forklift,palletjack,person]'   # subset
+'detect_classes=[]'                              # all classes in registry
+```
+
+### Iterate on prompts (skips detect — proposals are cached)
+```bash
+cp -r prompts/v1 prompts/v2
+$EDITOR prompts/v2/classify_industrial.yaml
+ln -sfn v2 prompts/active
+python -m data_miner.auto_annotation_v3 runtime.image_dir=/path runtime.job_id=v2_run
+```
+
+### Compare two runs
+```bash
+python -m data_miner.auto_annotation_v3.compare \
+    --job-a output/auto_annotation_v3/v1_run \
+    --job-b output/auto_annotation_v3/v2_run
+```
+
+### Validate model servers (LitServe vs direct inference)
+```bash
+python -m data_miner.auto_annotation_v3.tests.compare_litserve \
+    --image-dir output/sample/fl_pj_sample
+```
+
+### Multi-class proposal sanity (joint vs per-class for each model)
+```bash
+python -m data_miner.auto_annotation_v3.tests.test_multiclass_proposal \
+    --classes person forklift palletjack --limit 3
+```
+
+### Batch-vs-sequential parity test (LitServe batching invariant)
+```bash
+python -m data_miner.auto_annotation_v3.tests.test_batch_accuracy
+```
+
+### Stop everything
+```bash
+pkill -TERM -f data_miner.auto_annotation_v3
+pkill -TERM -f auto_annotation_v3/servers/serve_
+```
+
+## Pipeline stages
+
+1. **DETECT** — per-class HTTP fan-out to all 4 servers (joint multi-class
+   prompts catastrophically degrade SAM3 + Falcon, see §10/§11 of
+   [docs/aav3_filtering_scores_discussion.md](docs/aav3_filtering_scores_discussion.md)).
+   Geometric filter → cluster-and-collapse dedup (with `agreement` attached) →
+   cross-class suppression → tier/score routing.
+2. **EVALUATE** — one VLM call per evaluation group; pure confidence-based
+   three-way verdict (`accept | review | reject`). Bbox-quality is recorded
+   for telemetry only — spatial decisions belong to refine.
+3. **REFINE** — class-driven (triggers iff class ∈ `refine_rules` and verdict
+   ≠ reject). Per-prompt loop: VLM(skip|propose) → SAM3 segment → SAM3
+   presence on load bbox → geometric merge sanity → next prompt. Final VLM
+   adjudication, then §10.4 verdict combination table.
+4. **FINALIZE** — sole owner of YOLO/trace/review writes. Rebuilds canonical
+   list (relabels + refined bboxes) and re-runs `geometric_filter +
+   cluster_and_collapse + cross_class + per_class_cap` to catch relabel
+   collisions and refine-induced overlaps.
+
+## Output structure
 
 ```
-output/{job_id}/
-├── config.yaml                     # Frozen config for this run
-├── checkpoints/{image_stem}/
-│   ├── proposals/                  # Per-model raw results
-│   │   ├── grounding_dino.json
-│   │   ├── falcon.json
-│   │   ├── sam3.json
-│   │   └── owlvit2.json
-│   ├── detect.json                 # Stage 1: filtered, deduped, routed
-│   ├── evaluate.json               # Stage 2: VLM verdicts + routing
-│   ├── refine.json                 # Stage 3: SAM refinement results
-│   └── meta.json                   # Timing, status, config_hash
-├── labels/{image_stem}.txt         # Final YOLO labels (accepted only)
-├── traces/{image_stem}.json        # Full audit trail
-├── review/{image_stem}.json        # Human review queue
-├── classes.txt                     # Class index -> name
-└── summary.json                    # Aggregate stats
+output/auto_annotation_v3/{job_id}/
+├── config.yaml                  # frozen Pydantic config
+├── classes.txt
+├── summary.json
+├── checkpoints/{image_id}/
+│   ├── proposals/{model}.json   # per-model raw output
+│   ├── detect.json
+│   ├── evaluate.json
+│   ├── refine.json
+│   ├── finalize.json            # canonical list + drop log
+│   └── meta.json
+├── labels/{image_id}.txt        # YOLO (written by finalize only)
+├── traces/{image_id}.json       # full audit trail
+└── review/{image_id}.json       # human-review queue
 ```
+
+## Viewer
+
+Tabs: Proposals → Detect → Evaluate → Refine → Finalize → Final → Meta.
+Per-tab toggles (routing buckets, verdicts, etc.) AND with two **global**
+filters always shown in the toolbar:
+
+- **Class** chips — show overlays only for selected classes
+- **Model** chips — show overlays only for selected `source_model`s
+
+Both have an `all on/off` button. Filters persist across tab switches.
 
 ## Configuration
 
-Default config in `default.yaml`. Override with custom YAML:
+Edit [configs/default.yaml](configs/default.yaml) or override at the CLI.
+Key blocks:
 
-```bash
-python -m data_miner.auto_annotation_v3 --image-dir /data/images --config my_config.yaml
-```
+| Block | Purpose | Notes |
+|---|---|---|
+| `servers` | model server ports/GPUs/batch sizes | Mirror in `servers/serve_config.yaml` for the launcher. |
+| `class_registry` | full class catalog (id, name, tier, prompt) | `detect_classes: []` runs everything. |
+| `auto_accept` | tier + agreement + `per_model_score` floor | Per-model floors because detector scores are NOT comparable. |
+| `evaluate` | `reject_below`, `accept_above` confidence thresholds | Three-way routing. |
+| `co_existence` | `globally_exempt` + `confusion_pairs` | Cross-class suppression rules. |
+| `refine_rules` | per-class `prompts` + `merge_rules` | Class-match trigger; no `strategy` enum. |
+| `filtering` | geom + `iou_dedup{threshold,tiebreak_by,model_priority}` | Tiebreak cascade: `[agreement, model_priority, score]`. |
+| `redis` | host/port + per-stage stream keys | Default streams are `stream:<stage>`. |
+| `workers` | `detect/evaluate/refine/finalize_count` | Tune per box. |
 
-### Key config sections
-
-- **servers**: LitServe server ports, GPUs, batch sizes
-- **classes**: 23 classes across 4 tiers (Tier 1 = auto-accept eligible)
-- **evaluation_groups**: 6 groups (industrial, luggage, person_parts, electronics, vehicles, animals)
-- **auto_accept**: min_model_agreement=2, min_score=0.3, tier_1_only
-- **filtering**: geometric filters, IoU dedup threshold, per-class cap
-- **refinement**: SAM refinement IoU thresholds per class
-- **redis**: connection settings, stream names
-- **workers**: detect=4, evaluate=6, refine=2
-
-## Versioned Prompts
-
-Prompts are YAML files with Python format-string templates. Each version directory inherits unchanged prompts from its parent:
-
-```bash
-# Iterate on a prompt
-cp -r prompts/v1 prompts/v2
-vim prompts/v2/classify_industrial.yaml
-vim prompts/v2/manifest.yaml   # set parent: v1
-ln -sfn v2 prompts/active
-
-# Re-run — only evaluate+refine re-runs (detect is prompt-independent)
-python -m data_miner.auto_annotation_v3 --image-dir /data/images
-
-# Compare
-python -m data_miner.auto_annotation_v3.compare --job-a output/job_v1 --job-b output/job_v2
-```
-
-## Resume Logic
-
-The pipeline resumes at the finest granularity possible:
+## Resume logic
 
 | What changed | Re-runs from |
 |---|---|
-| Nothing (re-run same job) | Skips everything (all checkpoints valid) |
-| Filter thresholds | detect (reuses per-model proposals) |
-| Prompt version | evaluate + refine (skips detect) |
-| Model server config | Everything (full re-run) |
-| Single model crashed mid-job | Only that model's proposals (other models cached) |
+| Re-run with same config | nothing — every stage's checkpoint is reused |
+| Filter / dedup thresholds | detect (per-model proposals are cached) |
+| Prompt version | evaluate + refine (detect skipped) |
+| Server config or model_id | full re-run |
 
-## Validating LitServe Servers
+`config_hash` invalidates a stage's checkpoint when the relevant slice of
+config changes.
 
-Compare LitServe HTTP outputs against aa_v2 direct inference to ensure model serving doesn't alter results:
+## Layout
 
-```bash
-# Single image
-python -m data_miner.auto_annotation_v3.compare_litserve \
-    --image output/sample/fl_pj_sample/-pFdYqqFUl8_003840.jpg
-
-# Full sample directory
-python -m data_miner.auto_annotation_v3.compare_litserve \
-    --image-dir output/sample/fl_pj_sample
-
-# Specific servers only
-python -m data_miner.auto_annotation_v3.compare_litserve \
-    --image output/sample/fl_pj_sample/-pFdYqqFUl8_003840.jpg \
-    --servers grounding_dino falcon
-
-# LitServe only (skip direct inference, just check servers are responding)
-python -m data_miner.auto_annotation_v3.compare_litserve \
-    --image-dir output/sample/fl_pj_sample --litserve-only
-
-# Save results
-python -m data_miner.auto_annotation_v3.compare_litserve \
-    --image-dir output/sample/fl_pj_sample --save-results results.json
 ```
-
-### What compare_litserve checks
-
-For each model server (GDINO, Falcon, SAM3, OWLv2):
-
-| Metric | Description |
-|---|---|
-| Detection count | Same number of boxes from both paths |
-| IoU matching | Each LitServe box matches a direct-inference box at IoU >= 0.5 |
-| Score difference | Confidence scores within tolerance (< 0.05 for EQUIVALENT) |
-| Label match | Same class labels assigned |
-
-Verdicts:
-- **EQUIVALENT**: Same count, all matched, labels agree, score diff < 0.05
-- **CLOSE**: Minor differences (1 extra/missing box, or slight score variance) -- expected from batching or numerical precision
-- **DIVERGED**: Significant differences -- investigate model loading or preprocessing
-
-## Key Differences from V2
-
-| Aspect | V2 | V3 |
-|---|---|---|
-| Model loading | In-process, per-worker GPU memory | LitServe servers, shared across workers |
-| Orchestration | Sequential per-image | Redis Streams, parallel workers |
-| VLM strategy | 2-pass (screening + detailed) per class | 2-call (classify per group + spatial per candidate) |
-| Refinement validation | VLM validates SAM output | IoU-based auto-accept/reject (no VLM loop) |
-| Pipeline stages | 6 (proposal, filter, reasoning, refinement, validation, finalize) | 3 (detect, evaluate, refine) |
-| Prompts | Hardcoded in agents | Versioned YAML templates with inheritance |
-| Resume | Per-stage checkpoints | Per-stage + per-model proposal caching |
-| Scaling | Single process | Add workers per stage independently |
+auto_annotation_v3/
+├── __main__.py · cli.py · pipeline.py     # entry + orchestrator
+├── config.py · contracts.py · utils.py    # config / models / helpers
+├── checkpoint.py · output.py
+├── prompt_manager.py · compare.py
+├── configs/default.yaml
+├── servers/                               # LitServe (4 detectors)
+│   ├── serve_{gdino,falcon,sam3,owlvit2}.py
+│   ├── serve_config.yaml · launch_all.py
+├── workers/                               # Redis Streams worker base
+│   ├── messaging.py · base.py · submitter.py · monitor.py
+├── stages/
+│   ├── detect.py · evaluate.py · refine.py · finalize.py
+├── prompts/
+│   ├── active -> v1/
+│   └── v1/{classify_*,refine_prompt,refine_adjudicate}.yaml
+├── tests/
+│   ├── compare_litserve.py
+│   ├── test_batch_accuracy.py
+│   └── test_multiclass_proposal.py
+├── viewer/                                # FastAPI single-page viewer
+└── docs/aav3_filtering_scores_discussion.md   # design log
+```
 
 ## Dependencies
 
-```
-pydantic>=2.0
-pyyaml
-aiohttp
-redis[hiredis]
-litserve
-torch
-transformers
-Pillow
-numpy
-```
+`pydantic>=2`, `omegaconf`, `pyyaml`, `aiohttp`, `redis[hiredis]`, `litserve`,
+`torch`, `transformers`, `Pillow`, `numpy`, `requests`, `fastapi`, `uvicorn`.

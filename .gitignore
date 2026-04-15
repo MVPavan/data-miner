@@ -30,3 +30,4 @@
 **/manifests/*
 # .mailmap
 **/validation_results*
+**/scratchpad/*

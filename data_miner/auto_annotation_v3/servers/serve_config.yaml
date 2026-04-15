@@ -19,10 +19,3 @@ servers:
     gpu: 1
     max_batch_size: 8
     batch_timeout: 0.05
-
-  owlvit2:
-    script: serve_owlvit2.py
-    port: 3004
-    gpu: 1
-    max_batch_size: 8
-    batch_timeout: 0.05

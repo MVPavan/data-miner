@@ -329,11 +329,6 @@ class DetectWorker(StageWorker):
                 "text_prompt": prompt,
                 "mode": "proposal",
             }
-        if model_name == "owlvit2":
-            return {
-                "image_path": image_path,
-                "text_queries": [f"a photo of a {prompt}"],
-            }
         raise ValueError(f"Unknown model name: {model_name!r}")
 
     def _parse_response_for_class(
@@ -383,10 +378,10 @@ class DetectWorker(StageWorker):
     # ------------------------------------------------------------------
 
     def _get_detection_servers(self) -> dict[str, Any]:
-        """Return ServerConfig objects for the four detection models (not VLM)."""
+        """Return ServerConfig objects for the active detection models (not VLM)."""
         servers: dict[str, Any] = {}
         server_map = self.config.servers
-        for name in ("grounding_dino", "falcon", "sam3", "owlvit2"):
+        for name in ("grounding_dino", "falcon", "sam3"):
             cfg = getattr(server_map, name, None)
             if cfg is not None:
                 servers[name] = cfg

@@ -13,3 +13,5 @@ changed_files:
   - refine_spatial.yaml
   - refine_prompt.yaml
   - refine_adjudicate.yaml
+  - classify_one.yaml
+  - classify_one_with_crop.yaml
