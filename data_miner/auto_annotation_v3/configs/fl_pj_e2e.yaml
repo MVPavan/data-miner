@@ -8,19 +8,17 @@
 # Focus on the classes that matter for this dataset
 detect_classes: [] #[person, car, truck, forklift, palletjack, head]
 
-# Co-existence: add forklift/truck as confusion pair (was missing before)
+# Co-existence: tag-based (inherits from default.yaml)
+# All industrial pairs (forklift/palletjack/truck/shopping cart) are covered
+# by the confusion:industrial tag in class_registry. No extra pairs needed.
 co_existence:
-  globally_exempt: [person, head]
-  confusion_pairs:
-    - [forklift, palletjack]
-    - [forklift, truck]
-    - [palletjack, truck]
-    - [forklift, shopping cart]
-    - [palletjack, shopping cart]
-    - [backpack, handbag]
-    - [handbag, suitcase]
-    - [wallet, cellphone]
-    - [car, truck]
+  overlap_exempt_tags: [overlap_exempt]
+  confusion_tags:
+    - "confusion:industrial"
+    - "confusion:luggage"
+    - "confusion:road_vehicle"
+    - "confusion:electronics"
+  extra_confusion_pairs: []
 
 # Output to a fresh directory
 output:

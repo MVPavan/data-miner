@@ -1,102 +1,13 @@
 # Auto Annotation V3 — Default Configuration
-# Matches the architecture in auto_annotation_v3_architecture_revised.md
-
-# ---------------------------------------------------------------------------
-# Model servers (LitServe)
-# ---------------------------------------------------------------------------
-
-servers:
-  detectors:
-    grounding_dino:
-      enabled: true
-      port: 3001
-      gpu: "cuda:0"
-      max_batch_size: 8
-      batch_timeout_ms: 50
-      model_id: "IDEA-Research/grounding-dino-base"
-      script: "serve_gdino.py"
-
-    falcon:
-      enabled: false
-      port: 3002
-      gpu: "cuda:0"
-      max_batch_size: 4
-      batch_timeout_ms: 100
-      model_id: "tiiuae/Falcon-Perception"
-      script: "serve_falcon.py"
-
-    sam3:
-      enabled: false          # superseded by sam3_dart; flip to true to rollback
-      port: 3003
-      gpu: "cuda:1"
-      max_batch_size: 8
-      batch_timeout_ms: 50
-      model_id: "facebook/sam3"
-      script: "serve_sam3.py"
-
-    sam3_dart:
-      enabled: true
-      port: 3013
-      gpu: "cuda:1"           # same slot sam3 used to occupy
-      max_batch_size: 8       # LitServe needs ≥2 to enter batched mode (predict gets list)
-      batch_timeout_ms: 50
-      model_id: "facebook/sam3"
-      script: "serve_sam3_dart.py"
-      options:
-        detection_only: true  # M4; flip to false for M3 (masks preserved)
-        presence_threshold: 0.05
-
-    owlvit2:
-      enabled: false          # parked — kept discoverable but off
-      port: 3004
-      gpu: "cuda:1"
-      max_batch_size: 8
-      batch_timeout_ms: 50
-      model_id: "google/owlv2-base-patch16-ensemble"
-      script: "serve_owlvit2.py"
-
-  vlm:
-    url: "http://localhost:8955/v1"
-    model: "Qwen/Qwen3.5-27B-FP8"
-    api_key: "dummy"
-    temperature: 0.0
-    max_tokens: 4096
-    max_retries: 2
-    timeout: 120.0
-
-# ---------------------------------------------------------------------------
-# Class registry — full catalog of known classes (rarely changes)
-# Tier 1: auto-acceptable with model agreement
-# Tier 2+: always VLM-evaluated
-# ---------------------------------------------------------------------------
-
-class_registry:
-  # ── Tier 1 ─────────────────────────────────────────────────────────────
-  - {id: 0,  name: person,      tier: 1, prompt: "person"}
-  - {id: 1,  name: bicycle,     tier: 1, prompt: "bicycle"}
-  - {id: 2,  name: car,         tier: 1, prompt: "car"}
-  - {id: 3,  name: motorcycle,  tier: 1, prompt: "motorcycle"}
-  - {id: 4,  name: airplane,    tier: 1, prompt: "airplane"}
-  - {id: 5,  name: bus,         tier: 1, prompt: "bus"}
-  - {id: 6,  name: train,       tier: 1, prompt: "train"}
-  - {id: 7,  name: truck,       tier: 1, prompt: "truck"}
-  - {id: 8,  name: boat,        tier: 1, prompt: "boat"}
-  - {id: 14, name: bird,        tier: 1, prompt: "bird"}
-  - {id: 15, name: cat,         tier: 1, prompt: "cat"}
-  - {id: 16, name: dog,         tier: 1, prompt: "dog"}
-
-  # ── Tier 2+ ─────────────────────────────────────────────────────────────
-  - {id: 24, name: backpack,    tier: 2, prompt: "backpack"}
-  - {id: 26, name: handbag,     tier: 2, prompt: "handbag"}
-  - {id: 28, name: suitcase,    tier: 2, prompt: "suitcase"}
-  - {id: 30, name: shopping cart,     tier: 3, prompt: "shopping cart"}
-  - {id: 31, name: helicopter,  tier: 2, prompt: "helicopter"}
-  - {id: 32, name: wallet,      tier: 2, prompt: "wallet"}
-  - {id: 33, name: forklift,    tier: 3, prompt: "forklift"}
-  - {id: 34, name: palletjack,  tier: 3, prompt: "pallet jack"}
-  - {id: 35, name: head,        tier: 2, prompt: "human head"}
-  - {id: 63, name: laptop,      tier: 2, prompt: "laptop"}
-  - {id: 67, name: cellphone,   tier: 2, prompt: "cellphone"}
+#
+# This is the base pipeline config. Class/server definitions are split into
+# separate files for maintainability:
+#   - servers.yaml      — detector + VLM server configs
+#   - class_config.yaml — class registry, evaluation groups, co-existence,
+#                          refine rules
+#
+# All three are merged automatically at load time via OmegaConf.
+# User overrides (per-job YAML or CLI dotlist) are applied on top.
 
 # ---------------------------------------------------------------------------
 # Detect classes — subset of class_registry to actually run this job.
@@ -125,124 +36,6 @@ evaluate:
   accept_above: 0.5            # >= this confidence → accept; in-between → review
 
 # ---------------------------------------------------------------------------
-# Evaluation groups — classes handled in one VLM call each
-# ---------------------------------------------------------------------------
-
-evaluation_groups:
-  industrial:
-    classes: [forklift, palletjack, shopping cart]
-    requires_crops: false       # large machines — overview alone is enough
-    description: |
-      FORKLIFT: Powered truck with vertical MAST, counterweight body, overhead guard.
-      Always has visible mast even with forks lowered.
-      PALLET JACK: LOW-PROFILE, NO mast, forks slide under pallets at ground level.
-      Steering handle/tiller. Manual has pump handle, electric has motor housing.
-      SHOPPING CART: Wheeled cart with handle, no forks, flat platform or basket.
-      KEY: MAST → forklift. No mast + low forks → pallet jack. Platform + handle → shopping cart.
-    annotation_rules:
-      forklift: "Include any load (pallets, boxes) on the forks in bbox"
-      palletjack: "Include any load on the forks in bbox"
-
-  luggage:
-    classes: [backpack, handbag, suitcase, wallet]
-    requires_crops: true        # small objects — close-up helps texture/shape
-    description: |
-      BACKPACK: On back, two shoulder straps. Typically larger.
-      HANDBAG: In hand or single shoulder strap. Smaller.
-      SUITCASE: Rigid/semi-rigid, wheels, retractable handle.
-      WALLET: Small, flat, foldable. Fits in pocket. Very small on camera.
-    annotation_rules: {}
-
-  person_parts:
-    classes: [person, head]
-    requires_crops: false
-    description: |
-      HEAD: Annotate separately ONLY when body is NOT visible
-      (head visible through window, behind counter, in vehicle).
-      If full body visible → annotate as person only, NOT separately as head.
-    annotation_rules: {}
-
-  electronics:
-    classes: [laptop, cellphone, wallet]
-    requires_crops: true        # small flat objects — close-up disambiguates
-    description: |
-      LAPTOP: Open or closed portable computer on flat surface.
-      CELLPHONE: Rectangular device in hand, on surface, or near ear.
-      WALLET: Small flat foldable. Distinguish from phone by thickness/texture.
-    annotation_rules: {}
-
-  vehicles:
-    classes: [car, bus, truck, train, boat, airplane, motorcycle, bicycle, helicopter]
-    requires_crops: false
-    description: null
-    annotation_rules: {}
-
-  animals:
-    classes: [bird, cat, dog]
-    requires_crops: false
-    description: null
-    annotation_rules: {}
-
-# ---------------------------------------------------------------------------
-# Co-existence rules
-# ---------------------------------------------------------------------------
-
-co_existence:
-  # These classes are never suppressed against any other class
-  globally_exempt: [person, head]
-
-  # Pairs where the same physical object cannot be both classes simultaneously.
-  # When IoU > dedup threshold, VLM disambiguates.
-  confusion_pairs:
-    - [forklift, palletjack]
-    - [forklift, truck]
-    - [forklift, shopping cart]
-    - [palletjack, shopping cart]
-    - [backpack, handbag]
-    - [handbag, suitcase]
-    - [wallet, cellphone]
-    - [car, truck]
-
-# ---------------------------------------------------------------------------
-# Refinement (SAM-based bbox correction)
-# ---------------------------------------------------------------------------
-
-# Refinement is class-driven: a candidate enters refine iff its (post-relabel)
-# class is keyed below AND its evaluate verdict is not `reject`. Each class has
-# one or more sequential prompts; each prompt's VLM may `skip` (no-op) or
-# `propose` a target_region that gets segmented by SAM3, presence-checked
-# against the load_vocab, and merge-sanity-checked before becoming the new bbox.
-refine_rules:
-  classes:
-    forklift:
-      prompts:
-        - id: load_extension
-          description: |
-            If cargo, pallets, boxes, drums, or barrels are physically on the
-            forks of this forklift, return action="propose" with target_region
-            covering the load and load_vocab listing the load type.
-            If the forks are empty (no load), return action="skip".
-          load_vocab: [pallet, cardboard box, wooden crate, drum, barrel]
-          presence_threshold: 0.5
-      merge_rules:
-        max_area_ratio: 3.0
-        max_gap_diag_frac: 0.02
-        aspect_ratio_range: [0.25, 4.0]
-    palletjack:
-      prompts:
-        - id: load_extension
-          description: |
-            If cargo is on the pallet jack forks, return action="propose"
-            with target_region covering the load. If empty, return
-            action="skip".
-          load_vocab: [pallet, box, crate]
-          presence_threshold: 0.5
-      merge_rules:
-        max_area_ratio: 3.0
-        max_gap_diag_frac: 0.02
-        aspect_ratio_range: [0.25, 4.0]
-
-# ---------------------------------------------------------------------------
 # Geometric filtering
 # ---------------------------------------------------------------------------
 
@@ -257,10 +50,11 @@ filtering:
     sam3:           0.50
     sam3_dart:      0.50      # DART uses the same SAM3 weights; same score floor
     falcon:         0.0       # Falcon has no calibrated score; rely on agreement
+    omdet_turbo:    0.30      # OmDet-Turbo cosine-similarity scores
   iou_dedup:
     threshold: 0.7
     tiebreak_by: [agreement, model_priority, score]
-    model_priority: [sam3_dart, sam3, grounding_dino, falcon]
+    model_priority: [sam3_dart, sam3, grounding_dino, omdet_turbo, falcon]
   max_per_class: 30
 
 # ---------------------------------------------------------------------------

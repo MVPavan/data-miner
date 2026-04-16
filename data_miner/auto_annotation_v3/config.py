@@ -456,9 +456,32 @@ class AutoAnnotationV3Config(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+_CONFIGS_DIR = Path(__file__).parent / "configs"
+
+
 def default_config_path() -> Path:
     """Path to the packaged default config."""
-    return Path(__file__).parent / "configs" / "default.yaml"
+    return _CONFIGS_DIR / "default.yaml"
+
+
+def _load_base_config() -> DictConfig:
+    """Merge the split base config files into one DictConfig.
+
+    Load order (each layer deep-merges onto the previous):
+      1. servers.yaml      — detector + VLM server definitions
+      2. class_config.yaml — class registry, eval groups, co-existence, refine rules
+      3. default.yaml      — pipeline settings (filtering, workers, redis, runtime, …)
+
+    The user sees a single flat config namespace — the split is an
+    implementation detail for maintainability.
+    """
+    base = OmegaConf.create({})
+    for filename in ("servers.yaml", "class_config.yaml", "default.yaml"):
+        path = _CONFIGS_DIR / filename
+        if path.exists():
+            layer: DictConfig = OmegaConf.load(path)
+            base = OmegaConf.merge(base, layer)  # type: ignore[assignment]
+    return base  # type: ignore[return-value]
 
 
 def load_config(
@@ -470,7 +493,8 @@ def load_config(
     Args:
         user_config: Path to a user YAML that overrides individual keys. Only
             keys present in this file are overridden; everything else comes
-            from ``configs/default.yaml``. Deep-merged via OmegaConf.
+            from the base config files (``servers.yaml``, ``class_config.yaml``,
+            ``default.yaml``). Deep-merged via OmegaConf.
         overrides: List of OmegaConf dotlist strings (e.g.
             ``["runtime.log_level=DEBUG", "workers.detect_count=2"]``).
 
@@ -481,7 +505,7 @@ def load_config(
         >>> cfg = load_config("my_job.yaml",
         ...                    overrides=["runtime.log_level=DEBUG"])
     """
-    base: DictConfig = OmegaConf.load(default_config_path())
+    base = _load_base_config()
 
     if user_config is not None:
         user_cfg: DictConfig = OmegaConf.load(Path(user_config))

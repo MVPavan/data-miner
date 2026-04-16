@@ -579,6 +579,291 @@ def test_detailed_breakdown(model, images):
     return all_match
 
 
+# ---------------------------------------------------------------
+# Test 7: Cross-image independence
+# ---------------------------------------------------------------
+def test_cross_image_independence(model, images):
+    """Image A's results must be identical regardless of batch companion."""
+    print("\n=== Test 7: Cross-image independence ===")
+
+    pred = Sam3MultiClassPredictorBatch(
+        model, device=DEVICE, use_fp16=True,
+        presence_threshold=0.05, detection_only=True,
+    )
+    pred.set_classes(CLASSES)
+
+    imgA = images[0][1]
+    imgB = images[1][1]
+    imgC = images[3][1]  # deliberately skip index 2 for diversity
+
+    rAB = pred.predict_images([imgA, imgB], confidence_threshold=CONF, nms_threshold=NMS)
+    rAC = pred.predict_images([imgA, imgC], confidence_threshold=CONF, nms_threshold=NMS)
+    rBA = pred.predict_images([imgB, imgA], confidence_threshold=CONF, nms_threshold=NMS)
+
+    all_pass = True
+
+    # A's results from [A,B] vs [A,C]
+    nAB, nAC = len(rAB[0]["scores"]), len(rAC[0]["scores"])
+    if nAB != nAC:
+        print(f"  FAIL: A paired with B gives {nAB} dets, A paired with C gives {nAC}")
+        all_pass = False
+    elif nAB > 0:
+        sAB = rAB[0]["scores"].cpu().float()
+        sAC = rAC[0]["scores"].cpu().float()
+        bAB = rAB[0]["boxes"].cpu().float()
+        bAC = rAC[0]["boxes"].cpu().float()
+        score_diff = (sAB - sAC).abs().max().item()
+        box_diff = (bAB - bAC).abs().max().item()
+        ious = per_det_iou(bAB, bAC)
+        min_iou = ious.min().item() * 100
+        ok = score_diff < 1e-6 and box_diff < 0.01
+        status = "OK" if ok else "FAIL"
+        print(f"  {status}  A in [A,B] vs [A,C]: {nAB} dets, "
+              f"score_diff={score_diff:.8f}, box_diff={box_diff:.4f}px, min_IoU={min_iou:.4f}%")
+        if not ok:
+            all_pass = False
+
+    # A's results from [A,B] vs [B,A] (position 0 vs position 1)
+    nAB0, nBA1 = len(rAB[0]["scores"]), len(rBA[1]["scores"])
+    if nAB0 != nBA1:
+        print(f"  FAIL: A at pos 0 gives {nAB0} dets, A at pos 1 gives {nBA1}")
+        all_pass = False
+    elif nAB0 > 0:
+        sAB0 = rAB[0]["scores"].cpu().float()
+        sBA1 = rBA[1]["scores"].cpu().float()
+        bAB0 = rAB[0]["boxes"].cpu().float()
+        bBA1 = rBA[1]["boxes"].cpu().float()
+        score_diff = (sAB0 - sBA1).abs().max().item()
+        box_diff = (bAB0 - bBA1).abs().max().item()
+        ious = per_det_iou(bAB0, bBA1)
+        min_iou = ious.min().item() * 100
+        ok = score_diff < 1e-6 and box_diff < 0.01
+        status = "OK" if ok else "FAIL"
+        print(f"  {status}  A at pos 0 vs pos 1 (order invariance): {nAB0} dets, "
+              f"score_diff={score_diff:.8f}, box_diff={box_diff:.4f}px, min_IoU={min_iou:.4f}%")
+        if not ok:
+            all_pass = False
+
+    # B's results from [A,B] vs [B,A] (position 1 vs position 0)
+    nAB1, nBA0 = len(rAB[1]["scores"]), len(rBA[0]["scores"])
+    if nAB1 != nBA0:
+        print(f"  FAIL: B at pos 1 gives {nAB1} dets, B at pos 0 gives {nBA0}")
+        all_pass = False
+    elif nAB1 > 0:
+        sAB1 = rAB[1]["scores"].cpu().float()
+        sBA0 = rBA[0]["scores"].cpu().float()
+        bAB1 = rAB[1]["boxes"].cpu().float()
+        bBA0 = rBA[0]["boxes"].cpu().float()
+        score_diff = (sAB1 - sBA0).abs().max().item()
+        box_diff = (bAB1 - bBA0).abs().max().item()
+        ious = per_det_iou(bAB1, bBA0)
+        min_iou = ious.min().item() * 100
+        ok = score_diff < 1e-6 and box_diff < 0.01
+        status = "OK" if ok else "FAIL"
+        print(f"  {status}  B at pos 1 vs pos 0 (order invariance): {nAB1} dets, "
+              f"score_diff={score_diff:.8f}, box_diff={box_diff:.4f}px, min_IoU={min_iou:.4f}%")
+        if not ok:
+            all_pass = False
+
+    status = "PASSED" if all_pass else "FAILED"
+    print(f"  --- Test 7 {status} ---")
+    return all_pass
+
+
+# ---------------------------------------------------------------
+# Test 8: Zero-detection image in batch
+# ---------------------------------------------------------------
+def test_zero_detection_in_batch(model, images):
+    """A blank image producing 0 dets shouldn't corrupt a real image's results."""
+    print("\n=== Test 8: Zero-detection image in batch ===")
+
+    pred = Sam3MultiClassPredictorBatch(
+        model, device=DEVICE, use_fp16=True,
+        presence_threshold=0.05, detection_only=True,
+    )
+    pred.set_classes(CLASSES)
+
+    real_img = images[0][1]
+    # Create a blank white image — should produce 0 detections
+    blank_img = Image.new("RGB", (800, 600), color=(255, 255, 255))
+
+    # Baseline: real image alone
+    single_state = pred.set_image(real_img)
+    single_result = pred.predict(
+        single_state, confidence_threshold=CONF, nms_threshold=NMS,
+    )
+
+    # Batch: [blank, real]
+    batch_results = pred.predict_images(
+        [blank_img, real_img], confidence_threshold=CONF, nms_threshold=NMS,
+    )
+
+    blank_result = batch_results[0]
+    batched_real_result = batch_results[1]
+
+    all_pass = True
+
+    # Blank should have 0 detections
+    n_blank = len(blank_result["scores"])
+    if n_blank == 0:
+        print(f"  OK   blank image: 0 detections (expected)")
+    else:
+        print(f"  WARN blank image: {n_blank} detections (unexpected but not fatal)")
+
+    # Real image results should match single-image baseline
+    n_single = len(single_result["scores"])
+    n_batched = len(batched_real_result["scores"])
+
+    if n_single != n_batched:
+        print(f"  FAIL real image: single={n_single} dets, batched={n_batched} dets")
+        all_pass = False
+    elif n_single > 0:
+        s_idx = single_result["scores"].argsort(descending=True)
+        b_idx = batched_real_result["scores"].argsort(descending=True)
+        s_boxes = single_result["boxes"][s_idx].cpu().float()
+        b_boxes = batched_real_result["boxes"][b_idx].cpu().float()
+        s_scores = single_result["scores"][s_idx].cpu().float()
+        b_scores = batched_real_result["scores"][b_idx].cpu().float()
+
+        score_diff = (s_scores - b_scores).abs().max().item()
+        ious = per_det_iou(s_boxes, b_boxes)
+        min_iou = ious.min().item() * 100
+
+        ok = torch.allclose(s_scores, b_scores, atol=5e-3) and min_iou > 99.0
+        status = "OK" if ok else "FAIL"
+        print(f"  {status}  real image: {n_single} dets, "
+              f"min_IoU={min_iou:.4f}%, score_diff={score_diff:.6f}")
+        if not ok:
+            all_pass = False
+    else:
+        print(f"  OK   real image: 0 detections (both)")
+
+    status = "PASSED" if all_pass else "FAILED"
+    print(f"  --- Test 8 {status} ---")
+    return all_pass
+
+
+# ---------------------------------------------------------------
+# Test 9: Parity against parent class (ground truth baseline)
+# ---------------------------------------------------------------
+def test_parity_vs_parent_class(model, images):
+    """Compare batch subclass against parent Sam3MultiClassPredictorFast directly."""
+    print("\n=== Test 9: Parity vs parent class (ground truth) ===")
+
+    # Parent class (ground truth)
+    parent_pred = Sam3MultiClassPredictorFast(
+        model, device=DEVICE, use_fp16=True,
+        presence_threshold=0.05, detection_only=True,
+    )
+    parent_pred.set_classes(CLASSES)
+
+    # Batch subclass
+    batch_pred = Sam3MultiClassPredictorBatch(
+        model, device=DEVICE, use_fp16=True,
+        presence_threshold=0.05, detection_only=True,
+    )
+    batch_pred.set_classes(CLASSES)
+
+    imgs = [img for _, img in images[:4]]
+
+    # Parent sequential results
+    parent_results = []
+    for img in imgs:
+        st = parent_pred.set_image(img)
+        parent_results.append(
+            parent_pred.predict(st, confidence_threshold=CONF, nms_threshold=NMS)
+        )
+
+    # Batch results
+    batch_results = batch_pred.predict_images(
+        imgs, confidence_threshold=CONF, nms_threshold=NMS,
+    )
+
+    all_pass = True
+    for i, (pr, br) in enumerate(zip(parent_results, batch_results)):
+        stem = images[i][0][:32]
+        n_p = len(pr["scores"])
+        n_b = len(br["scores"])
+
+        if n_p != n_b:
+            print(f"  FAIL {stem}: parent={n_p} dets, batch={n_b} dets")
+            all_pass = False
+            continue
+
+        if n_p == 0:
+            print(f"  OK   {stem}: 0 detections (both)")
+            continue
+
+        p_idx = pr["scores"].argsort(descending=True)
+        b_idx = br["scores"].argsort(descending=True)
+        p_boxes = pr["boxes"][p_idx].cpu().float()
+        b_boxes = br["boxes"][b_idx].cpu().float()
+        p_scores = pr["scores"][p_idx].cpu().float()
+        b_scores = br["scores"][b_idx].cpu().float()
+
+        score_diff = (p_scores - b_scores).abs().max().item()
+        ious = per_det_iou(p_boxes, b_boxes)
+        mean_iou = ious.mean().item() * 100
+        min_iou = ious.min().item() * 100
+        cls_match = torch.equal(pr["class_ids"][p_idx].cpu(), br["class_ids"][b_idx].cpu())
+
+        ok = min_iou > 99.0 and score_diff < 5e-3 and cls_match
+        status = "OK" if ok else "FAIL"
+        print(f"  {status}  {stem}: {n_p} dets, "
+              f"IoU={mean_iou:.4f}% (min={min_iou:.4f}%), "
+              f"score_diff={score_diff:.6f}, cls_match={cls_match}")
+        if not ok:
+            all_pass = False
+
+    status = "PASSED" if all_pass else "FAILED"
+    print(f"  --- Test 9 {status} ---")
+    return all_pass
+
+
+# ---------------------------------------------------------------
+# Test 10: GPU memory stability
+# ---------------------------------------------------------------
+def test_gpu_memory_stability(model, images):
+    """Repeated predict_images calls should not leak GPU memory."""
+    print("\n=== Test 10: GPU memory stability ===")
+
+    pred = Sam3MultiClassPredictorBatch(
+        model, device=DEVICE, use_fp16=True,
+        presence_threshold=0.05, detection_only=True,
+    )
+    pred.set_classes(CLASSES)
+
+    imgs = [img for _, img in images[:2]]
+
+    # Warmup
+    pred.predict_images(imgs, confidence_threshold=CONF, nms_threshold=NMS)
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+
+    baseline_mem = torch.cuda.memory_allocated()
+
+    N_ITERS = 10
+    for _ in range(N_ITERS):
+        pred.predict_images(imgs, confidence_threshold=CONF, nms_threshold=NMS)
+
+    torch.cuda.synchronize()
+    final_mem = torch.cuda.memory_allocated()
+    peak_mem = torch.cuda.max_memory_allocated()
+
+    growth_mb = (final_mem - baseline_mem) / (1024 * 1024)
+    peak_mb = peak_mem / (1024 * 1024)
+
+    # Allow small growth (< 10 MB) from PyTorch allocator rounding
+    passed = abs(growth_mb) < 10.0
+    status = "OK" if passed else "FAIL"
+    print(f"  {status}  After {N_ITERS} iterations: "
+          f"memory growth={growth_mb:+.1f} MB, peak={peak_mb:.0f} MB")
+
+    status = "PASSED" if passed else "FAILED"
+    print(f"  --- Test 10 {status} ---")
+    return passed
+
+
 def main():
     print("Loading SAM3 model...")
     t0 = time.perf_counter()
@@ -596,6 +881,10 @@ def main():
     results["var_sizes"] = test_variable_sizes(model, images)
     results["multi_class"] = test_multi_class_configs(model, images)
     results["detailed"] = test_detailed_breakdown(model, images)
+    results["cross_image"] = test_cross_image_independence(model, images)
+    results["zero_det"] = test_zero_detection_in_batch(model, images)
+    results["vs_parent"] = test_parity_vs_parent_class(model, images)
+    results["mem_stable"] = test_gpu_memory_stability(model, images)
     results["latency"] = test_latency(model, images)
 
     print("\n" + "=" * 60)

@@ -21,6 +21,7 @@ class DetectorName(StrEnum):
     SAM3           = "sam3"
     SAM3_DART      = "sam3_dart"
     OWLVIT2        = "owlvit2"
+    OMDET_TURBO    = "omdet_turbo"
 
     @property
     def is_sam3_family(self) -> bool:
