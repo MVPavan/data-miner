@@ -39,6 +39,8 @@ class PipelineMonitor:
         A connected :class:`~.messaging.RedisMessageBroker` instance.
     checkpoint_mgr:
         :class:`~..checkpoint.CheckpointManager` used for completion queries.
+        Completion is determined by checkpoint state (all stages complete),
+        not Redis stream counts — safe across multiple jobs sharing streams.
     """
 
     def __init__(
@@ -111,10 +113,18 @@ class PipelineMonitor:
         )
 
         while True:
+            # Ground truth: checkpoint filesystem knows exactly which
+            # images finished all stages. No Redis counting needed.
+            completed = set(self.checkpoint.image_ids())
+            done_count = sum(
+                1 for iid in completed
+                if self.checkpoint.all_stages_complete(iid)
+            )
+            # Images with a checkpoint dir but not complete are in-progress
+            # or stuck. Dead-letter count from Redis for display only.
             status = await self.get_status()
-            done_count = status["done"]["queue_length"]
             dead_count = status["dead_letter"]["queue_length"]
-            finished = done_count + dead_count
+            finished = done_count
 
             if print_progress:
                 elapsed = time.monotonic() - start
@@ -122,10 +132,8 @@ class PipelineMonitor:
 
             if finished >= total_images:
                 logger.info(
-                    "All %d images finished (%d done, %d dead-letter).",
+                    "All %d images finished (checkpoint-verified).",
                     total_images,
-                    done_count,
-                    dead_count,
                 )
                 return True
 

@@ -17,7 +17,7 @@ servers:
       script: "serve_gdino.py"
 
     falcon:
-      enabled: true
+      enabled: false
       port: 3002
       gpu: "cuda:0"
       max_batch_size: 4
@@ -89,7 +89,7 @@ class_registry:
   - {id: 24, name: backpack,    tier: 2, prompt: "backpack"}
   - {id: 26, name: handbag,     tier: 2, prompt: "handbag"}
   - {id: 28, name: suitcase,    tier: 2, prompt: "suitcase"}
-  - {id: 30, name: trolley,     tier: 3, prompt: "trolley"}
+  - {id: 30, name: shopping cart,     tier: 3, prompt: "shopping cart"}
   - {id: 31, name: helicopter,  tier: 2, prompt: "helicopter"}
   - {id: 32, name: wallet,      tier: 2, prompt: "wallet"}
   - {id: 33, name: forklift,    tier: 3, prompt: "forklift"}
@@ -113,12 +113,7 @@ detect_classes: []
 
 auto_accept:
   min_model_agreement: 2
-  min_score: 0.0              # global fallback; per-model floors below
-  per_model_score:            # detector scores are NOT comparable — use per-model floors
-    grounding_dino: 0.35
-    sam3:           0.60
-    sam3_dart:      0.60      # DART uses the same SAM3 weights; same score floor
-    falcon:         0.0       # Falcon has no calibrated score; rely on agreement
+  min_score: 0.0              # global routing fallback; per-model floors live in filtering
   tiers: [1]
 
 # ---------------------------------------------------------------------------
@@ -135,15 +130,15 @@ evaluate:
 
 evaluation_groups:
   industrial:
-    classes: [forklift, palletjack, trolley]
+    classes: [forklift, palletjack, shopping cart]
     requires_crops: false       # large machines — overview alone is enough
     description: |
       FORKLIFT: Powered truck with vertical MAST, counterweight body, overhead guard.
       Always has visible mast even with forks lowered.
       PALLET JACK: LOW-PROFILE, NO mast, forks slide under pallets at ground level.
       Steering handle/tiller. Manual has pump handle, electric has motor housing.
-      TROLLEY: Wheeled cart with handle, no forks, flat platform or basket.
-      KEY: MAST → forklift. No mast + low forks → pallet jack. Platform + handle → trolley.
+      SHOPPING CART: Wheeled cart with handle, no forks, flat platform or basket.
+      KEY: MAST → forklift. No mast + low forks → pallet jack. Platform + handle → shopping cart.
     annotation_rules:
       forklift: "Include any load (pallets, boxes) on the forks in bbox"
       palletjack: "Include any load on the forks in bbox"
@@ -200,7 +195,9 @@ co_existence:
   # When IoU > dedup threshold, VLM disambiguates.
   confusion_pairs:
     - [forklift, palletjack]
-    - [forklift, trolley]
+    - [forklift, truck]
+    - [forklift, shopping cart]
+    - [palletjack, shopping cart]
     - [backpack, handbag]
     - [handbag, suitcase]
     - [wallet, cellphone]
@@ -255,10 +252,15 @@ filtering:
   min_aspect_ratio: 0.1
   max_aspect_ratio: 10.0
   min_edge_distance: 0.0
+  per_model_score:            # detector scores are NOT comparable — use per-model floors
+    grounding_dino: 0.35
+    sam3:           0.50
+    sam3_dart:      0.50      # DART uses the same SAM3 weights; same score floor
+    falcon:         0.0       # Falcon has no calibrated score; rely on agreement
   iou_dedup:
     threshold: 0.7
     tiebreak_by: [agreement, model_priority, score]
-    model_priority: [sam3_dart, sam3, falcon, grounding_dino]
+    model_priority: [sam3_dart, sam3, grounding_dino, falcon]
   max_per_class: 30
 
 # ---------------------------------------------------------------------------

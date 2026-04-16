@@ -67,6 +67,7 @@ class StageWorker(ABC):
         broker: RedisMessageBroker,
         checkpoint_mgr: CheckpointManager,
         worker_id: str | None = None,
+        job_id: str | None = None,
     ) -> None:
         if not self.stage:
             raise ValueError(
@@ -75,6 +76,7 @@ class StageWorker(ABC):
         self.config = config
         self.broker = broker
         self.checkpoint = checkpoint_mgr
+        self.job_id = job_id
         self.worker_id = worker_id or f"{self.stage}-{id(self)}"
         self.logger = logging.getLogger(
             f"data_miner.auto_annotation_v3.{self.stage}.{self.worker_id}"
@@ -150,6 +152,21 @@ class StageWorker(ABC):
             await self.broker.send_to_dead_letter(
                 self.stage, msg_id, raw_msg, "Malformed StageMessage"
             )
+            return
+
+        # ---- Job isolation: only process messages belonging to this job ----
+        if self.job_id and stage_msg.job_id != self.job_id:
+            # Not our job — ack (remove from PEL) and skip.  Do NOT
+            # re-submit: that creates an infinite clone loop because the
+            # same consumer group will read the copy again.  The owning
+            # pipeline's submitter will re-submit on resume if needed.
+            self.logger.debug(
+                "Skipping %s — belongs to job '%s', not ours ('%s')",
+                stage_msg.image_id,
+                stage_msg.job_id,
+                self.job_id,
+            )
+            await self.broker.ack(self.stage, msg_id)
             return
 
         # ---- Resume / skip check ----------------------------------------

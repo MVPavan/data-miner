@@ -88,6 +88,11 @@
   /* Toast */
   #toast { position: fixed; bottom: 20px; right: 20px; background: #1e3a5f; color: #93c5fd; padding: 10px 18px; border-radius: 6px; font-size: 13px; display: none; z-index: 999; }
   .loading { color: var(--muted); font-size: 14px; text-align: center; padding: 40px; }
+
+  /* Color-by toggle */
+  .color-toggle { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .color-toggle:hover { border-color: var(--accent); }
+  .color-toggle .active-mode { color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -153,6 +158,7 @@ const S = {
     classFilter: {},      // class_name -> bool (true = visible)
     modelFilter: {},      // source_model -> bool (true = visible)
   },
+  colorBy: 'class',       // 'model' | 'class' — controls bbox color dimension
 };
 
 // ---------------------------------------------------------------------------
@@ -182,9 +188,28 @@ const REFINE_COLORS = {
   refined:  '#00C800',
   rejected: '#FF0000',
 };
-const FALLBACK = ['#FF6347','#4ECDC4','#FFD700','#FF69B4','#7CFC00','#00CED1','#FFA07A','#9370DB'];
+const FALLBACK = ['#FF6347','#4ECDC4','#FFD700','#FF69B4','#7CFC00','#00CED1','#FFA07A','#9370DB',
+  '#E6194B','#3CB44B','#4363D8','#F58231','#911EB4','#42D4F4','#F032E6','#BFEF45'];
+
+// Stable per-class color: hash class name → palette index so colours stay
+// consistent across images/sessions regardless of discovery order.
+const _classColorCache = {};
+function classColor(name) {
+  if (_classColorCache[name]) return _classColorCache[name];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  _classColorCache[name] = FALLBACK[((h % FALLBACK.length) + FALLBACK.length) % FALLBACK.length];
+  return _classColorCache[name];
+}
 
 function colorFor(map, key, idx) { return map[key] || FALLBACK[idx % FALLBACK.length]; }
+
+// Returns the appropriate color for a candidate/annotation based on the
+// current colorBy mode.  `stageFn` is a no-arg function returning the
+// stage-specific color (model, routing, verdict, refine status, etc.).
+function pickColor(stageFn, className) {
+  return S.colorBy === 'class' ? classColor(className || '?') : stageFn();
+}
 
 // ---------------------------------------------------------------------------
 // DOM refs
@@ -311,6 +336,19 @@ function renderToolbar() {
   if (!S.data) return;
 
   _initGlobalFilters();
+
+  // Color-by toggle (model vs class) — shown on every tab
+  const cbGrp = document.createElement('div');
+  cbGrp.className = 'toolbar-group';
+  cbGrp.innerHTML = `<span class="group-label">Color:</span>`;
+  const cbBtn = document.createElement('button');
+  cbBtn.className = 'color-toggle';
+  const isClass = S.colorBy === 'class';
+  cbBtn.innerHTML = `<span class="${isClass ? 'active-mode' : ''}">class</span> / <span class="${!isClass ? 'active-mode' : ''}">model</span>`;
+  cbBtn.onclick = () => { S.colorBy = S.colorBy === 'class' ? 'model' : 'class'; renderToolbar(); renderStage(); };
+  cbGrp.appendChild(cbBtn);
+  $toolbar.appendChild(cbGrp);
+
   const stage = S.currentStage;
   if (stage === 'proposals') {
     // The per-tab Models toggle was removed — it duplicated the global Model
@@ -339,7 +377,7 @@ function renderToolbar() {
   const { classes, models } = _collectClassesAndModels();
   if (classes.length) {
     addToolbarDropdown('Class', classes,
-      i => FALLBACK[i % FALLBACK.length],
+      i => classColor(classes[i]),
       S.toggles.classFilter);
   }
   if (models.length) {
@@ -565,13 +603,14 @@ function renderProposals() {
   const detailParts = [];
   let total = 0, shown = 0;
   for (const [i, m] of models.entries()) {
-    const color = colorFor(MODEL_COLORS, m, i);
+    const modelColor = colorFor(MODEL_COLORS, m, i);
     const cands = (props[m].candidates) || [];
     total += cands.length;
     if (S.toggles.modelFilter[m] === false) continue;
     cands.forEach((c, j) => {
       if (!passesFilter({ class_name: c.class_name, source_model: m })) return;
       shown++;
+      const color = pickColor(() => modelColor, c.class_name || c.label);
       svg += svgRect(c.bbox, color, `${m} ${(c.label||c.class_name||'?')} ${(c.score||0).toFixed(2)}`);
     });
     detailParts.push(`<div class="detail-card">
@@ -604,7 +643,8 @@ function renderDetect() {
     if (!S.toggles.detectRouting[b]) continue;
     if (!passesFilter(c)) continue;
     shown++;
-    svg += svgRect(c.bbox, ROUTING_COLORS[b], `${c.class_name} (${c.source_model}) ${(c.score||0).toFixed(2)} agr=${c.agreement||0}`);
+    const color = pickColor(() => ROUTING_COLORS[b], c.class_name);
+    svg += svgRect(c.bbox, color, `${c.class_name} (${c.source_model}) ${(c.score||0).toFixed(2)} agr=${c.agreement||0}`);
   }
   const header = `<div class="detail-header">
     <b>${cands.length}</b> candidates after filter+dedup |
@@ -656,7 +696,8 @@ function renderEvaluate() {
     shown++;
     const relabel = (ev.relabels || {})[v.candidate_id];
     const label = `${v.correct_class || c.class_name}${relabel ? ` (was ${c.class_name})` : ''} ${(v.confidence||0).toFixed(2)} ${b}`;
-    svg += svgRect(c.bbox, VERDICT_COLORS[b], label);
+    const color = pickColor(() => VERDICT_COLORS[b], v.correct_class || c.class_name);
+    svg += svgRect(c.bbox, color, label);
   }
 
   // Surface VLM-call gaps: candidates that detect routed to evaluate but for
@@ -696,16 +737,21 @@ function renderRefine() {
   for (const r of results) {
     const src = candById[r.candidate_id];
     if (!passesFilter(src)) continue;
+    // Extract class name from candidate_id (format: "model:class:idx")
+    const refClass = (r.candidate_id || '').split(':')[1] || '?';
     if (r.accepted) {
       if (S.toggles.refineShow.original && r.original_bbox) {
-        svg += svgRect(r.original_bbox, REFINE_COLORS.original, `orig ${escHTML(r.candidate_id)}`, true);
+        const color = pickColor(() => REFINE_COLORS.original, refClass);
+        svg += svgRect(r.original_bbox, color, `orig ${escHTML(r.candidate_id)}`, true);
       }
       if (S.toggles.refineShow.refined && r.refined_bbox) {
-        svg += svgRect(r.refined_bbox, REFINE_COLORS.refined, `refined ${(r.iou_with_original||0).toFixed(2)}`);
+        const color = pickColor(() => REFINE_COLORS.refined, refClass);
+        svg += svgRect(r.refined_bbox, color, `refined ${(r.iou_with_original||0).toFixed(2)}`);
       }
     } else {
       if (S.toggles.refineShow.rejected && r.original_bbox) {
-        svg += svgRect(r.original_bbox, REFINE_COLORS.rejected, `rejected (iou=${(r.iou_with_original||0).toFixed(2)})`, true);
+        const color = pickColor(() => REFINE_COLORS.rejected, refClass);
+        svg += svgRect(r.original_bbox, color, `rejected (iou=${(r.iou_with_original||0).toFixed(2)})`, true);
       }
     }
   }
@@ -737,7 +783,7 @@ function renderFinalize() {
     const a = annotations[i];
     if (!passesFilter(a)) continue;
     const name = a.class_name || id2name[a.class_id] || `class_${a.class_id}`;
-    const color = FALLBACK[(a.class_id ?? i) % FALLBACK.length];
+    const color = classColor(name);
     svg += svgRect(a.bbox, color, `#${i} ${name}${a.was_refined ? ' (refined)' : ''}`);
   }
   for (const d of dropped) {
@@ -773,7 +819,7 @@ function renderFinal() {
     let svg = '';
     const cards = traceAnns.map((a, i) => {
       const name = a.class_name || id2name[a.class_id] || `class_${a.class_id}`;
-      const color = FALLBACK[(a.class_id ?? i) % FALLBACK.length];
+      const color = classColor(name);
       if (!passesFilter({ class_name: name, source_model: a.source_model })) return '';
       svg += svgRect(a.bbox, color, `#${i} ${name} ${a.action||''} ${(a.confidence||0).toFixed(2)}`);
       const reasoning = (a.trace || []).map(t => `<li>${escHTML(t)}</li>`).join('');
@@ -803,7 +849,7 @@ function renderFinal() {
     const bbox = { x1: cx - w/2, y1: cy - h/2, x2: cx + w/2, y2: cy + h/2 };
     const name = id2name[cid] || `class_${cid}`;
     if (!passesFilter({ class_name: name })) return;
-    const color = FALLBACK[cid % FALLBACK.length];
+    const color = classColor(name);
     svg += svgRect(bbox, color, `#${i} ${name}`);
     cards.push(`<div class="detail-card accept">
       <div class="field"><span class="label">#${i} class:</span> <span class="value">${escHTML(name)}</span> (id=${cid})</div>

@@ -1,23 +1,25 @@
-"""Launch all auto-annotation v3 model servers defined in serve_config.yaml.
+"""Launch all auto-annotation v3 model servers defined in the config.
 
 Usage:
     # Launch everything from config
     python launch_all.py
 
     # Launch a subset
-    python launch_all.py --servers grounding_dino owlvit2
+    python launch_all.py --servers grounding_dino sam3_dart
 
     # Override GPU assignment for a specific server
     python launch_all.py --override grounding_dino.gpu=1 sam3.gpu=3
 
     # Custom config file
-    python launch_all.py --config /path/to/serve_config.yaml
+    python launch_all.py --config /path/to/config.yaml
 
     # Skip health-check loop (useful in CI / test environments)
     python launch_all.py --no-health-check
 
-Each server is launched as a subprocess. The launcher waits for all servers to
-pass a /health HTTP check before returning (or raises after a timeout).
+Each server is launched as a subprocess. Servers already running on their
+configured port are detected via /health and adopted (not re-launched).
+All servers — both launched and adopted — are terminated on exit (Ctrl-C,
+unexpected crash, health timeout, or any other shutdown path).
 
 Press Ctrl-C to stop all servers.
 """
@@ -25,6 +27,7 @@ Press Ctrl-C to stop all servers.
 from __future__ import annotations
 
 import argparse
+import atexit
 import logging
 import os
 import signal
@@ -53,7 +56,8 @@ logger = logging.getLogger(__name__)
 
 _HERE = Path(__file__).parent.resolve()
 _DEFAULT_CONFIG = _HERE.parent / "configs" / "default.yaml"
-_HEALTH_TIMEOUT_S = 120       # max seconds to wait for all servers to come up
+_HEALTH_TIMEOUT_S = 60        # max seconds per health-check attempt
+_HEALTH_MAX_RETRIES = 3       # retry health-check loop this many times
 _HEALTH_POLL_INTERVAL_S = 2   # seconds between /health polls
 _HEALTH_ENDPOINT = "/health"
 
@@ -135,6 +139,43 @@ def apply_overrides(
 
         logger.info("Override: %s.%s = %r", server_name, field, value)
         server_configs[server_name][field] = value
+
+
+# ---------------------------------------------------------------------------
+# Port → PID resolution
+# ---------------------------------------------------------------------------
+
+def find_pid_on_port(port: int) -> int | None:
+    """Return the PID of the process listening on *port*, or None."""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    for conn in psutil.net_connections(kind="tcp"):
+        if conn.laddr.port == port and conn.status == "LISTEN":
+            return conn.pid
+    return None
+
+
+def _kill_pid(pid: int, name: str, wait_s: float = 8.0) -> None:
+    """SIGTERM a PID, wait, then SIGKILL if still alive."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+        logger.info("Sent SIGTERM to '%s' (pid=%d)", name, pid)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)  # probe — raises if gone
+        except ProcessLookupError:
+            return
+        time.sleep(0.3)
+    try:
+        os.kill(pid, signal.SIGKILL)
+        logger.warning("Sent SIGKILL to '%s' (pid=%d) — did not exit on SIGTERM", name, pid)
+    except ProcessLookupError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -257,30 +298,137 @@ def wait_for_health(
 
 
 # ---------------------------------------------------------------------------
-# Shutdown
+# Unified server tracker — owns both launched and adopted processes
 # ---------------------------------------------------------------------------
 
-def terminate_all(procs: dict[str, subprocess.Popen], wait_s: float = 10.0) -> None:
-    """Send SIGTERM to all processes, then SIGKILL stragglers."""
-    for name, proc in procs.items():
-        if proc.poll() is None:
-            logger.info("Sending SIGTERM to '%s' (pid=%d)", name, proc.pid)
+class ServerTracker:
+    """Tracks all server PIDs (launched + adopted) for unified shutdown."""
+
+    def __init__(self) -> None:
+        # Servers we launched as subprocesses (we own the Popen handle).
+        self.launched: dict[str, subprocess.Popen] = {}
+        # Servers already running that we adopted (we only know the PID).
+        self.adopted: dict[str, int] = {}
+
+    def all_pids(self) -> dict[str, int]:
+        """Return {name: pid} for every tracked server."""
+        pids: dict[str, int] = {}
+        for name, proc in self.launched.items():
+            pids[name] = proc.pid
+        pids.update(self.adopted)
+        return pids
+
+    def terminate_all(self, wait_s: float = 15.0) -> None:
+        """Kill every tracked server — both launched and adopted.
+
+        Blocks until every process has exited (or been SIGKILL'd).
+        """
+        if not self.launched and not self.adopted:
+            return
+
+        all_pids = self.all_pids()
+        if not all_pids:
+            return
+
+        logger.info("Shutting down %d server(s) …", len(all_pids))
+
+        # 1. Send SIGTERM to everything.
+        for name, proc in self.launched.items():
+            if proc.poll() is None:
+                logger.info("  SIGTERM → '%s' (pid=%d)", name, proc.pid)
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass
+
+        for name, pid in self.adopted.items():
             try:
-                proc.terminate()
+                os.kill(pid, signal.SIGTERM)
+                logger.info("  SIGTERM → '%s' (pid=%d)", name, pid)
+            except ProcessLookupError:
+                logger.info("  '%s' (pid=%d) already gone", name, pid)
+
+        # 2. Wait for launched procs — poll with feedback.
+        deadline = time.monotonic() + wait_s
+        alive_launched = {
+            n: p for n, p in self.launched.items() if p.poll() is None
+        }
+        while alive_launched and time.monotonic() < deadline:
+            time.sleep(0.5)
+            for name in list(alive_launched):
+                if alive_launched[name].poll() is not None:
+                    logger.info("  '%s' exited (code=%d)", name, alive_launched[name].returncode)
+                    del alive_launched[name]
+
+        # SIGKILL stragglers.
+        for name, proc in alive_launched.items():
+            logger.warning("  '%s' (pid=%d) did not exit — SIGKILL", name, proc.pid)
+            try:
+                proc.kill()
+                proc.wait(timeout=3)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                pass
+
+        # 3. Wait for adopted PIDs.
+        alive_adopted = {}
+        for name, pid in self.adopted.items():
+            try:
+                os.kill(pid, 0)
+                alive_adopted[name] = pid
+            except ProcessLookupError:
+                logger.info("  '%s' (pid=%d) exited", name, pid)
+
+        while alive_adopted and time.monotonic() < deadline:
+            time.sleep(0.5)
+            for name in list(alive_adopted):
+                try:
+                    os.kill(alive_adopted[name], 0)
+                except ProcessLookupError:
+                    logger.info("  '%s' (pid=%d) exited", name, alive_adopted[name])
+                    del alive_adopted[name]
+
+        for name, pid in alive_adopted.items():
+            logger.warning("  '%s' (pid=%d) did not exit — SIGKILL", name, pid)
+            try:
+                os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
 
-    deadline = time.monotonic() + wait_s
-    for name, proc in procs.items():
-        remaining = max(0.0, deadline - time.monotonic())
+        logger.info("All servers stopped.")
+        self.launched.clear()
+        self.adopted.clear()
+
+    def check_launched(self) -> str | None:
+        """Return name of first launched process that exited, or None."""
+        for name, proc in self.launched.items():
+            if proc.poll() is not None:
+                return name
+        return None
+
+
+def _wait_pid(pid: int, name: str, timeout: float) -> None:
+    """Wait for a PID to die; SIGKILL if it doesn't within timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         try:
-            proc.wait(timeout=remaining)
-        except subprocess.TimeoutExpired:
-            logger.warning("'%s' did not exit cleanly; sending SIGKILL", name)
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.3)
+    try:
+        os.kill(pid, signal.SIGKILL)
+        logger.warning("Sent SIGKILL to '%s' (pid=%d)", name, pid)
+    except ProcessLookupError:
+        pass
+
+
+# Global tracker — atexit and signal handlers reference this.
+_tracker = ServerTracker()
+
+
+def _cleanup() -> None:
+    """atexit handler — ensures all servers die when the launcher exits."""
+    _tracker.terminate_all()
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +505,26 @@ def main() -> int:
         stream=sys.stdout,
     )
 
+    # Register atexit — covers sys.exit, unhandled exceptions, etc.
+    atexit.register(_cleanup)
+
+    # Signal handler sets a flag; the main loop checks it and calls
+    # terminate_all synchronously so we block until all servers are dead.
+    _shutdown_requested = False
+
+    def _handle_signal(signum, _frame):
+        nonlocal _shutdown_requested
+        if _shutdown_requested:
+            # Second Ctrl-C — force exit immediately.
+            logger.warning("Forced exit (second signal)")
+            _tracker.terminate_all(wait_s=3)
+            os._exit(1)
+        _shutdown_requested = True
+        logger.info("Signal %d received — will shut down after current tick …", signum)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
     # ---- Load + filter config ----
     logger.info("Loading config: %s", args.config)
     try:
@@ -389,67 +557,128 @@ def main() -> int:
         logger.error("Override error: %s", exc)
         return 1
 
-    # ---- Launch all servers ----
-    procs: dict[str, subprocess.Popen] = {}
-
-    def _handle_signal(signum, _frame):
-        logger.info("Signal %d received — shutting down all servers …", signum)
-        terminate_all(procs)
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-
-    failed_launch: list[str] = []
+    # ---- Pre-launch: detect already-running servers ----
+    to_launch: dict[str, dict] = {}
     for name, cfg in selected.items():
+        port = cfg["port"]
+        if _check_health(port):
+            pid = find_pid_on_port(port)
+            if pid is not None:
+                logger.info(
+                    "Server '%s' already healthy on port %d (pid=%d) — adopting",
+                    name, port, pid,
+                )
+                _tracker.adopted[name] = pid
+            else:
+                logger.info(
+                    "Server '%s' already healthy on port %d (pid unknown) — adopting",
+                    name, port,
+                )
+                # Can't track PID, but don't re-launch. Won't be killed on exit
+                # since we have no PID — log a warning.
+                logger.warning(
+                    "Cannot resolve PID for '%s' on port %d (psutil unavailable or "
+                    "permission denied). This server will NOT be killed on exit.",
+                    name, port,
+                )
+        else:
+            # Port not healthy — check if something is occupying it without /health
+            pid = find_pid_on_port(port)
+            if pid is not None:
+                logger.warning(
+                    "Port %d is occupied by pid=%d but /health failed — "
+                    "killing stale process before launching '%s'",
+                    port, pid, name,
+                )
+                _kill_pid(pid, f"stale:{name}")
+                time.sleep(1)  # brief pause for port release
+            to_launch[name] = cfg
+
+    # ---- Launch missing servers ----
+    failed_launch: list[str] = []
+    for name, cfg in to_launch.items():
         try:
             proc = launch_server(name, cfg, log_dir=args.log_dir)
-            procs[name] = proc
+            _tracker.launched[name] = proc
         except (FileNotFoundError, ValueError, OSError) as exc:
             logger.error("Failed to launch '%s': %s", name, exc)
             failed_launch.append(name)
 
     if failed_launch:
-        logger.error("Could not launch: %s — terminating running servers", failed_launch)
-        terminate_all(procs)
+        logger.error("Could not launch: %s — terminating all servers", failed_launch)
+        _tracker.terminate_all()
         return 1
 
-    # ---- Health checks ----
-    if not args.no_health_check:
-        server_ports = {name: cfg["port"] for name, cfg in selected.items()}
-        healthy = wait_for_health(server_ports, timeout_s=args.health_timeout)
+    total = len(_tracker.launched) + len(_tracker.adopted)
+    logger.info(
+        "Servers: %d launched, %d adopted (%d total)",
+        len(_tracker.launched),
+        len(_tracker.adopted),
+        total,
+    )
+
+    # ---- Health checks (only for newly launched servers) ----
+    if _tracker.launched and not args.no_health_check:
+        new_ports = {
+            name: selected[name]["port"] for name in _tracker.launched
+        }
+        healthy = False
+        for attempt in range(1, _HEALTH_MAX_RETRIES + 1):
+            logger.info(
+                "Health check attempt %d/%d (timeout=%ds)",
+                attempt, _HEALTH_MAX_RETRIES, int(args.health_timeout),
+            )
+            if wait_for_health(new_ports, timeout_s=args.health_timeout):
+                healthy = True
+                break
+            if attempt < _HEALTH_MAX_RETRIES:
+                # Check that unhealthy servers haven't crashed entirely.
+                for name in list(new_ports):
+                    proc = _tracker.launched.get(name)
+                    if proc and proc.poll() is not None:
+                        logger.error(
+                            "Server '%s' (pid=%d) crashed (code=%d) — "
+                            "no point retrying",
+                            name, proc.pid, proc.returncode,
+                        )
+                        _tracker.terminate_all()
+                        return 1
+                logger.info("Retrying health check …")
         if not healthy:
-            logger.error("Health check failed — terminating all servers")
-            terminate_all(procs)
+            logger.error(
+                "Health check failed after %d attempts — terminating all servers",
+                _HEALTH_MAX_RETRIES,
+            )
+            _tracker.terminate_all()
             return 1
-    else:
+    elif args.no_health_check:
         logger.info("Health check skipped (--no-health-check)")
 
     # ---- Keep running, monitor for unexpected exits ----
     logger.info(
-        "All %d server(s) running. Press Ctrl-C to stop.",
-        len(procs),
+        "All %d server(s) running. Press Ctrl-C to stop.", total,
     )
-    try:
-        while True:
-            time.sleep(5)
-            for name, proc in list(procs.items()):
-                rc = proc.poll()
-                if rc is not None:
-                    logger.error(
-                        "Server '%s' (pid=%d) exited unexpectedly with code %d",
-                        name,
-                        proc.pid,
-                        rc,
-                    )
-                    # Terminate remaining servers on unexpected exit
-                    terminate_all(procs)
-                    return 1
-    except KeyboardInterrupt:
-        logger.info("KeyboardInterrupt — shutting down …")
-        terminate_all(procs)
+    while True:
+        time.sleep(2)
 
-    return 0
+        # Check for shutdown signal (Ctrl-C / SIGTERM).
+        if _shutdown_requested:
+            logger.info("Shutting down all servers …")
+            _tracker.terminate_all()
+            return 0
+
+        # Check for unexpected process death.
+        dead = _tracker.check_launched()
+        if dead is not None:
+            proc = _tracker.launched[dead]
+            logger.error(
+                "Server '%s' (pid=%d) exited unexpectedly with code %d",
+                dead,
+                proc.pid,
+                proc.returncode,
+            )
+            _tracker.terminate_all()
+            return 1
 
 
 if __name__ == "__main__":

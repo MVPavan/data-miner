@@ -119,14 +119,9 @@ class AutoAcceptConfig(BaseModel):
 
     min_model_agreement: int = 2
     min_score: float = 0.0
-    """Global score floor; usually 0 because per-model floors are incomparable.
-    Used as a fallback when ``per_model_score`` does not list a model.
-    """
-    per_model_score: dict[str, float] = Field(default_factory=dict)
-    """Per-detector score floor. Keys are ``source_model`` strings as set by the
-    detector workers (e.g. ``grounding_dino``, ``owlvit2``, ``sam3``, ``falcon``).
-    A candidate qualifies for auto-accept only if its score >= the floor for
-    its own model. Models absent from the map fall back to ``min_score``.
+    """Global score floor used as routing fallback. Per-model floors live in
+    ``filtering.per_model_score`` and are applied earlier (pre-dedup filter +
+    cross-class suppression tiebreak).
     """
     tiers: list[int] = Field(default_factory=lambda: [1])
     """Tiers eligible for auto-accept. Empty list disables auto-accept entirely.
@@ -289,6 +284,13 @@ class FilterConfig(BaseModel):
     min_aspect_ratio: float = 0.1
     max_aspect_ratio: float = 10.0
     min_edge_distance: float = 0.0
+    per_model_score: dict[str, float] = Field(default_factory=dict)
+    """Per-detector score floor. Keys are ``source_model`` strings (e.g.
+    ``grounding_dino``, ``sam3_dart``, ``falcon``). Candidates whose score is
+    below their model's floor are dropped before dedup (step 3.5) and used as
+    the tiebreak signal in cross-class suppression (step 6). Models absent
+    from the map are not filtered by score.
+    """
     iou_dedup: IouDedupConfig = Field(default_factory=IouDedupConfig)
     max_per_class: int = 30
 

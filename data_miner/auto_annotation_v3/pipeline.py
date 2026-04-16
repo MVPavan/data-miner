@@ -3,7 +3,8 @@
 import asyncio
 import logging
 import signal
-import uuid
+import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from .config import AutoAnnotationV3Config, load_config, compute_config_hash
@@ -30,7 +31,7 @@ class AutoAnnotationPipelineV3:
         self.job_id = (
             job_id
             or config.runtime.job_id
-            or f"job_{uuid.uuid4().hex[:8]}"
+            or f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
 
         # Setup output directory
@@ -46,11 +47,85 @@ class AutoAnnotationPipelineV3:
         self.checkpoint = CheckpointManager(self.job_dir / "checkpoints")
         self.output_writer = OutputWriter(self.job_dir)
         self.broker = RedisMessageBroker.from_config(config)
-        self.submitter = JobSubmitter(config, self.broker)
+        self.submitter = JobSubmitter(config, self.broker, checkpoint=self.checkpoint)
         self.monitor = PipelineMonitor(self.broker, self.checkpoint)
 
         self._workers: list = []
         self._tasks: list = []
+        self._monitor_task: asyncio.Task | None = None
+
+    # ------------------------------------------------------------------
+    # Preflight health checks
+    # ------------------------------------------------------------------
+
+    def _check_endpoint(self, url: str, timeout: float = 3.0) -> bool:
+        """Return True if *url* responds with HTTP 200."""
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                return resp.status == 200
+        except (urllib.error.URLError, OSError):
+            return False
+
+    def preflight(self) -> None:
+        """Verify all required servers are online before the pipeline starts.
+
+        Checks:
+        - Every enabled detector server (/health endpoint)
+        - VLM server (/health endpoint)
+        - Redis connectivity
+
+        Raises RuntimeError with a summary of all failures.
+        """
+        logger.info("Running preflight health checks …")
+        failures: list[str] = []
+
+        # 1. Detector servers
+        for name, cfg in self.config.servers.enabled_detectors().items():
+            url = f"http://localhost:{cfg.port}/health"
+            if self._check_endpoint(url):
+                logger.info("  ✓ %s (port %d)", name.value, cfg.port)
+            else:
+                msg = f"Detector '{name.value}' not reachable at localhost:{cfg.port}/health"
+                logger.error("  ✗ %s", msg)
+                failures.append(msg)
+
+        # 2. VLM server
+        vlm_base = self.config.servers.vlm.url.rstrip("/")
+        # vLLM exposes /health at the base URL (not under /v1)
+        vlm_health = vlm_base.replace("/v1", "") + "/health"
+        if self._check_endpoint(vlm_health):
+            logger.info("  ✓ VLM (%s)", vlm_health)
+        else:
+            msg = f"VLM not reachable at {vlm_health}"
+            logger.error("  ✗ %s", msg)
+            failures.append(msg)
+
+        # 3. Redis
+        try:
+            import redis
+            r = redis.Redis(
+                host=self.config.redis.host,
+                port=self.config.redis.port,
+                db=self.config.redis.db,
+                socket_connect_timeout=3,
+            )
+            r.ping()
+            r.close()
+            logger.info(
+                "  ✓ Redis (%s:%d)", self.config.redis.host, self.config.redis.port
+            )
+        except Exception as exc:
+            msg = f"Redis not reachable at {self.config.redis.host}:{self.config.redis.port} — {exc}"
+            logger.error("  ✗ %s", msg)
+            failures.append(msg)
+
+        if failures:
+            summary = "\n  - ".join(failures)
+            raise RuntimeError(
+                f"Preflight failed — {len(failures)} server(s) unreachable:\n  - {summary}\n"
+                "Start the missing servers and retry."
+            )
+        logger.info("Preflight passed — all servers healthy.")
 
     def _create_workers(self) -> list:
         """Create worker instances based on config."""
@@ -64,6 +139,7 @@ class AutoAnnotationPipelineV3:
                 checkpoint_mgr=self.checkpoint,
                 output_writer=None,
                 worker_id=f"detect-{i}",
+                job_id=self.job_id,
             )
             workers.append(w)
 
@@ -75,6 +151,7 @@ class AutoAnnotationPipelineV3:
                 checkpoint_mgr=self.checkpoint,
                 output_writer=None,
                 worker_id=f"evaluate-{i}",
+                job_id=self.job_id,
             )
             workers.append(w)
 
@@ -86,6 +163,7 @@ class AutoAnnotationPipelineV3:
                 checkpoint_mgr=self.checkpoint,
                 output_writer=None,   # outputs are written by finalize
                 worker_id=f"refine-{i}",
+                job_id=self.job_id,
             )
             workers.append(w)
 
@@ -97,6 +175,7 @@ class AutoAnnotationPipelineV3:
                 checkpoint_mgr=self.checkpoint,
                 output_writer=self.output_writer,
                 worker_id=f"finalize-{i}",
+                job_id=self.job_id,
             )
             workers.append(w)
 
@@ -115,6 +194,9 @@ class AutoAnnotationPipelineV3:
         3. ``config.runtime.image_paths``
         4. ``config.runtime.image_dir``
         """
+        # Preflight: verify all servers are reachable before committing.
+        self.preflight()
+
         # Connect to Redis
         await self.broker.connect()
 
@@ -124,10 +206,13 @@ class AutoAnnotationPipelineV3:
             image_paths = image_paths or list(self.config.runtime.image_paths)
 
             if image_paths:
-                await self.submitter.submit_images(image_paths, self.job_id)
-                total = len(image_paths)
+                submitted, total_input = await self.submitter.submit_images(
+                    image_paths, self.job_id
+                )
             elif image_dir:
-                total = await self.submitter.submit_directory(image_dir, self.job_id)
+                submitted, total_input = await self.submitter.submit_directory(
+                    image_dir, self.job_id
+                )
             else:
                 raise ValueError(
                     "No input provided — set runtime.image_dir or "
@@ -135,7 +220,11 @@ class AutoAnnotationPipelineV3:
                     "image_paths to run())"
                 )
 
-            logger.info("Submitted %d images for job %s", total, self.job_id)
+            if submitted == 0:
+                logger.info("All images already complete for job %s — nothing to do", self.job_id)
+                return
+
+            logger.info("Submitted %d/%d images for job %s", submitted, total_input, self.job_id)
 
             # Write classes file
             class_map = {c.name: c.id for c in self.config.classes}
@@ -152,22 +241,32 @@ class AutoAnnotationPipelineV3:
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.add_signal_handler(sig, self._shutdown)
 
-            # Wait for completion
-            completed = await self.monitor.wait_for_completion(
-                total, poll_interval=5.0, timeout=None, print_progress=True
+            # Wait for completion — use total_input (not submitted) so
+            # same-job-id reruns wait for ALL images, not just new ones.
+            # Wrapped in a task so _shutdown() can cancel it on Ctrl+C.
+            self._monitor_task = asyncio.create_task(
+                self.monitor.wait_for_completion(
+                    total_input, poll_interval=5.0, timeout=None, print_progress=True
+                )
             )
+            try:
+                completed = await self._monitor_task
+            except asyncio.CancelledError:
+                logger.info("Monitor cancelled — shutting down")
+                completed = False
 
             if completed:
                 logger.info("Pipeline complete for job %s", self.job_id)
             else:
-                logger.warning("Pipeline timed out for job %s", self.job_id)
+                logger.warning("Pipeline did not complete for job %s", self.job_id)
 
             # Write summary
             status = await self.monitor.get_status()
             self.output_writer.write_summary(
                 {
                     "job_id": self.job_id,
-                    "total_images": total,
+                    "total_images": total_input,
+                    "submitted": submitted,
                     "status": status,
                     "completed": completed,
                 }
@@ -178,12 +277,14 @@ class AutoAnnotationPipelineV3:
             await self.broker.close()
 
     def _shutdown(self) -> None:
-        """Gracefully stop all workers."""
+        """Gracefully stop all workers and the monitor."""
         logger.info("Shutting down workers...")
         for w in self._workers:
             w.stop()
         for t in self._tasks:
             t.cancel()
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
 
     async def run_single_image(self, image_path: str) -> None:
         """Run pipeline for a single image (convenience method)."""

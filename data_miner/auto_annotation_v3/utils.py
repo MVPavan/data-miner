@@ -185,6 +185,48 @@ def geometric_filter(candidates: list, config: Any) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Per-model score filtering
+# ---------------------------------------------------------------------------
+
+
+def filter_by_model_score(candidates: list, per_model_score: dict[str, float]) -> list:
+    """Drop candidates below their model's score floor.
+
+    Args:
+        candidates: list of objects with ``.source_model`` and ``.score``.
+        per_model_score: mapping ``{model_name: min_score}``. Models absent
+            from the map are not filtered (all their candidates pass).
+
+    Returns:
+        Filtered list of candidates that meet their model's floor.
+    """
+    if not per_model_score:
+        return list(candidates)
+
+    logger = get_logger("utils.filter_by_model_score")
+    passed = []
+    for cand in candidates:
+        floor = per_model_score.get(cand.source_model)
+        if floor is not None and cand.score < floor:
+            logger.debug(
+                "Filtered %s: score=%.4f < %s floor=%.4f",
+                cand.candidate_id,
+                cand.score,
+                cand.source_model,
+                floor,
+            )
+            continue
+        passed.append(cand)
+
+    logger.info(
+        "Per-model score filtering: %d → %d candidates",
+        len(candidates),
+        len(passed),
+    )
+    return passed
+
+
+# ---------------------------------------------------------------------------
 # Dedup
 # ---------------------------------------------------------------------------
 
@@ -373,7 +415,7 @@ def route_candidates(candidates: list, config: Any) -> dict:
     auto_accepted: list[str] = []
     needs_evaluation: list[str] = []
 
-    per_model_score = getattr(aa_cfg, "per_model_score", {}) or {}
+    per_model_score = getattr(config.filtering, "per_model_score", {}) or {}
     fallback_score = aa_cfg.min_score
 
     for cand in candidates:
@@ -419,12 +461,55 @@ def route_candidates(candidates: list, config: Any) -> dict:
     }
 
 
+def _cross_class_winner(a: Any, b: Any, iou_dedup_cfg: Any) -> Any:
+    """Pick the winner of a cross-class overlap using the same tiebreak cascade
+    as cluster_and_collapse: agreement → model_priority → score.
+
+    Returns the *loser* (the candidate to suppress).
+    """
+    tiebreak_by = list(iou_dedup_cfg.tiebreak_by)
+    priority_index = {m: i for i, m in enumerate(iou_dedup_cfg.model_priority)}
+    fallback_priority = len(iou_dedup_cfg.model_priority)
+
+    pool = [a, b]
+    for key in tiebreak_by:
+        if len(pool) == 1:
+            break
+        if key == "agreement":
+            best = max(m.agreement for m in pool)
+            winners = [m for m in pool if m.agreement == best]
+            if len(winners) < len(pool):
+                pool = winners
+        elif key == "model_priority":
+            best = min(
+                priority_index.get(m.source_model, fallback_priority)
+                for m in pool
+            )
+            winners = [
+                m for m in pool
+                if priority_index.get(m.source_model, fallback_priority) == best
+            ]
+            if len(winners) < len(pool):
+                pool = winners
+        elif key == "score":
+            best_score = max(m.score for m in pool)
+            winners = [m for m in pool if m.score == best_score]
+            if len(winners) < len(pool):
+                pool = winners
+
+    # pool[0] is the winner; return the loser
+    winner = pool[0]
+    return b if winner is a else a
+
+
 def apply_cross_class_rules(candidates: list, config: Any) -> list:
     """Apply co-existence rules across class boundaries.
 
     - globally_exempt classes (e.g. person, head) are never suppressed.
     - confusion_pairs with high IoU are flagged but not suppressed (handled in evaluate).
-    - For all other cross-class overlaps with IoU > 0.5: suppress the lower-score box.
+    - For all other cross-class overlaps with IoU > 0.5: suppress the loser
+      chosen by the tiebreak cascade (agreement → model_priority → score),
+      the same cascade used by cluster_and_collapse.
 
     Returns a filtered list of candidates.
     """
@@ -433,6 +518,7 @@ def apply_cross_class_rules(candidates: list, config: Any) -> list:
     confusion_pairs: list[frozenset] = [
         frozenset(pair) for pair in co.confusion_pairs
     ]
+    iou_dedup_cfg = config.filtering.iou_dedup
 
     suppressed: set[str] = set()
 
@@ -445,7 +531,7 @@ def apply_cross_class_rules(candidates: list, config: Any) -> list:
             if b.candidate_id in suppressed:
                 continue
             if a.class_name == b.class_name:
-                continue  # same class handled by dedup_by_iou
+                continue  # same class handled by cluster_and_collapse
 
             # Neither may be suppressed if exempt
             a_exempt = a.class_name in exempt
@@ -459,8 +545,7 @@ def apply_cross_class_rules(candidates: list, config: Any) -> list:
 
             iou = bbox_iou(a.bbox, b.bbox)
             if iou > 0.5:
-                # Suppress the lower-score candidate
-                loser = b if a.score >= b.score else a
+                loser = _cross_class_winner(a, b, iou_dedup_cfg)
                 suppressed.add(loser.candidate_id)
 
     return [c for c in candidates if c.candidate_id not in suppressed]

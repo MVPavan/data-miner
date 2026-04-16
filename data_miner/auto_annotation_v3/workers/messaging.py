@@ -135,18 +135,29 @@ class RedisMessageBroker:
         return self._redis
 
     async def _ensure_consumer_groups(self) -> None:
-        """Create consumer groups for every stream (idempotent via BUSYGROUP guard)."""
+        """Create consumer groups for every stream (idempotent via BUSYGROUP guard).
+
+        Uses ``id="$"`` so that a freshly-created group only sees messages
+        submitted *after* this point.  This prevents stale messages from
+        prior jobs being replayed when a new pipeline run connects to
+        streams that still contain old entries.  Safe because the
+        :class:`~.submitter.JobSubmitter` always (re-)submits messages for
+        the current job after ``connect()``.
+        """
         r = self._require_redis()
         for stage in self._ALL_STAGES:
             stream = self.streams.stream_for_stage(stage)
             try:
                 await r.xgroup_create(
-                    stream, self.consumer_group, id="0", mkstream=True
+                    stream, self.consumer_group, id="$", mkstream=True
                 )
                 logger.debug("Created consumer group '%s' on %s", self.consumer_group, stream)
             except aioredis.ResponseError as exc:
                 if "BUSYGROUP" not in str(exc):
                     raise
+                # Group already exists — leave its read position as-is.
+                # Resetting to "$" here would skip undelivered messages
+                # from a parallel pipeline sharing this consumer group.
 
     # ------------------------------------------------------------------
     # Publishing
@@ -259,6 +270,29 @@ class RedisMessageBroker:
         r = self._require_redis()
         stream = self.streams.stream_for_stage(stage)
         return await r.xlen(stream)
+
+    async def count_by_job(self, stage: str, job_id: str) -> int:
+        """Count entries in *stage*'s stream that belong to *job_id*.
+
+        Reads all entries (``XRANGE 0 +``) and counts those whose
+        ``data.job_id`` matches. For pipelines with < ~10k images per
+        stream this is fast enough for a 5-second poll; for larger
+        volumes a secondary index (sorted set keyed by job_id) would
+        be more efficient.
+        """
+        r = self._require_redis()
+        stream = self.streams.stream_for_stage(stage)
+        count = 0
+        # XRANGE returns all entries; we parse just enough to check job_id.
+        entries = await r.xrange(stream)
+        for _msg_id, fields in entries:
+            try:
+                data = json.loads(fields.get("data", "{}"))
+                if data.get("job_id") == job_id:
+                    count += 1
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return count
 
     async def pending_count(self, stage: str) -> int:
         """Return the number of pending (unacknowledged) messages for the consumer group."""

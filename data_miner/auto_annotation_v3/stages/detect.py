@@ -30,6 +30,7 @@ from ..utils import (
     apply_cross_class_rules,
     build_class_alias_map,
     cluster_and_collapse,
+    filter_by_model_score,
     geometric_filter,
     get_image_size,
     limit_per_class,
@@ -105,6 +106,14 @@ class DetectWorker(StageWorker):
         filtered = geometric_filter(all_candidates, self.config)
         after_geometric = len(filtered)
 
+        # 3.5. Per-model score floor: drop candidates below their model's
+        #      calibrated threshold before they can influence dedup or
+        #      cross-class suppression.
+        filtered = filter_by_model_score(
+            filtered, self.config.filtering.per_model_score
+        )
+        after_model_score = len(filtered)
+
         # 4. Per-class cluster-and-collapse: groups detections of the same
         #    class across all models by IoU>=threshold, attaches agreement
         #    metadata, and picks one representative per cluster via the
@@ -136,6 +145,7 @@ class DetectWorker(StageWorker):
             filter_stats={
                 "total_proposed": total_proposed,
                 "after_geometric_filter": after_geometric,
+                "after_model_score_filter": after_model_score,
                 "after_iou_dedup": after_dedup,
                 "after_per_class_cap": after_cap,
                 "after_cross_class_rules": len(cross_filtered),
