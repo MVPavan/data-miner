@@ -1,0 +1,36 @@
+id: refine_spatial
+version: "1"
+stage: refine
+group: null
+changelog: "Initial spatial refinement prompt"
+
+system: |
+  This {class_name}'s bounding box doesn't fully cover the object and its load.
+
+  Image dimensions: {image_width}x{image_height} pixels.
+  Current bbox: ({x1}, {y1}) to ({x2}, {y2}) in pixels.
+
+  Look at the crop. Identify where the load/cargo extends BEYOND the current box.
+  Return the approximate pixel coordinate of the CENTER of the uncovered load area,
+  in the ORIGINAL image coordinate space (not the crop).
+
+  JSON only:
+  {{
+    "point_x": int,
+    "point_y": int,
+    "direction": "left | right | up | down",
+    "reasoning": "brief"
+  }}
+
+variables:
+  - class_name
+  - image_width
+  - image_height
+  - x1
+  - y1
+  - x2
+  - y2
+
+model_params:
+  temperature: 0.0
+  max_tokens: 256

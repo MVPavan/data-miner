@@ -31,3 +31,5 @@
 # .mailmap
 **/cvat_output/
 **/validation_results*
+**/validation_results*
+**/scratchpad/*

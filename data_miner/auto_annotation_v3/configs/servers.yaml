@@ -1,0 +1,72 @@
+# Model servers (LitServe detectors + VLM)
+#
+# Split from default.yaml — merged automatically at load time.
+# Override per-server settings in your user config or via CLI dotlist.
+
+servers:
+  detectors:
+    grounding_dino:
+      enabled: true
+      port: 3001
+      gpu: "cuda:0"
+      max_batch_size: 8
+      batch_timeout_ms: 50
+      model_id: "IDEA-Research/grounding-dino-base"
+      script: "serve_gdino.py"
+
+    falcon:
+      enabled: false
+      port: 3002
+      gpu: "cuda:0"
+      max_batch_size: 4
+      batch_timeout_ms: 100
+      model_id: "tiiuae/Falcon-Perception"
+      script: "serve_falcon.py"
+
+    sam3:
+      enabled: false          # superseded by sam3_dart; flip to true to rollback
+      port: 3003
+      gpu: "cuda:1"
+      max_batch_size: 8
+      batch_timeout_ms: 50
+      model_id: "facebook/sam3"
+      script: "serve_sam3.py"
+
+    sam3_dart:
+      enabled: true
+      port: 3013
+      gpu: "cuda:1"           # same slot sam3 used to occupy
+      max_batch_size: 8       # LitServe needs ≥2 to enter batched mode (predict gets list)
+      batch_timeout_ms: 50
+      model_id: "facebook/sam3"
+      script: "serve_sam3_dart.py"
+      options:
+        detection_only: true  # M4; flip to false for M3 (masks preserved)
+        presence_threshold: 0.05
+
+    owlvit2:
+      enabled: false          # parked — kept discoverable but off
+      port: 3004
+      gpu: "cuda:1"
+      max_batch_size: 8
+      batch_timeout_ms: 50
+      model_id: "google/owlv2-base-patch16-ensemble"
+      script: "serve_owlvit2.py"
+
+    omdet_turbo:
+      enabled: false          # OmDet-Turbo open-vocab detector
+      port: 3005
+      gpu: "cuda:0"
+      max_batch_size: 8
+      batch_timeout_ms: 50
+      model_id: "omlab/omdet-turbo-swin-tiny-hf"
+      script: "serve_omdet_turbo.py"
+
+  vlm:
+    url: "http://localhost:8955/v1"
+    model: "Qwen/Qwen3.5-27B-FP8"
+    api_key: "dummy"
+    temperature: 0.0
+    max_tokens: 4096
+    max_retries: 2
+    timeout: 120.0

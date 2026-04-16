@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AA v3 Viewer</title>
+<style>
+  :root {
+    --bg: #111; --bg2: #1a1a2e; --bg3: #222; --text: #e0e0e0;
+    --accent: #3b82f6; --border: #333; --muted: #888;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+
+  /* Sidebar */
+  #sidebar { width: 300px; min-width: 300px; background: var(--bg2); display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+  #sidebar-header { padding: 12px; border-bottom: 1px solid var(--border); }
+  #sidebar-header h2 { font-size: 16px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+  #refresh-btn { background: none; border: 1px solid var(--border); color: var(--text); cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+  #refresh-btn:hover { background: var(--bg3); }
+  #search { width: 100%; padding: 6px 10px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 13px; outline: none; }
+  #search:focus { border-color: var(--accent); }
+  #count { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  #image-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+  .stem-btn { display: flex; justify-content: space-between; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 6px 10px; margin-bottom: 2px; background: none; border: none; color: var(--text); cursor: pointer; border-radius: 4px; font-size: 13px; }
+  .stem-btn:hover { background: var(--bg3); }
+  .stem-btn.active { background: #1e3a5f; color: #93c5fd; }
+  .stem-btn .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #555; }
+  .status-dot.complete { background: #00C800; }
+  .status-dot.in_progress { background: #FFA500; }
+  .status-dot.failed { background: #FF0000; }
+
+  /* Main */
+  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #tabs { display: flex; background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0 12px; flex-shrink: 0; align-items: center; }
+  .tab { padding: 10px 14px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; color: var(--muted); user-select: none; white-space: nowrap; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  #current-image-label { margin-left: auto; font-size: 13px; color: #93c5fd; padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 480px; }
+
+  /* Toolbar (per-tab controls) */
+  #toolbar { display: flex; align-items: center; gap: 14px; padding: 8px 16px; font-size: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; flex-shrink: 0; min-height: 38px; }
+  .toolbar-group { display: flex; align-items: center; gap: 8px; }
+  .toolbar-group .group-label { color: var(--muted); font-weight: 600; }
+  .chk { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border); }
+  .chk input { accent-color: var(--accent); }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; display: inline-block; }
+  /* Dropdown filter (used when chips don't scale, e.g. many classes) */
+  .dd { position: relative; display: inline-block; }
+  .dd-trigger { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .dd-trigger:hover { border-color: var(--accent); }
+  .dd-trigger .dd-count { color: var(--muted); }
+  .dd-panel { position: absolute; top: 100%; left: 0; margin-top: 4px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; z-index: 100; min-width: 220px; max-height: 360px; overflow-y: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .dd-panel.hidden { display: none; }
+  .dd-search { width: 100%; padding: 4px 8px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 12px; outline: none; margin-bottom: 6px; }
+  .dd-actions { display: flex; gap: 6px; margin-bottom: 6px; }
+  .dd-actions button { flex: 1; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+  .dd-actions button:hover { background: var(--bg); border-color: var(--accent); }
+  .dd-list { display: flex; flex-direction: column; gap: 2px; }
+  .dd-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; cursor: pointer; border-radius: 3px; font-size: 12px; }
+  .dd-row:hover { background: var(--bg3); }
+  .dd-row input { accent-color: var(--accent); }
+
+  /* Content */
+  #content { flex: 1; display: flex; overflow: hidden; padding: 12px; gap: 12px; min-height: 0; }
+  #image-panel { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; min-width: 0; }
+  #image-container { position: relative; display: inline-block; max-width: 100%; max-height: 100%; }
+  #image-container img { display: block; max-width: 100%; max-height: calc(100vh - 160px); object-fit: contain; }
+  #image-container svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+  #no-image { color: var(--muted); font-size: 13px; }
+
+  /* Detail panel */
+  #detail-panel { width: 420px; min-width: 360px; overflow-y: auto; background: var(--bg2); border-radius: 8px; padding: 16px; }
+  #detail-panel h3 { font-size: 15px; margin-bottom: 12px; }
+  .detail-card { background: var(--bg3); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; line-height: 1.55; border-left: 3px solid var(--border); }
+  .detail-card.accept { border-left-color: #00C800; }
+  .detail-card.reject { border-left-color: #FF0000; }
+  .detail-card.refine { border-left-color: #FFA500; }
+  .detail-card .field { margin-bottom: 2px; }
+  .detail-card .label { color: var(--muted); }
+  .detail-card .value { color: var(--text); font-weight: 500; }
+  .detail-card .reasoning { color: #aaa; font-style: italic; margin-top: 6px; padding-top: 6px; border-top: 1px solid #2a2a2a; }
+  .detail-header { font-size: 13px; color: #aaa; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .detail-header b { color: var(--text); }
+  pre.json { background: #0d0d0d; padding: 10px; border-radius: 4px; font-size: 11px; line-height: 1.4; overflow-x: auto; color: #cdd; }
+
+  /* Toast */
+  #toast { position: fixed; bottom: 20px; right: 20px; background: #1e3a5f; color: #93c5fd; padding: 10px 18px; border-radius: 6px; font-size: 13px; display: none; z-index: 999; }
+  .loading { color: var(--muted); font-size: 14px; text-align: center; padding: 40px; }
+
+  /* Color-by toggle */
+  .color-toggle { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .color-toggle:hover { border-color: var(--accent); }
+  .color-toggle .active-mode { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h2>Images <button id="refresh-btn" title="Re-scan job directory">↻</button></h2>
+    <input id="search" type="text" placeholder="Search image ids…">
+    <div id="count"></div>
+  </div>
+  <div id="image-list"></div>
+</div>
+
+<div id="main">
+  <div id="tabs">
+    <div class="tab active" data-stage="proposals">1. Proposals</div>
+    <div class="tab" data-stage="detect">2. Detect</div>
+    <div class="tab" data-stage="evaluate">3. Evaluate</div>
+    <div class="tab" data-stage="refine">4. Refine</div>
+    <div class="tab" data-stage="finalize">5. Finalize</div>
+    <div class="tab" data-stage="final">6. Final (YOLO)</div>
+    <div class="tab" data-stage="meta">Meta</div>
+    <span id="current-image-label" title=""></span>
+  </div>
+
+  <div id="toolbar"></div>
+
+  <div id="content">
+    <div id="image-panel">
+      <div id="image-container">
+        <img id="viewer-img" src="" alt="">
+        <svg id="overlay-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1" preserveAspectRatio="none"></svg>
+      </div>
+      <div id="no-image" style="display:none">No image found for this stem.</div>
+    </div>
+    <div id="detail-panel">
+      <h3>Details</h3>
+      <div id="detail-content" class="loading">Select an image</div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const S = {
+  stems: [],
+  stemMeta: {},        // stem -> meta status (cached lazily)
+  currentStem: null,
+  currentStage: 'proposals',
+  data: null,
+  imgW: 0, imgH: 0,
+  // toolbar toggles (per-tab)
+  toggles: {
+    detectRouting: { auto_accepted: true, needs_evaluation: true, other: true },
+    evaluateVerdict: { accepted: true, review: true, rejected: true },
+    refineShow: { original: true, refined: true, rejected: true },
+    // Global cross-tab filters: only show overlays whose class/source_model
+    // is enabled here. Keys initialised on first data load.
+    classFilter: {},      // class_name -> bool (true = visible)
+    modelFilter: {},      // source_model -> bool (true = visible)
+  },
+  colorBy: 'class',       // 'model' | 'class' — controls bbox color dimension
+};
+
+// ---------------------------------------------------------------------------
+// Color maps
+// ---------------------------------------------------------------------------
+const MODEL_COLORS = {
+  grounding_dino: '#FF6400',
+  gdino:          '#FF6400',
+  falcon:         '#0096FF',
+  owlvit2:        '#A855F7',
+  owlv2:          '#A855F7',
+  sam3:           '#00C864',
+  sam:            '#00C864',
+};
+const ROUTING_COLORS = {
+  auto_accepted:    '#00C800',
+  needs_evaluation: '#FFA500',
+  other:            '#888888',
+};
+const VERDICT_COLORS = {
+  accepted: '#00C800',
+  review:   '#FFA500',
+  rejected: '#FF0000',
+};
+const REFINE_COLORS = {
+  original: '#888888',
+  refined:  '#00C800',
+  rejected: '#FF0000',
+};
+const FALLBACK = ['#FF6347','#4ECDC4','#FFD700','#FF69B4','#7CFC00','#00CED1','#FFA07A','#9370DB',
+  '#E6194B','#3CB44B','#4363D8','#F58231','#911EB4','#42D4F4','#F032E6','#BFEF45'];
+
+// Stable per-class color: hash class name → palette index so colours stay
+// consistent across images/sessions regardless of discovery order.
+const _classColorCache = {};
+function classColor(name) {
+  if (_classColorCache[name]) return _classColorCache[name];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  _classColorCache[name] = FALLBACK[((h % FALLBACK.length) + FALLBACK.length) % FALLBACK.length];
+  return _classColorCache[name];
+}
+
+function colorFor(map, key, idx) { return map[key] || FALLBACK[idx % FALLBACK.length]; }
+
+// Returns the appropriate color for a candidate/annotation based on the
+// current colorBy mode.  `stageFn` is a no-arg function returning the
+// stage-specific color (model, routing, verdict, refine status, etc.).
+function pickColor(stageFn, className) {
+  return S.colorBy === 'class' ? classColor(className || '?') : stageFn();
+}
+
+// ---------------------------------------------------------------------------
+// DOM refs
+// ---------------------------------------------------------------------------
+const $list = document.getElementById('image-list');
+const $search = document.getElementById('search');
+const $count = document.getElementById('count');
+const $img = document.getElementById('viewer-img');
+const $svg = document.getElementById('overlay-svg');
+const $detail = document.getElementById('detail-content');
+const $toast = document.getElementById('toast');
+const $tabs = document.querySelectorAll('.tab');
+const $toolbar = document.getElementById('toolbar');
+const $noImage = document.getElementById('no-image');
+const $imgContainer = document.getElementById('image-container');
+
+// ---------------------------------------------------------------------------
+// API
+// ---------------------------------------------------------------------------
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar
+// ---------------------------------------------------------------------------
+function renderSidebar() {
+  const q = $search.value.toLowerCase();
+  let visible = 0;
+  $list.innerHTML = '';
+  for (const stem of S.stems) {
+    if (q && !stem.toLowerCase().includes(q)) continue;
+    visible++;
+    const btn = document.createElement('button');
+    btn.className = 'stem-btn' + (stem === S.currentStem ? ' active' : '');
+    const status = S.stemMeta[stem] || '';
+    btn.innerHTML = `<span class="name">${escHTML(stem)}</span><span class="status-dot ${escAttr(status)}"></span>`;
+    btn.title = stem + (status ? ` — ${status}` : '');
+    btn.onclick = () => selectImage(stem);
+    $list.appendChild(btn);
+  }
+  $count.textContent = q ? `${visible}/${S.stems.length} images` : `${S.stems.length} images`;
+}
+
+async function refreshStems() {
+  const old = new Set(S.stems);
+  S.stems = await fetchJSON('/api/stems');
+  renderSidebar();
+  const added = S.stems.filter(s => !old.has(s)).length;
+  showToast(added > 0 ? `${added} new image(s) found` : 'No new images');
+}
+
+$search.addEventListener('input', renderSidebar);
+document.getElementById('refresh-btn').onclick = refreshStems;
+
+// ---------------------------------------------------------------------------
+// Image selection
+// ---------------------------------------------------------------------------
+async function selectImage(stem) {
+  S.currentStem = stem;
+  renderSidebar();
+  $detail.innerHTML = '<div class="loading">Loading…</div>';
+  $svg.innerHTML = '';
+
+  try {
+    S.data = await fetchJSON(`/api/data/${encodeURIComponent(stem)}`);
+  } catch (e) {
+    $detail.innerHTML = `<div class="loading">Failed to load: ${escHTML(String(e))}</div>`;
+    return;
+  }
+  S.imgW = S.data.image_width || 0;
+  S.imgH = S.data.image_height || 0;
+
+  // Cache meta status for sidebar coloring.
+  if (S.data.meta && S.data.meta.status) {
+    S.stemMeta[stem] = S.data.meta.status;
+    renderSidebar();
+  }
+
+  if (S.data.image_url) {
+    $img.src = S.data.image_url;
+    $img.style.display = 'block';
+    $noImage.style.display = 'none';
+    $imgContainer.style.display = '';
+  } else {
+    $img.style.display = 'none';
+    $imgContainer.style.display = 'none';
+    $noImage.style.display = 'block';
+  }
+
+  document.getElementById('current-image-label').textContent = stem;
+  document.getElementById('current-image-label').title = stem;
+
+  if (S.imgW > 0 && S.imgH > 0) {
+    $svg.setAttribute('viewBox', `0 0 ${S.imgW} ${S.imgH}`);
+  } else {
+    $svg.setAttribute('viewBox', '0 0 1 1');
+  }
+
+  renderToolbar();
+  renderStage();
+}
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+$tabs.forEach(tab => {
+  tab.onclick = () => {
+    $tabs.forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    S.currentStage = tab.dataset.stage;
+    renderToolbar();
+    renderStage();
+  };
+});
+
+// ---------------------------------------------------------------------------
+// Toolbar (per-tab controls)
+// ---------------------------------------------------------------------------
+function renderToolbar() {
+  $toolbar.innerHTML = '';
+  if (!S.data) return;
+
+  _initGlobalFilters();
+
+  // Color-by toggle (model vs class) — shown on every tab
+  const cbGrp = document.createElement('div');
+  cbGrp.className = 'toolbar-group';
+  cbGrp.innerHTML = `<span class="group-label">Color:</span>`;
+  const cbBtn = document.createElement('button');
+  cbBtn.className = 'color-toggle';
+  const isClass = S.colorBy === 'class';
+  cbBtn.innerHTML = `<span class="${isClass ? 'active-mode' : ''}">class</span> / <span class="${!isClass ? 'active-mode' : ''}">model</span>`;
+  cbBtn.onclick = () => { S.colorBy = S.colorBy === 'class' ? 'model' : 'class'; renderToolbar(); renderStage(); };
+  cbGrp.appendChild(cbBtn);
+  $toolbar.appendChild(cbGrp);
+
+  const stage = S.currentStage;
+  if (stage === 'proposals') {
+    // The per-tab Models toggle was removed — it duplicated the global Model
+    // filter rendered below. Per-model overlay control is unified there.
+  } else if (stage === 'detect') {
+    addToolbarGroup('Routing', [
+      { label: 'auto_accepted', color: ROUTING_COLORS.auto_accepted, checked: S.toggles.detectRouting.auto_accepted, onChange: v => { S.toggles.detectRouting.auto_accepted = v; renderStage(); } },
+      { label: 'needs_evaluation', color: ROUTING_COLORS.needs_evaluation, checked: S.toggles.detectRouting.needs_evaluation, onChange: v => { S.toggles.detectRouting.needs_evaluation = v; renderStage(); } },
+      { label: 'other', color: ROUTING_COLORS.other, checked: S.toggles.detectRouting.other, onChange: v => { S.toggles.detectRouting.other = v; renderStage(); } },
+    ]);
+  } else if (stage === 'evaluate') {
+    addToolbarGroup('Verdicts', [
+      { label: 'accepted', color: VERDICT_COLORS.accepted, checked: S.toggles.evaluateVerdict.accepted, onChange: v => { S.toggles.evaluateVerdict.accepted = v; renderStage(); } },
+      { label: 'review',   color: VERDICT_COLORS.review,   checked: S.toggles.evaluateVerdict.review,   onChange: v => { S.toggles.evaluateVerdict.review   = v; renderStage(); } },
+      { label: 'rejected', color: VERDICT_COLORS.rejected, checked: S.toggles.evaluateVerdict.rejected, onChange: v => { S.toggles.evaluateVerdict.rejected = v; renderStage(); } },
+    ]);
+  } else if (stage === 'refine') {
+    addToolbarGroup('Show', [
+      { label: 'original', color: REFINE_COLORS.original, checked: S.toggles.refineShow.original, onChange: v => { S.toggles.refineShow.original = v; renderStage(); } },
+      { label: 'refined', color: REFINE_COLORS.refined, checked: S.toggles.refineShow.refined, onChange: v => { S.toggles.refineShow.refined = v; renderStage(); } },
+      { label: 'rejected', color: REFINE_COLORS.rejected, checked: S.toggles.refineShow.rejected, onChange: v => { S.toggles.refineShow.rejected = v; renderStage(); } },
+    ]);
+  }
+
+  // ----- Global filters: classes + source_models (apply on every tab) -----
+  const { classes, models } = _collectClassesAndModels();
+  if (classes.length) {
+    addToolbarDropdown('Class', classes,
+      i => classColor(classes[i]),
+      S.toggles.classFilter);
+  }
+  if (models.length) {
+    addToolbarDropdown('Model', models,
+      i => colorFor(MODEL_COLORS, models[i], i),
+      S.toggles.modelFilter);
+  }
+}
+
+/**
+ * Compact dropdown filter — scales to many keys (10s–100s).
+ * Trigger button shows "Label: n/N ▾"; click opens a popover with a search
+ * box, select-all/clear actions, and a checkbox list.
+ */
+function addToolbarDropdown(label, keys, colorFn, store) {
+  const grp = document.createElement('div');
+  grp.className = 'toolbar-group';
+
+  // ensure all keys default to true
+  for (const k of keys) if (!(k in store)) store[k] = true;
+
+  const dd = document.createElement('div');
+  dd.className = 'dd';
+
+  const trigger = document.createElement('button');
+  trigger.className = 'dd-trigger';
+  const updateTrigger = () => {
+    const on = keys.filter(k => store[k] !== false).length;
+    trigger.innerHTML = `${escHTML(label)}: <span class="dd-count">${on}/${keys.length}</span> ▾`;
+  };
+  updateTrigger();
+
+  const panel = document.createElement('div');
+  panel.className = 'dd-panel hidden';
+
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.placeholder = `Search ${label.toLowerCase()}…`;
+  search.className = 'dd-search';
+
+  const actions = document.createElement('div');
+  actions.className = 'dd-actions';
+  actions.innerHTML = `<button data-act="all">Select all</button><button data-act="none">Clear</button>`;
+
+  const list = document.createElement('div');
+  list.className = 'dd-list';
+
+  const renderRows = () => {
+    const q = search.value.toLowerCase();
+    list.innerHTML = '';
+    keys.forEach((k, i) => {
+      if (q && !k.toLowerCase().includes(q)) return;
+      const row = document.createElement('label');
+      row.className = 'dd-row';
+      row.innerHTML = `<input type="checkbox" ${store[k] !== false ? 'checked' : ''}>` +
+        `<span class="swatch" style="background:${colorFn(i)}"></span>` +
+        `<span>${escHTML(k)}</span>`;
+      row.querySelector('input').addEventListener('change', e => {
+        store[k] = e.target.checked;
+        updateTrigger();
+        renderStage();
+      });
+      list.appendChild(row);
+    });
+  };
+  renderRows();
+
+  search.addEventListener('input', renderRows);
+  actions.addEventListener('click', e => {
+    const act = e.target.dataset.act;
+    if (!act) return;
+    const setTo = act === 'all';
+    for (const k of keys) store[k] = setTo;
+    updateTrigger();
+    renderRows();
+    renderStage();
+  });
+
+  trigger.addEventListener('click', e => {
+    e.stopPropagation();
+    // close other open panels
+    document.querySelectorAll('.dd-panel').forEach(p => {
+      if (p !== panel) p.classList.add('hidden');
+    });
+    panel.classList.toggle('hidden');
+  });
+
+  panel.appendChild(search);
+  panel.appendChild(actions);
+  panel.appendChild(list);
+  dd.appendChild(trigger);
+  dd.appendChild(panel);
+  grp.innerHTML = `<span class="group-label">${escHTML(label)}:</span>`;
+  grp.appendChild(dd);
+  $toolbar.appendChild(grp);
+}
+
+// Close any open dropdown when clicking outside.
+document.addEventListener('click', () => {
+  document.querySelectorAll('.dd-panel').forEach(p => p.classList.add('hidden'));
+});
+
+function addToolbarGroup(label, items) {
+  const grp = document.createElement('div');
+  grp.className = 'toolbar-group';
+  grp.innerHTML = `<span class="group-label">${escHTML(label)}:</span>`;
+  for (const it of items) {
+    const lbl = document.createElement('label');
+    lbl.className = 'chk';
+    lbl.innerHTML = `<input type="checkbox" ${it.checked ? 'checked' : ''}><span class="swatch" style="background:${it.color}"></span>${escHTML(it.label)}`;
+    lbl.querySelector('input').addEventListener('change', e => it.onChange(e.target.checked));
+    grp.appendChild(lbl);
+  }
+  $toolbar.appendChild(grp);
+}
+
+// ---------------------------------------------------------------------------
+// SVG rendering
+// ---------------------------------------------------------------------------
+function svgRect(b, color, label, dashed) {
+  const [x1,y1,x2,y2] = bboxPx(b);
+  const w = Math.max(0, x2 - x1), h = Math.max(0, y2 - y1);
+  const ly = Math.max(14, y1 - 4);
+  const dash = dashed ? `stroke-dasharray="6 4"` : '';
+  return `<rect x="${x1}" y="${y1}" width="${w}" height="${h}" fill="none" stroke="${color}" stroke-width="3" ${dash}/>` +
+    `<text x="${x1}" y="${ly}" fill="${color}" font-size="13" font-weight="bold" style="text-shadow:1px 1px 2px #000,-1px -1px 2px #000">${escHTML(label)}</text>`;
+}
+
+function bboxPx(b) {
+  if (!b) return [0,0,0,0];
+  return [b.x1 * S.imgW, b.y1 * S.imgH, b.x2 * S.imgW, b.y2 * S.imgH];
+}
+
+// ---------------------------------------------------------------------------
+// Global cross-tab filters (class + source_model)
+// ---------------------------------------------------------------------------
+function _collectClassesAndModels() {
+  // Walk the loaded data and return {classes:[...], models:[...]} unique sorted.
+  const classes = new Set(), models = new Set();
+  if (!S.data) return { classes: [], models: [] };
+
+  // Per-model proposals.
+  for (const [m, p] of Object.entries(S.data.proposals || {})) {
+    models.add(m);
+    for (const c of (p.candidates || [])) classes.add(c.class_name);
+  }
+  // Detect candidates.
+  for (const c of ((S.data.detect || {}).candidates || [])) {
+    if (c.class_name) classes.add(c.class_name);
+    if (c.source_model) models.add(c.source_model);
+  }
+  // Finalize annotations.
+  for (const a of ((S.data.finalize || {}).final_annotations || [])) {
+    if (a.class_name) classes.add(a.class_name);
+    if (a.source_model) models.add(a.source_model);
+  }
+  // Final tab trace annotations.
+  const tann = ((S.data.trace || {}).annotations) || [];
+  for (const a of tann) {
+    if (a.class_name) classes.add(a.class_name);
+    if (a.source_model) models.add(a.source_model);
+  }
+  return { classes: [...classes].sort(), models: [...models].sort() };
+}
+
+function _initGlobalFilters() {
+  // Add any newly-seen class/model with default=true; keep existing toggles.
+  const { classes, models } = _collectClassesAndModels();
+  for (const c of classes) {
+    if (!(c in S.toggles.classFilter)) S.toggles.classFilter[c] = true;
+  }
+  for (const m of models) {
+    if (!(m in S.toggles.modelFilter)) S.toggles.modelFilter[m] = true;
+  }
+}
+
+function _candById() {
+  const m = {};
+  for (const c of ((S.data.detect || {}).candidates || [])) {
+    m[c.candidate_id] = c;
+  }
+  return m;
+}
+
+// True iff this candidate's class and source_model both pass the filter.
+// `source_model` may be omitted for items that don't track it (e.g. finalize
+// dropped entries) — model filter is only applied when the field is present.
+function passesFilter(item) {
+  if (!item) return false;
+  const cls = item.class_name;
+  const mdl = item.source_model;
+  if (cls && S.toggles.classFilter[cls] === false) return false;
+  if (mdl && S.toggles.modelFilter[mdl] === false) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Stage renderers
+// ---------------------------------------------------------------------------
+function classIdToName() {
+  // Build {class_id: class_name} from the frozen config's class_registry.
+  // Falls back to positional indexing of classes.txt if class_id_map missing
+  // (produces wrong ids when registry has gaps — flagged in the Final header).
+  const map = (S.data && S.data.class_id_map) || null;
+  if (map && Object.keys(map).length) {
+    const out = {};
+    for (const [name, id] of Object.entries(map)) out[id] = name;
+    return { map: out, authoritative: true };
+  }
+  const cls = (S.data && S.data.classes) || [];
+  const out = {};
+  cls.forEach((n, i) => { out[i] = n; });
+  return { map: out, authoritative: false };
+}
+
+function renderProposals() {
+  const props = S.data.proposals || {};
+  const models = Object.keys(props).sort();
+  if (!models.length) {
+    return { svg: '', detail: '<div class="detail-header">No per-model proposals saved.</div>' };
+  }
+  let svg = '';
+  const detailParts = [];
+  let total = 0, shown = 0;
+  for (const [i, m] of models.entries()) {
+    const modelColor = colorFor(MODEL_COLORS, m, i);
+    const cands = (props[m].candidates) || [];
+    total += cands.length;
+    if (S.toggles.modelFilter[m] === false) continue;
+    cands.forEach((c, j) => {
+      if (!passesFilter({ class_name: c.class_name, source_model: m })) return;
+      shown++;
+      const color = pickColor(() => modelColor, c.class_name || c.label);
+      svg += svgRect(c.bbox, color, `${m} ${(c.label||c.class_name||'?')} ${(c.score||0).toFixed(2)}`);
+    });
+    detailParts.push(`<div class="detail-card">
+      <div class="field"><span class="label">Model:</span> <span class="value">${escHTML(m)}</span></div>
+      <div class="field"><span class="label">Candidates:</span> <span class="value">${cands.length}</span> | <span class="label">Latency:</span> <span class="value">${(props[m].latency_ms||0).toFixed(1)} ms</span></div>
+    </div>`);
+  }
+  const header = `<div class="detail-header"><b>${shown}/${total}</b> raw proposals across ${models.length} model(s)</div>`;
+  return { svg, detail: header + detailParts.join('') };
+}
+
+function renderDetect() {
+  const det = S.data.detect;
+  if (!det) return { svg: '', detail: '<div class="detail-header">No detect.json checkpoint.</div>' };
+  const cands = det.candidates || [];
+  const routing = det.routing || {};
+  const auto = new Set(routing.auto_accepted || []);
+  const needs = new Set(routing.needs_evaluation || []);
+
+  function bucketOf(c) {
+    if (auto.has(c.candidate_id)) return 'auto_accepted';
+    if (needs.has(c.candidate_id)) return 'needs_evaluation';
+    return 'other';
+  }
+
+  let svg = '';
+  let shown = 0;
+  for (const c of cands) {
+    const b = bucketOf(c);
+    if (!S.toggles.detectRouting[b]) continue;
+    if (!passesFilter(c)) continue;
+    shown++;
+    const color = pickColor(() => ROUTING_COLORS[b], c.class_name);
+    svg += svgRect(c.bbox, color, `${c.class_name} (${c.source_model}) ${(c.score||0).toFixed(2)} agr=${c.agreement||0}`);
+  }
+  const header = `<div class="detail-header">
+    <b>${cands.length}</b> candidates after filter+dedup |
+    <b>${(routing.auto_accepted||[]).length}</b> auto-accepted |
+    <b>${(routing.needs_evaluation||[]).length}</b> need eval |
+    <b>${(routing.confusion_flags||[]).length}</b> confusion flags
+    <br>Models used: ${(det.models_used||[]).join(', ')} | stage_timing: ${(det.stage_timing_ms||0).toFixed(1)} ms
+  </div>`;
+  const cards = cands.map(c => {
+    const b = bucketOf(c);
+    return `<div class="detail-card ${b === 'auto_accepted' ? 'accept' : (b === 'needs_evaluation' ? 'refine' : '')}">
+      <div class="field"><span class="label">id:</span> <span class="value">${escHTML(c.candidate_id)}</span></div>
+      <div class="field"><span class="label">Class:</span> <span class="value">${escHTML(c.class_name)}</span> | <span class="label">Source:</span> <span class="value">${escHTML(c.source_model)}</span></div>
+      <div class="field"><span class="label">Score:</span> <span class="value">${(c.score||0).toFixed(4)}</span> | <span class="label">Agreement:</span> <span class="value">${c.agreement||0}</span> [${(c.agreeing_models||[]).join(',')}]</div>
+      <div class="field"><span class="label">Routing:</span> <span class="value" style="color:${ROUTING_COLORS[b]}">${b}</span></div>
+    </div>`;
+  }).join('');
+  return { svg, detail: header + cards };
+}
+
+function renderEvaluate() {
+  const ev = S.data.evaluate;
+  const det = S.data.detect;
+  if (!ev) return { svg: '', detail: '<div class="detail-header">No evaluate.json checkpoint.</div>' };
+  const cands = (det && det.candidates) || [];
+  const candById = Object.fromEntries(cands.map(c => [c.candidate_id, c]));
+
+  const accepted = new Set(ev.accepted || []);
+  const rejected = new Set(ev.rejected || []);
+  const reviewSet = new Set(ev.review || []);
+  const verdicts = ev.verdicts || [];
+  const verdictById = Object.fromEntries(verdicts.map(v => [v.candidate_id, v]));
+
+  function bucketOf(cid) {
+    if (accepted.has(cid)) return 'accepted';
+    if (reviewSet.has(cid)) return 'review';
+    if (rejected.has(cid)) return 'rejected';
+    return null;
+  }
+
+  let svg = '';
+  let shown = 0;
+  for (const v of verdicts) {
+    const b = bucketOf(v.candidate_id);
+    if (!b || !S.toggles.evaluateVerdict[b]) continue;
+    const c = candById[v.candidate_id];
+    if (!c) continue;
+    if (!passesFilter(c)) continue;
+    shown++;
+    const relabel = (ev.relabels || {})[v.candidate_id];
+    const label = `${v.correct_class || c.class_name}${relabel ? ` (was ${c.class_name})` : ''} ${(v.confidence||0).toFixed(2)} ${b}`;
+    const color = pickColor(() => VERDICT_COLORS[b], v.correct_class || c.class_name);
+    svg += svgRect(c.bbox, color, label);
+  }
+
+  // Surface VLM-call gaps: candidates that detect routed to evaluate but for
+  // which no verdict was returned (typically due to a failed/timeout group call).
+  const needsEvalIds = new Set(((det && det.routing && det.routing.needs_evaluation) || []));
+  const verdictIds = new Set(verdicts.map(v => v.candidate_id));
+  const missing = [...needsEvalIds].filter(id => !verdictIds.has(id)).length;
+  const unbucketed = verdicts.filter(v => bucketOf(v.candidate_id) === null).length;
+  const header = `<div class="detail-header">
+    <b>${verdicts.length}</b> VLM verdicts |
+    <b>${accepted.size}</b> accept |
+    <b>${reviewSet.size}</b> review |
+    <b>${rejected.size}</b> reject${unbucketed ? ` | <span style="color:#FFA500">${unbucketed} unbucketed</span>` : ''}
+    ${missing ? `<br><span style="color:#FF6347"><b>⚠ ${missing} candidates routed to evaluate had no verdict</b> — likely VLM call failed (see worker logs)</span>` : ''}
+    <br>VLM calls: ${ev.vlm_calls||0} | tokens: ${ev.vlm_total_tokens||0} | timing: ${(ev.stage_timing_ms||0).toFixed(1)} ms
+  </div>`;
+  const cards = verdicts.map(v => {
+    const b = bucketOf(v.candidate_id);
+    const cls = b === 'accepted' ? 'accept' : (b === 'rejected' ? 'reject' : (b === 'review' ? 'refine' : ''));
+    return `<div class="detail-card ${cls}">
+      <div class="field"><span class="label">id:</span> <span class="value">${escHTML(v.candidate_id)}</span></div>
+      <div class="field"><span class="label">Verdict:</span> <span class="value" style="color:${VERDICT_COLORS[b]||'#888'}">${b||'unknown'}</span> | <span class="label">Class:</span> <span class="value">${escHTML(v.correct_class||'?')}</span></div>
+      <div class="field"><span class="label">Confidence:</span> <span class="value">${(v.confidence||0).toFixed(3)}</span> | <span class="label">BBox:</span> <span class="value">${escHTML(v.bbox_quality||'?')}</span> | <span class="label">Complete:</span> <span class="value">${v.object_complete}</span></div>
+      <div class="reasoning">${escHTML(v.reasoning||'(no reasoning)')}</div>
+    </div>`;
+  }).join('');
+  return { svg, detail: header + cards };
+}
+
+function renderRefine() {
+  const rf = S.data.refine;
+  if (!rf) return { svg: '', detail: '<div class="detail-header">No refine.json checkpoint.</div>' };
+  const results = rf.results || [];
+
+  const candById = _candById();
+  let svg = '';
+  for (const r of results) {
+    const src = candById[r.candidate_id];
+    if (!passesFilter(src)) continue;
+    // Extract class name from candidate_id (format: "model:class:idx")
+    const refClass = (r.candidate_id || '').split(':')[1] || '?';
+    if (r.accepted) {
+      if (S.toggles.refineShow.original && r.original_bbox) {
+        const color = pickColor(() => REFINE_COLORS.original, refClass);
+        svg += svgRect(r.original_bbox, color, `orig ${escHTML(r.candidate_id)}`, true);
+      }
+      if (S.toggles.refineShow.refined && r.refined_bbox) {
+        const color = pickColor(() => REFINE_COLORS.refined, refClass);
+        svg += svgRect(r.refined_bbox, color, `refined ${(r.iou_with_original||0).toFixed(2)}`);
+      }
+    } else {
+      if (S.toggles.refineShow.rejected && r.original_bbox) {
+        const color = pickColor(() => REFINE_COLORS.rejected, refClass);
+        svg += svgRect(r.original_bbox, color, `rejected (iou=${(r.iou_with_original||0).toFixed(2)})`, true);
+      }
+    }
+  }
+  const accepted = results.filter(r => r.accepted).length;
+  const header = `<div class="detail-header">
+    <b>${results.length}</b> refinement attempts |
+    <b>${accepted}</b> accepted |
+    <b>${results.length - accepted}</b> rejected
+    <br>VLM calls: ${rf.vlm_calls||0} | SAM calls: ${rf.sam_calls||0} | timing: ${(rf.stage_timing_ms||0).toFixed(1)} ms
+  </div>`;
+  const cards = results.map(r => `<div class="detail-card ${r.accepted ? 'accept' : 'reject'}">
+    <div class="field"><span class="label">id:</span> <span class="value">${escHTML(r.candidate_id)}</span></div>
+    <div class="field"><span class="label">Method:</span> <span class="value">${escHTML(r.method||'?')}</span> | <span class="label">IoU:</span> <span class="value">${(r.iou_with_original||0).toFixed(3)}</span> | <span class="label">Accepted:</span> <span class="value">${r.accepted}</span></div>
+  </div>`).join('');
+  return { svg, detail: header + cards };
+}
+
+function renderFinalize() {
+  const fz = S.data.finalize;
+  if (!fz) return { svg: '', detail: '<div class="detail-header">No finalize.json checkpoint.</div>' };
+  const annotations = fz.final_annotations || [];
+  const dropped = fz.dropped || [];
+  const reviewItems = fz.review_items || [];
+  const stats = fz.filter_stats || {};
+  const { map: id2name } = classIdToName();
+
+  let svg = '';
+  for (let i = 0; i < annotations.length; i++) {
+    const a = annotations[i];
+    if (!passesFilter(a)) continue;
+    const name = a.class_name || id2name[a.class_id] || `class_${a.class_id}`;
+    const color = classColor(name);
+    svg += svgRect(a.bbox, color, `#${i} ${name}${a.was_refined ? ' (refined)' : ''}`);
+  }
+  for (const d of dropped) {
+    if (!passesFilter(d)) continue;  // class_name only — model not tracked
+    if (d.bbox) svg += svgRect(d.bbox, '#888', `dropped: ${d.reason}`, true);
+  }
+
+  const statsRow = Object.entries(stats)
+    .map(([k, v]) => `<span class="value">${escHTML(k)}=${v}</span>`).join(' | ');
+  const header = `<div class="detail-header">
+    <b>${annotations.length}</b> final | <b>${dropped.length}</b> dropped | <b>${reviewItems.length}</b> review
+    <br>${statsRow}
+    <br>timing: ${(fz.stage_timing_ms||0).toFixed(1)} ms
+  </div>`;
+  const dropCards = dropped.map(d => `<div class="detail-card reject">
+    <div class="field"><span class="label">id:</span> <span class="value">${escHTML(d.candidate_id)}</span> | <span class="label">class:</span> <span class="value">${escHTML(d.class_name)}</span> | <span class="label">reason:</span> <span class="value">${escHTML(d.reason)}</span></div>
+  </div>`).join('');
+  const reviewCards = reviewItems.map(r => `<div class="detail-card">
+    <div class="field"><span class="label">review:</span> <span class="value">${escHTML(r.candidate_id||'')}</span> | <span class="label">class:</span> <span class="value">${escHTML(r.class_name||'')}</span> | <span class="label">reason:</span> <span class="value">${escHTML(r.reason||'')}</span></div>
+  </div>`).join('');
+  return { svg, detail: header + dropCards + reviewCards };
+}
+
+function renderFinal() {
+  const labels = (S.data.labels || '').trim();
+  const trace = S.data.trace || {};
+  const traceAnns = Array.isArray(trace.annotations) ? trace.annotations : [];
+  const { map: id2name, authoritative } = classIdToName();
+
+  // Prefer trace.annotations (FinalAnnotation objects with source_model,
+  // was_refined, action, candidate_id, reasoning trace) over parsing YOLO.
+  if (traceAnns.length) {
+    let svg = '';
+    const cards = traceAnns.map((a, i) => {
+      const name = a.class_name || id2name[a.class_id] || `class_${a.class_id}`;
+      const color = classColor(name);
+      if (!passesFilter({ class_name: name, source_model: a.source_model })) return '';
+      svg += svgRect(a.bbox, color, `#${i} ${name} ${a.action||''} ${(a.confidence||0).toFixed(2)}`);
+      const reasoning = (a.trace || []).map(t => `<li>${escHTML(t)}</li>`).join('');
+      return `<div class="detail-card accept">
+        <div class="field"><span class="label">#${i} id:</span> <span class="value">${escHTML(a.candidate_id||'?')}</span></div>
+        <div class="field"><span class="label">Class:</span> <span class="value">${escHTML(name)}</span> (id=${a.class_id}) | <span class="label">Action:</span> <span class="value">${escHTML(a.action||'?')}</span></div>
+        <div class="field"><span class="label">Confidence:</span> <span class="value">${(a.confidence||0).toFixed(4)}</span> | <span class="label">Source:</span> <span class="value">${escHTML(a.source_model||'?')}</span> | <span class="label">Refined:</span> <span class="value">${a.was_refined||false}</span></div>
+        ${reasoning ? `<ul style="margin-top:4px;padding-left:16px;color:#aaa;font-size:12px">${reasoning}</ul>` : ''}
+      </div>`;
+    }).join('');
+    const header = `<div class="detail-header"><b>${traceAnns.length}</b> final annotations (from trace)</div>`;
+    return { svg, detail: header + cards };
+  }
+
+  if (!labels) {
+    return { svg: '', detail: '<div class="detail-header">No labels or trace annotations for this image.</div>' };
+  }
+
+  // Fallback: parse YOLO (loses source_model / was_refined / candidate_id).
+  const lines = labels.split('\n').filter(l => l.trim());
+  let svg = '';
+  const cards = [];
+  lines.forEach((line, i) => {
+    const parts = line.trim().split(/\s+/).map(Number);
+    if (parts.length < 5 || parts.some(isNaN)) return;
+    const [cid, cx, cy, w, h] = parts;
+    const bbox = { x1: cx - w/2, y1: cy - h/2, x2: cx + w/2, y2: cy + h/2 };
+    const name = id2name[cid] || `class_${cid}`;
+    if (!passesFilter({ class_name: name })) return;
+    const color = classColor(name);
+    svg += svgRect(bbox, color, `#${i} ${name}`);
+    cards.push(`<div class="detail-card accept">
+      <div class="field"><span class="label">#${i} class:</span> <span class="value">${escHTML(name)}</span> (id=${cid})</div>
+      <div class="field"><span class="label">YOLO:</span> <span class="value" style="font-family:monospace;font-size:11px">${escHTML(line)}</span></div>
+    </div>`);
+  });
+  const warn = authoritative ? '' : ' <span style="color:#FFA500">(class_id_map unavailable — names may be wrong)</span>';
+  const header = `<div class="detail-header"><b>${lines.length}</b> YOLO labels (trace annotations missing)${warn}</div>`;
+  return { svg, detail: header + cards.join('') };
+}
+
+function renderMeta() {
+  const m = S.data.meta;
+  const review = S.data.review;
+  const trace = S.data.trace;
+  const summary = (S.data.detect && S.data.evaluate && S.data.refine) ? {
+    detect_ms:   (S.data.detect.stage_timing_ms || 0).toFixed(1),
+    evaluate_ms: (S.data.evaluate.stage_timing_ms || 0).toFixed(1),
+    refine_ms:   (S.data.refine.stage_timing_ms || 0).toFixed(1),
+  } : null;
+  let html = '';
+  if (m) {
+    html += `<div class="detail-card">
+      <div class="field"><span class="label">image_id:</span> <span class="value">${escHTML(m.image_id||'')}</span></div>
+      <div class="field"><span class="label">status:</span> <span class="value">${escHTML(m.status||'')}</span></div>
+      <div class="field"><span class="label">stages_completed:</span> <span class="value">${(m.stages_completed||[]).join(', ')}</span></div>
+      <div class="field"><span class="label">total_timing_ms:</span> <span class="value">${(m.total_timing_ms||0).toFixed(1)}</span></div>
+      <div class="field"><span class="label">config_hash:</span> <span class="value" style="font-family:monospace">${escHTML(m.config_hash||'')}</span></div>
+      <div class="field"><span class="label">prompt_version:</span> <span class="value">${escHTML(m.prompt_version||'')}</span></div>
+    </div>`;
+  } else {
+    html += '<div class="detail-card">No meta.json.</div>';
+  }
+  if (summary) {
+    html += `<div class="detail-card">
+      <div class="field"><span class="label">detect_ms:</span> <span class="value">${summary.detect_ms}</span> | <span class="label">evaluate_ms:</span> <span class="value">${summary.evaluate_ms}</span> | <span class="label">refine_ms:</span> <span class="value">${summary.refine_ms}</span></div>
+    </div>`;
+  }
+  if (review && Array.isArray(review) && review.length) {
+    html += `<div class="detail-card refine"><div class="field"><b>Review queue (${review.length})</b></div><pre class="json">${escHTML(JSON.stringify(review, null, 2))}</pre></div>`;
+  }
+  if (trace) {
+    html += `<div class="detail-card"><div class="field"><b>Trace</b></div><pre class="json">${escHTML(JSON.stringify(trace, null, 2))}</pre></div>`;
+  }
+  return { svg: '', detail: html };
+}
+
+// ---------------------------------------------------------------------------
+// Stage dispatcher
+// ---------------------------------------------------------------------------
+function renderStage() {
+  if (!S.data) return;
+  let r = { svg: '', detail: '' };
+  switch (S.currentStage) {
+    case 'proposals': r = renderProposals(); break;
+    case 'detect':    r = renderDetect();    break;
+    case 'evaluate':  r = renderEvaluate();  break;
+    case 'refine':    r = renderRefine();    break;
+    case 'finalize':  r = renderFinalize();  break;
+    case 'final':     r = renderFinal();     break;
+    case 'meta':      r = renderMeta();      break;
+  }
+  $svg.innerHTML = (S.imgW > 0 && S.imgH > 0) ? r.svg : '';
+  $detail.innerHTML = r.detail || '<div class="loading">No data for this stage.</div>';
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function escHTML(s) {
+  if (s === null || s === undefined) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+function escAttr(s) { return escHTML(s).replace(/"/g, '&quot;'); }
+
+function showToast(msg) {
+  $toast.textContent = msg;
+  $toast.style.display = 'block';
+  setTimeout(() => { $toast.style.display = 'none'; }, 2500);
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard nav
+// ---------------------------------------------------------------------------
+document.addEventListener('keydown', (e) => {
+  if (e.target === $search) return;
+  const visible = [...$list.querySelectorAll('.stem-btn')];
+  if (!visible.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const cur = visible.findIndex(b => b.classList.contains('active'));
+    let next;
+    if (e.key === 'ArrowDown') next = cur < visible.length - 1 ? cur + 1 : 0;
+    else next = cur > 0 ? cur - 1 : visible.length - 1;
+    visible[next].click();
+    visible[next].scrollIntoView({ block: 'nearest' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+(async () => {
+  try {
+    S.stems = await fetchJSON('/api/stems');
+  } catch (e) {
+    $detail.innerHTML = `<div class="loading">Failed to load stems: ${escHTML(String(e))}</div>`;
+    return;
+  }
+  renderSidebar();
+  if (S.stems.length) await selectImage(S.stems[0]);
+})();
+</script>
+</body>
+</html>

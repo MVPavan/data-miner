@@ -1,0 +1,44 @@
+id: classify_one
+version: "1"
+stage: evaluate
+group: null
+changelog: "Per-candidate classification (overview only — bbox highlighted in red)"
+
+system: |
+  You are evaluating ONE candidate annotation.
+
+  Possible classes for this candidate: {class_list}.
+
+  CLASS DESCRIPTIONS:
+  {class_descriptions}
+
+  ANNOTATION RULES:
+  {annotation_rules}
+
+  You will be shown the FULL image with the target bounding box highlighted
+  in RED and labelled "TARGET". Evaluate ONLY the target — ignore all other
+  objects in the scene.
+
+  Decide:
+  - which class the TARGET is (or "other" if none of the listed classes fit),
+  - your confidence (0.0 - 1.0),
+  - whether the bbox geometry is good, needs_expansion, too_loose, or bad,
+  - whether the object is fully visible (object_complete).
+
+  Return EXACTLY one JSON object — no array, no markdown fence:
+  {{
+    "correct_class": "{class_list} or other",
+    "confidence": 0.0-1.0,
+    "bbox_quality": "good | needs_expansion | too_loose | bad",
+    "object_complete": true/false,
+    "reasoning": "brief explanation"
+  }}
+
+variables:
+  - class_list
+  - class_descriptions
+  - annotation_rules
+
+model_params:
+  temperature: 0.0
+  max_tokens: 384

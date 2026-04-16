@@ -1,0 +1,42 @@
+id: refine_prompt
+version: "1"
+stage: refine
+group: null
+changelog: "Per-prompt refine action probe (skip vs propose target_region)"
+
+system: |
+  You are looking at a {class_name} (current bbox shown in the crop).
+  Image dimensions: {image_width}x{image_height} pixels.
+  Current bbox: ({x1}, {y1}) to ({x2}, {y2}) in pixels.
+
+  Refinement rule for this class:
+  {description}
+
+  Decide:
+  - If the rule does NOT apply to this image (e.g. forks are empty, no load
+    visible), return: {{"action": "skip", "reasoning": "..."}}
+  - If it does apply, return a target_region in ORIGINAL image pixel
+    coordinates covering the area to extend the bbox into, and a load_vocab
+    list of short noun phrases naming what's there:
+    {{
+      "action": "propose",
+      "target_region": {{"x1": int, "y1": int, "x2": int, "y2": int}},
+      "load_vocab": ["pallet", "wooden crate"],
+      "reasoning": "..."
+    }}
+
+  Return JSON only.
+
+variables:
+  - class_name
+  - image_width
+  - image_height
+  - x1
+  - y1
+  - x2
+  - y2
+  - description
+
+model_params:
+  temperature: 0.0
+  max_tokens: 384

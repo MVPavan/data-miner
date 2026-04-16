@@ -1,0 +1,29 @@
+# E2E test config — fl_pj_sample dataset
+# Overrides default.yaml; only changed keys listed.
+#
+# Run:
+#   python -m data_miner.auto_annotation_v3 \
+#       --config data_miner/auto_annotation_v3/configs/fl_pj_e2e.yaml
+
+# Focus on the classes that matter for this dataset
+detect_classes: [] #[person, car, truck, forklift, palletjack, head]
+
+# Co-existence: tag-based (inherits from default.yaml)
+# All industrial pairs (forklift/palletjack/truck/shopping cart) are covered
+# by the confusion:industrial tag in class_registry. No extra pairs needed.
+co_existence:
+  overlap_exempt_tags: [overlap_exempt]
+  confusion_tags:
+    - "confusion:industrial"
+    - "confusion:luggage"
+    - "confusion:road_vehicle"
+    - "confusion:electronics"
+  extra_confusion_pairs: []
+
+# Output to a fresh directory
+output:
+  job_dir: output/auto_annotation_v3/fl_pj_e2e
+
+runtime:
+  image_dir: /media/data_2/vlm/code/data_miner/output/sample/fl_pj_sample
+  log_level: INFO

@@ -1,0 +1,106 @@
+{
+  "ports": {
+    "hf": 3003,
+    "m4": 3013,
+    "m3": 3014
+  },
+  "n_images": 8,
+  "scenarios": {
+    "single_class_sequential": {
+      "hf_vs_m4": {
+        "n": 7,
+        "mean": 0.9904,
+        "min": 0.9629,
+        "pct_0.9": 100.0,
+        "a_total": 7,
+        "b_total": 7,
+        "unmatched_a": 0,
+        "unmatched_b": 0
+      },
+      "hf_vs_m3": {
+        "n": 7,
+        "mean": 0.9904,
+        "min": 0.9629,
+        "pct_0.9": 100.0,
+        "a_total": 7,
+        "b_total": 7,
+        "unmatched_a": 0,
+        "unmatched_b": 0
+      },
+      "m4_vs_m3": {
+        "n": 7,
+        "mean": 1.0,
+        "min": 1.0,
+        "pct_0.9": 100.0,
+        "a_total": 7,
+        "b_total": 7,
+        "unmatched_a": 0,
+        "unmatched_b": 0
+      }
+    },
+    "multi_class_sequential": {
+      "hf_vs_m4": {
+        "n": 23,
+        "mean": 0.9826,
+        "min": 0.71,
+        "pct_0.9": 95.7,
+        "a_total": 24,
+        "b_total": 23,
+        "unmatched_a": 1,
+        "unmatched_b": 0
+      },
+      "hf_vs_m3": {
+        "n": 23,
+        "mean": 0.9747,
+        "min": 0.5274,
+        "pct_0.9": 95.7,
+        "a_total": 24,
+        "b_total": 23,
+        "unmatched_a": 1,
+        "unmatched_b": 0
+      },
+      "m4_vs_m3": {
+        "n": 22,
+        "mean": 1.0,
+        "min": 1.0,
+        "pct_0.9": 100.0,
+        "a_total": 23,
+        "b_total": 23,
+        "unmatched_a": 1,
+        "unmatched_b": 1
+      }
+    },
+    "multi_class_concurrent": {
+      "hf_vs_m4": {
+        "n": 23,
+        "mean": 0.9826,
+        "min": 0.71,
+        "pct_0.9": 95.7,
+        "a_total": 24,
+        "b_total": 23,
+        "unmatched_a": 1,
+        "unmatched_b": 0
+      },
+      "hf_vs_m3": {
+        "n": 23,
+        "mean": 0.9747,
+        "min": 0.5274,
+        "pct_0.9": 95.7,
+        "a_total": 24,
+        "b_total": 23,
+        "unmatched_a": 1,
+        "unmatched_b": 0
+      },
+      "m4_vs_m3": {
+        "n": 22,
+        "mean": 1.0,
+        "min": 1.0,
+        "pct_0.9": 100.0,
+        "a_total": 23,
+        "b_total": 23,
+        "unmatched_a": 1,
+        "unmatched_b": 1
+      }
+    }
+  }
+}

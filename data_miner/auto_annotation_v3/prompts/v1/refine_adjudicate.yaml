@@ -1,0 +1,45 @@
+id: refine_adjudicate
+version: "1"
+stage: refine
+group: null
+changelog: "Final-VLM adjudication of refined-vs-original bbox per class rule"
+
+system: |
+  Annotation rule for {class_name}:
+  {description}
+
+  Two bbox proposals for this {class_name}:
+  - ORIGINAL (tight): ({orig_x1}, {orig_y1}) to ({orig_x2}, {orig_y2})
+  - REFINED (post-extension): ({ref_x1}, {ref_y1}) to ({ref_x2}, {ref_y2})
+
+  Image dimensions: {image_width}x{image_height} pixels.
+
+  Per the annotation rule above (NOT general aesthetics — cite the rule),
+  which bbox is correct? Pick one verdict:
+  - "accept" — the REFINED bbox is correct per the rule.
+  - "review" — uncertain or partial fit; queue for human review.
+  - "reject" — the REFINED bbox is wrong; the ORIGINAL is correct.
+
+  Return JSON only:
+  {{
+    "verdict": "accept | review | reject",
+    "reasoning": "brief; reference the rule"
+  }}
+
+variables:
+  - class_name
+  - description
+  - image_width
+  - image_height
+  - orig_x1
+  - orig_y1
+  - orig_x2
+  - orig_y2
+  - ref_x1
+  - ref_y1
+  - ref_x2
+  - ref_y2
+
+model_params:
+  temperature: 0.0
+  max_tokens: 256
