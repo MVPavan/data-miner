@@ -37,7 +37,7 @@ class_registry:
     id: 2
     tier: 1
     prompts: [car]
-    synonyms: []
+    synonyms: [suv]
     tags: [vehicle, confusion:road_vehicle]
     description: ""
 
@@ -45,7 +45,7 @@ class_registry:
     id: 3
     tier: 1
     prompts: [motorcycle]
-    synonyms: [motorbike]
+    synonyms: [motorbike, scooter]
     tags: [vehicle]
     description: ""
 
@@ -77,7 +77,7 @@ class_registry:
     id: 7
     tier: 1
     prompts: [truck]
-    synonyms: []
+    synonyms: [fire truck, van, ambulance, lorry]
     tags: [vehicle, confusion:road_vehicle, confusion:industrial]
     description: "Large road vehicle for cargo. No mast, no forks."
 
@@ -131,7 +131,7 @@ class_registry:
     id: 28
     tier: 2
     prompts: [suitcase]
-    synonyms: [luggage, trolley bag]
+    synonyms: [luggage, trolley bag, briefcase]
     tags: [confusion:luggage]
     description: "Rigid or semi-rigid, wheels, retractable handle."
 
@@ -154,7 +154,7 @@ class_registry:
   head:
     id: 35
     tier: 2
-    prompts: [human head]
+    prompts: [head]
     synonyms: [face]
     tags: [overlap_exempt]
     description: >

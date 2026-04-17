@@ -34,7 +34,7 @@ from ..configs import (
     Stage,
     StageMessage,
 )
-from ..utils import get_image_size
+from ..utils import get_image_size, normalize_class_alias
 from ..workers.base import StageWorker
 from ..workers.http_retry import http_retry
 
@@ -204,10 +204,19 @@ class DetectModelWorker(StageWorker):
         if not active_classes:
             return []
 
-        # Build flat prompt list from all active classes
+        # Build flat prompt list: canonical prompts + synonyms, deduped (order-preserving).
+        # Synonyms are sent to the detector so hits on alternative names (e.g. "van",
+        # "ambulance" for truck) are captured; _to_candidates collapses them back
+        # to the canonical class.
+        seen: set[str] = set()
         all_prompts: list[str] = []
         for cls_cfg in active_classes.values():
-            all_prompts.extend(cls_cfg.prompts)
+            for prompt in (*cls_cfg.prompts, *cls_cfg.synonyms):
+                key = normalize_class_alias(prompt)
+                if key in seen:
+                    continue
+                seen.add(key)
+                all_prompts.append(prompt)
 
         req = DetectorRequest(
             image_path=image_path,
@@ -283,14 +292,17 @@ def _to_candidates(
     model: DetectorName,
     classes: dict[str, ClassConfig],
 ) -> list[Candidate]:
-    """Map server-echoed labels back to canonical class names by prompt match.
+    """Map server-echoed labels back to canonical class names.
 
-    v4: classes is dict[str, ClassConfig] with .prompts (list of str).
+    Both ``prompts`` and ``synonyms`` are included in the lookup — detectors
+    are prompted with the union, and any hit (e.g. ``"ambulance"``) collapses
+    to the canonical class (``"truck"``). Labels that don't resolve to any
+    known alias are dropped.
     """
     prompt_to_class: dict[str, str] = {}
     for cls_name, cls_cfg in classes.items():
-        for prompt in cls_cfg.prompts:
-            prompt_to_class[prompt.lower().strip()] = cls_name
+        for alias in (*cls_cfg.prompts, *cls_cfg.synonyms):
+            prompt_to_class[normalize_class_alias(alias)] = cls_name
 
     out: list[Candidate] = []
     for i, (box, score, label) in enumerate(
@@ -298,7 +310,7 @@ def _to_candidates(
     ):
         if len(box) != 4:
             continue
-        cls_name = prompt_to_class.get(str(label).lower().strip())
+        cls_name = prompt_to_class.get(normalize_class_alias(str(label)))
         if cls_name is None:
             logger.debug(
                 "%s: unrecognised label %r; dropped (known: %s)",
