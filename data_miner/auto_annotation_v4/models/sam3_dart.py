@@ -105,9 +105,13 @@ class SAM3DartModel(BaseDetectorModel):
         """
         import torch
 
-        # DART lives under scratchpad/; prepend to sys.path once.
+        # DART is declared as a pyproject dep (``dart-detect`` from
+        # github.com/mkturkcan/DART). ``sam3`` should be importable via the
+        # normal site-packages path. As a fallback for dev environments where
+        # DART was cloned manually under ``scratchpad/DART/`` without being
+        # pip-installed, prepend that path if present.
         dart_root = Path(__file__).resolve().parents[3] / "scratchpad" / "DART"
-        if str(dart_root) not in sys.path:
+        if dart_root.exists() and str(dart_root) not in sys.path:
             sys.path.insert(0, str(dart_root))
 
         from sam3.model_builder import build_sam3_image_model

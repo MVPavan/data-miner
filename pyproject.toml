@@ -42,6 +42,11 @@ gpu = [
     "einops>=0.8.0",
     "pycocotools>=2.0",
     "falcon-perception @ git+https://github.com/tiiuae/Falcon-Perception.git",
+    # DART: SAM3-DART detector used by auto_annotation_v4. Pinned to the
+    # commit the pipeline was developed against. Install pulls its own deps
+    # (ftfy, iopath, decord, etc.). Checkpoint ``sam3.pt`` auto-downloads
+    # from HuggingFace ``facebook/sam3`` on first use.
+    "dart-detect @ git+https://github.com/mkturkcan/DART.git@fd832ea",
 ]
 dev = [
     # Development/visualization tools

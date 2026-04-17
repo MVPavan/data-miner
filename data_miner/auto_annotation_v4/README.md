@@ -63,14 +63,27 @@ in the LitServe servers. Work distribution is an atomic SQL claim
 
 ## Install
 
+Recommended (uv):
+
 ```bash
-pip install -e .
-# aiohttp, aiosqlite, pydantic>=2, omegaconf, pyyaml, tenacity, litserve,
-# torch, transformers, Pillow, numpy, fastapi, uvicorn
+uv sync --extra gpu
+# pulls all runtime deps + PyTorch + transformers + DART (SAM3-DART detector)
+# + Falcon-Perception, pinned to reproducible commits.
 ```
 
+DART (`sam3` package) is declared as a git dep in `pyproject.toml` — no
+manual `git clone` of `scratchpad/DART/` required. The SAM3 checkpoint
+(`sam3.pt`, ~2 GB) lazy-downloads from HuggingFace `facebook/sam3` on
+first model init (cached under `~/.cache/huggingface/`).
+
+Legacy / vendored-DART fallback: if `scratchpad/DART/` exists alongside
+the repo, [models/sam3_dart.py](models/sam3_dart.py) prepends it to
+`sys.path` at load time — useful for dev environments that patch DART
+locally without reinstalling.
+
 GPUs used in examples: GDINO on `cuda:0`, SAM3-DART on `cuda:1`.
-Targets 48 GB cards; shrink `max_batch_size` for 24 GB.
+Targets 48 GB cards; shrink `max_batch_size` for 24 GB (e.g. GDINO needs
+`--max-batch-size 1` on a 24 GB 3090 with the full 43-prompt class list).
 
 ---
 
