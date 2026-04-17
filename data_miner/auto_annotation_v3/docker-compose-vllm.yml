@@ -57,11 +57,21 @@ services:
       - ${VALIDATOR_MODEL:-Qwen/Qwen3.5-27B-FP8}
       - --tensor-parallel-size
       - "${VALIDATOR_TP:-2}"
+      # ── Tuned 2026-04-16 (see docs/aa_v3_vllm_tuning.md) ──
+      # Annotation prompts use ~1500-2000 tokens; 2048 doubles KV cache capacity
       - --max-model-len
-      - "4096"
+      - "2048"
+      # Claim more VRAM for KV cache (was 0.85 → ~560 MiB; now → ~2280 MiB)
       - --gpu-memory-utilization
-      - "0.85"
-      - --enforce-eager
+      - "0.92"
+      # Cap scheduler batch to match actual KV capacity
+      - --max-num-seqs
+      - "16"
+      # Chunked prefill: interleave long prefills with decode steps
+      - --enable-chunked-prefill
+      - --max-num-batched-tokens
+      - "2048"
+      # CUDA graphs enabled (enforce-eager REMOVED — 10-30% faster per iteration)
       - --reasoning-parser
       - qwen3
       - --dtype

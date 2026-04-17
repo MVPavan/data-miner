@@ -1,0 +1,4 @@
+database:
+  filename: pipeline.db
+  lock_ttl: 300
+  max_retries: 3

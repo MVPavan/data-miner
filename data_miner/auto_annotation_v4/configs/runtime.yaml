@@ -1,0 +1,11 @@
+runtime:
+  image_dir: null
+  image_paths: []
+  job_id: null
+  log_level: INFO
+  log_file: null
+  stages: [detect, evaluate, refine, finalize]
+  force_stages: []
+  force_rerun: false
+  detect_models: []
+  force_detect_models: []

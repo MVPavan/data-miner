@@ -1,0 +1,320 @@
+# Class registry, evaluation groups, and co-existence rules.
+#
+# Split from default.yaml — merged automatically at load time.
+# Override individual classes or groups in your user config.
+
+# ---------------------------------------------------------------------------
+# Class registry — full catalog of known classes
+#
+# Dict keyed by canonical name. Each entry:
+#   id:          COCO-style class ID (unique, sparse)
+#   tier:        1 = auto-acceptable with model agreement, 2+ = always VLM-evaluated
+#   prompts:     list of text strings sent to detectors (first is primary)
+#   synonyms:    alternative names for VLM relabel resolution
+#   tags:        used by co_existence and filtering rules to select subsets
+#   description: per-class text injected into VLM prompts
+# ---------------------------------------------------------------------------
+
+class_registry:
+  # -- Tier 1 — common objects, auto-acceptable ------------------------------------
+  person:
+    id: 0
+    tier: 1
+    prompts: [person]
+    synonyms: [human, pedestrian, man, woman]
+    tags: [overlap_exempt]
+    description: "Full visible human body in any pose."
+
+  bicycle:
+    id: 1
+    tier: 1
+    prompts: [bicycle]
+    synonyms: [bike, cycle]
+    tags: [vehicle]
+    description: ""
+
+  car:
+    id: 2
+    tier: 1
+    prompts: [car]
+    synonyms: [automobile, sedan]
+    tags: [vehicle, confusion:road_vehicle]
+    description: ""
+
+  motorcycle:
+    id: 3
+    tier: 1
+    prompts: [motorcycle]
+    synonyms: [motorbike]
+    tags: [vehicle]
+    description: ""
+
+  airplane:
+    id: 4
+    tier: 1
+    prompts: [airplane]
+    synonyms: [aeroplane, plane, aircraft]
+    tags: [vehicle]
+    description: ""
+
+  bus:
+    id: 5
+    tier: 1
+    prompts: [bus]
+    synonyms: []
+    tags: [vehicle]
+    description: ""
+
+  train:
+    id: 6
+    tier: 1
+    prompts: [train]
+    synonyms: [locomotive]
+    tags: [vehicle]
+    description: ""
+
+  truck:
+    id: 7
+    tier: 1
+    prompts: [truck]
+    synonyms: [lorry]
+    tags: [vehicle, confusion:road_vehicle, confusion:industrial]
+    description: "Large road vehicle for cargo. No mast, no forks."
+
+  boat:
+    id: 8
+    tier: 1
+    prompts: [boat]
+    synonyms: [ship, vessel]
+    tags: [vehicle]
+    description: ""
+
+  bird:
+    id: 14
+    tier: 1
+    prompts: [bird]
+    tags: [animal]
+    description: ""
+
+  cat:
+    id: 15
+    tier: 1
+    prompts: [cat]
+    tags: [animal]
+    description: ""
+
+  dog:
+    id: 16
+    tier: 1
+    prompts: [dog]
+    tags: [animal]
+    description: ""
+
+  # -- Tier 2 — smaller/ambiguous objects, always VLM-evaluated --------------------
+  backpack:
+    id: 24
+    tier: 2
+    prompts: [backpack]
+    synonyms: [rucksack]
+    tags: [overlap_exempt, confusion:luggage]
+    description: "Carried on back with two shoulder straps. Typically larger."
+
+  handbag:
+    id: 26
+    tier: 2
+    prompts: [handbag]
+    synonyms: [purse]
+    tags: [overlap_exempt, confusion:luggage]
+    description: "In hand or single shoulder strap. Smaller than backpack."
+
+  suitcase:
+    id: 28
+    tier: 2
+    prompts: [suitcase]
+    synonyms: [luggage, trolley bag]
+    tags: [confusion:luggage]
+    description: "Rigid or semi-rigid, wheels, retractable handle."
+
+  helicopter:
+    id: 31
+    tier: 2
+    prompts: [helicopter]
+    synonyms: [chopper]
+    tags: [vehicle]
+    description: ""
+
+  wallet:
+    id: 32
+    tier: 2
+    prompts: [wallet]
+    synonyms: [billfold]
+    tags: [confusion:electronics]
+    description: "Small, flat, foldable. Fits in pocket."
+
+  head:
+    id: 35
+    tier: 2
+    prompts: [human head]
+    synonyms: [face]
+    tags: [overlap_exempt]
+    description: >
+      Annotate separately ONLY when body is NOT fully visible
+      (head through window, behind counter, in vehicle cabin).
+
+  laptop:
+    id: 63
+    tier: 2
+    prompts: [laptop]
+    synonyms: [notebook computer]
+    tags: [confusion:electronics]
+    description: "Open or closed portable computer on flat surface."
+
+  cellphone:
+    id: 67
+    tier: 2
+    prompts: [cellphone]
+    synonyms: [mobile phone, smartphone, phone]
+    tags: [confusion:electronics]
+    description: "Rectangular device in hand, on surface, or near ear."
+
+  # -- Tier 3 — specialized / industrial -------------------------------------------
+  shopping cart:
+    id: 30
+    tier: 3
+    prompts: [shopping cart]
+    synonyms: [trolley, cart]
+    tags: [confusion:industrial]
+    description: "Wheeled cart with handle, flat platform or basket. No forks, no mast."
+
+  forklift:
+    id: 33
+    tier: 3
+    prompts: [forklift]
+    synonyms: [fork lift, forklift truck]
+    tags: [confusion:industrial]
+    description: >
+      Powered truck with vertical MAST, counterweight body, overhead guard.
+      Always has visible mast even with forks lowered.
+
+  palletjack:
+    id: 34
+    tier: 3
+    prompts: [pallet jack]
+    synonyms: [pallet jack, pump truck, hand truck]
+    tags: [confusion:industrial]
+    description: >
+      LOW-PROFILE, NO mast, forks slide under pallets at ground level.
+      Steering handle/tiller. Manual has pump handle, electric has motor housing.
+
+# ---------------------------------------------------------------------------
+# Evaluation groups — classes handled in one VLM call each
+#
+# Per-class descriptions live in class_registry above. Groups provide:
+#   disambiguation: inter-class distinction hints (group-level)
+#   annotation_rules: per-class bbox annotation rules
+#   requires_crops: whether VLM gets a close-up crop per candidate
+# ---------------------------------------------------------------------------
+
+evaluation_groups:
+  industrial:
+    classes: [forklift, palletjack, shopping cart]
+    requires_crops: false
+    disambiguation: >
+      KEY: MAST -> forklift. No mast + low forks -> pallet jack.
+      Platform + handle -> shopping cart.
+    annotation_rules:
+      forklift: "Include any load (pallets, boxes) on the forks in bbox"
+      palletjack: "Include any load on the forks in bbox"
+
+  luggage:
+    classes: [backpack, handbag, suitcase, wallet]
+    requires_crops: true
+    disambiguation: >
+      Distinguish by: strap count (2 -> backpack, 1 -> handbag),
+      rigidity (rigid + wheels -> suitcase), size (pocket-sized -> wallet).
+    annotation_rules: {}
+
+  person_parts:
+    classes: [person, head]
+    requires_crops: false
+    disambiguation: >
+      If full body visible -> annotate as person only, NOT separately as head.
+      Head annotation ONLY when body is NOT visible (through window, behind counter).
+    annotation_rules: {}
+
+  electronics:
+    classes: [laptop, cellphone, wallet]
+    requires_crops: true
+    disambiguation: >
+      Distinguish phone from wallet by thickness/texture.
+      Laptop is larger, hinged.
+    annotation_rules: {}
+
+  vehicles:
+    classes: [car, bus, truck, train, boat, airplane, motorcycle, bicycle, helicopter]
+    requires_crops: false
+    disambiguation: null
+    annotation_rules: {}
+
+  animals:
+    classes: [bird, cat, dog]
+    requires_crops: false
+    disambiguation: null
+    annotation_rules: {}
+
+# ---------------------------------------------------------------------------
+# Co-existence rules (tag-driven)
+#
+# overlap_exempt_tags: classes with ANY of these tags can overlap with any
+#   other class and are never suppressed by cross-class NMS.
+#
+# confusion_tags: classes sharing a tag from this list are confusion pairs.
+#   High IoU between confusion-pair classes -> VLM disambiguation, not blind NMS.
+#
+# extra_confusion_pairs: manual pairs not covered by tags.
+# ---------------------------------------------------------------------------
+
+co_existence:
+  overlap_exempt_tags: [overlap_exempt]
+
+  confusion_tags:
+    - "confusion:industrial"     # forklift, palletjack, truck, shopping cart
+    - "confusion:luggage"        # backpack, handbag, suitcase
+    - "confusion:electronics"    # wallet, cellphone, laptop
+    - "confusion:road_vehicle"   # car, truck
+
+  extra_confusion_pairs: []      # add ad-hoc pairs not captured by tags
+
+# ---------------------------------------------------------------------------
+# Refinement rules — class-driven SAM extension
+# ---------------------------------------------------------------------------
+
+refine_rules:
+  classes:
+    forklift:
+      prompts:
+        - id: load_extension
+          description: |
+            If cargo, pallets, boxes, drums, or barrels are physically on the
+            forks of this forklift, return action="propose" with target_region
+            covering the load and load_vocab listing the load type.
+            If the forks are empty (no load), return action="skip".
+          load_vocab: [pallet, cardboard box, wooden crate, drum, barrel]
+          presence_threshold: 0.5
+      merge_rules:
+        max_area_ratio: 3.0
+        max_gap_diag_frac: 0.02
+        aspect_ratio_range: [0.25, 4.0]
+    palletjack:
+      prompts:
+        - id: load_extension
+          description: |
+            If cargo is on the pallet jack forks, return action="propose"
+            with target_region covering the load. If empty, return
+            action="skip".
+          load_vocab: [pallet, box, crate]
+          presence_threshold: 0.5
+      merge_rules:
+        max_area_ratio: 3.0
+        max_gap_diag_frac: 0.02
+        aspect_ratio_range: [0.25, 4.0]

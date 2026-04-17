@@ -1,0 +1,88 @@
+# Auto Annotation V4 — Default Configuration
+#
+# This is the base pipeline config. Class/server/database definitions are split
+# into separate files for maintainability:
+#   - servers.yaml      — detector + VLM server configs
+#   - class_config.yaml — class registry, evaluation groups, co-existence,
+#                          refine rules
+#   - database.yaml     — SQLite pipeline state database
+#   - runtime.yaml      — per-job runtime defaults (stages, logging, inputs)
+#
+# All files are merged automatically at load time via OmegaConf.
+# User overrides (per-job YAML or CLI dotlist) are applied on top.
+
+# ---------------------------------------------------------------------------
+# Detect classes — subset of class_registry to actually run this job.
+# Empty list [] = detect ALL classes in class_registry.
+# Example: detect_classes: [person, forklift, palletjack]
+# ---------------------------------------------------------------------------
+
+detect_classes: []
+
+# ---------------------------------------------------------------------------
+# Auto-accept rules (which tiers skip VLM if models agree + score threshold)
+# tiers: [] disables auto-accept entirely; [1, 2] extends to tier-2.
+# ---------------------------------------------------------------------------
+
+auto_accept:
+  min_model_agreement: 2
+  min_score: 0.0              # global routing fallback; per-model floors live in filtering
+  tiers: [1]
+
+# ---------------------------------------------------------------------------
+# Evaluate stage — confidence-based three-way routing
+# ---------------------------------------------------------------------------
+
+evaluate:
+  reject_below: 0.3            # < this confidence -> reject
+  accept_above: 0.5            # >= this confidence -> accept; in-between -> review
+
+# ---------------------------------------------------------------------------
+# Geometric filtering
+# ---------------------------------------------------------------------------
+
+filtering:
+  min_area: 0.0005
+  max_area: 0.95
+  min_aspect_ratio: 0.1
+  max_aspect_ratio: 10.0
+  min_edge_distance: 0.0
+  per_model_score:            # detector scores are NOT comparable — use per-model floors
+    grounding_dino: 0.35
+    sam3:           0.50
+    sam3_dart:      0.50      # DART uses the same SAM3 weights; same score floor
+    falcon:         0.0       # Falcon has no calibrated score; rely on agreement
+    omdet_turbo:    0.30      # OmDet-Turbo cosine-similarity scores
+  iou_dedup:
+    threshold: 0.7
+    tiebreak_by: [agreement, model_priority, score]
+    model_priority: [sam3_dart, sam3, grounding_dino, omdet_turbo, falcon]
+  max_per_class: 30
+
+# ---------------------------------------------------------------------------
+# Worker process counts
+# ---------------------------------------------------------------------------
+
+workers:
+  detect_per_model: 2
+  detect_merge: 2
+  evaluate_count: 6
+  refine_count: 2
+  finalize_count: 2
+
+# ---------------------------------------------------------------------------
+# Output directory layout
+# ---------------------------------------------------------------------------
+
+output:
+  job_dir: output/auto_annotation_v4
+  checkpoint_dir: checkpoints
+  labels_dir: labels
+  traces_dir: traces
+  review_dir: review
+
+# ---------------------------------------------------------------------------
+# Prompt management
+# ---------------------------------------------------------------------------
+
+prompts_dir: prompts
