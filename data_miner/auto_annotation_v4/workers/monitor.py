@@ -19,11 +19,27 @@ import time
 from pathlib import Path
 
 from ..checkpoint import CheckpointDB
-from ..configs.enums import Stage
+from ..configs.enums import STAGE_ORDER, Stage
 
 logger = logging.getLogger("data_miner.auto_annotation_v4.monitor")
 
 _ALL_STAGES: tuple[str, ...] = tuple(s.value for s in Stage)
+
+
+def _compute_terminal_stage(stages: list[Stage] | None) -> Stage:
+    """Return the last STAGE_ORDER stage present in *stages*.
+
+    Order is taken from ``STAGE_ORDER`` (not list position) so out-of-order
+    config entries still yield a sensible terminal. Falls back to
+    ``Stage.FINALIZE`` when *stages* is empty or None.
+    """
+    if not stages:
+        return Stage.FINALIZE
+    enabled = {Stage(s) for s in stages}
+    for stage in reversed(STAGE_ORDER):
+        if stage in enabled:
+            return stage
+    return Stage.FINALIZE
 
 
 class PipelineMonitor:
@@ -36,6 +52,9 @@ class PipelineMonitor:
         db: Connected CheckpointDB instance.
         lock_ttl: Seconds before stale processing claims are recovered.
         max_retries: Max attempts before moving to failures table.
+        stages: Ordered list of enabled stages (from RuntimeConfig). Used to
+            compute the terminal stage for completion detection. Defaults to
+            ``Stage.FINALIZE`` when None/empty.
     """
 
     def __init__(
@@ -44,10 +63,12 @@ class PipelineMonitor:
         *,
         lock_ttl: int = 300,
         max_retries: int = 3,
+        stages: list[Stage] | None = None,
     ) -> None:
         self.db = db
         self.lock_ttl = lock_ttl
         self.max_retries = max_retries
+        self.terminal_stage: Stage = _compute_terminal_stage(stages)
 
     # ------------------------------------------------------------------
     # Status snapshot
@@ -122,6 +143,8 @@ class PipelineMonitor:
             ``True`` if all images completed before timeout.
         """
         start = time.monotonic()
+        last_wal_checkpoint = start
+        wal_checkpoint_interval = 300.0
         logger.info(
             "Waiting for %d images to complete (poll every %.1fs)...",
             total_images,
@@ -131,7 +154,7 @@ class PipelineMonitor:
         while True:
             # Ground truth: stage checkpoint counts + failures
             status = await self.get_status()
-            done = status.get("stages", {}).get(Stage.FINALIZE.value, 0)
+            done = status.get("stages", {}).get(self.terminal_stage.value, 0)
             failed = status.get("failed", 0)
             finished = done + failed
 
@@ -151,6 +174,12 @@ class PipelineMonitor:
             # Stale recovery on every poll
             await self.recover_stale()
 
+            now = time.monotonic()
+            if now - last_wal_checkpoint >= wal_checkpoint_interval:
+                await self.db.wal_checkpoint()
+                logger.info("WAL checkpoint completed")
+                last_wal_checkpoint = now
+
             if timeout is not None and (time.monotonic() - start) >= timeout:
                 logger.warning(
                     "Timed out after %.0f s -- %d / %d images finished.",
@@ -167,9 +196,9 @@ class PipelineMonitor:
     # ------------------------------------------------------------------
 
     async def completed_count(self) -> int:
-        """Return the number of images that have reached the finalize stage."""
+        """Return the number of images that have reached the terminal stage."""
         status = await self.get_status()
-        return status.get("stages", {}).get(Stage.FINALIZE.value, 0)
+        return status.get("stages", {}).get(self.terminal_stage.value, 0)
 
     async def failed_count(self) -> int:
         """Return the number of images in the failures table."""

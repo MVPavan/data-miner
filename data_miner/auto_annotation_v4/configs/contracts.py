@@ -11,6 +11,7 @@ from .enums import (
     BboxSource,
     CandidateStatus,
     DropReason,
+    FilterContext,
     FinalAction,
     ImageStatus,
     RefineAction,
@@ -25,6 +26,8 @@ __all__ = [
     "DetectResult",
     "DetectRouting",
     "EvaluateResult",
+    "FilterDrop",
+    "FilterResult",
     "FinalAnnotation",
     "FinalizeDrop",
     "FinalizeResult",
@@ -164,6 +167,41 @@ class DetectResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Stage 1b: FILTER (split out of DETECT)
+# ---------------------------------------------------------------------------
+
+
+class FilterDrop(BaseModel):
+    """One candidate dropped by a filter, tagged with the invoking context."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str
+    reason: DropReason
+    context: FilterContext
+    detail: str | None = None
+
+
+class FilterResult(BaseModel):
+    """Filter stage output: kept candidates, per-candidate drop log, and routing.
+
+    Shape parallels :class:`DetectResult` — detect now saves raw merged
+    proposals and the filter stage takes over the filter/route responsibility.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_id: str
+    candidates: list[Candidate]
+    drops: list[FilterDrop] = Field(default_factory=list)
+    routing: DetectRouting = Field(default_factory=DetectRouting)
+    filter_stats: dict[str, Any] = Field(default_factory=dict)
+    config_hash: str = ""
+    created_at: float = 0.0
+    stage_timing_ms: float = 0.0
+
+
+# ---------------------------------------------------------------------------
 # Stage 2: EVALUATE
 # ---------------------------------------------------------------------------
 
@@ -235,6 +273,7 @@ class EvaluateResult(BaseModel):
     review: list[str] = Field(default_factory=list)
     rejected: list[str] = Field(default_factory=list)
     relabels: dict[str, str] = Field(default_factory=dict)
+    drops: list[FilterDrop] = Field(default_factory=list)
     stage_timing_ms: float = 0.0
 
 
@@ -285,6 +324,7 @@ class RefineResult(BaseModel):
     vlm_calls: int = 0
     sam_calls: int = 0
     prompt_used: PromptRef | None = None
+    drops: list[FilterDrop] = Field(default_factory=list)
     stage_timing_ms: float = 0.0
 
 

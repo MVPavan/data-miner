@@ -12,6 +12,7 @@ from enum import IntEnum, StrEnum
 __all__ = [
     "Stage",
     "STAGE_ORDER",
+    "FilterContext",
     "WorkStatus",
     "ImageStatus",
     "DetectorName",
@@ -37,6 +38,7 @@ class Stage(StrEnum):
     """Pipeline execution stages stored in checkpoint metadata and Redis messages."""
 
     DETECT = "detect"
+    FILTER = "filter"
     EVALUATE = "evaluate"
     REFINE = "refine"
     FINALIZE = "finalize"
@@ -45,10 +47,20 @@ class Stage(StrEnum):
 
 STAGE_ORDER: list[Stage] = [
     Stage.DETECT,
+    Stage.FILTER,
     Stage.EVALUATE,
     Stage.REFINE,
     Stage.FINALIZE,
 ]
+
+
+class FilterContext(StrEnum):
+    """Which pipeline point a filter was invoked from."""
+
+    POST_DETECT = "post_detect"
+    POST_REVIEW = "post_review"
+    POST_REFINE = "post_refine"
+    PRE_FINALIZE = "pre_finalize"
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +198,7 @@ class DropReason(StrEnum):
     """Reason a candidate was dropped during finalize."""
 
     GEOMETRIC_FILTER = "geometric_filter"
+    SCORE_FLOOR = "score_floor"
     DEDUP = "dedup"
     CROSS_CLASS = "cross_class"
     PER_CLASS_CAP = "per_class_cap"

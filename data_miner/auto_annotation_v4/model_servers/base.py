@@ -49,8 +49,10 @@ class DetectorServerBase(ls.LitAPI):
         return self.model.prepare(image, req.prompts, req.threshold)
 
     def predict(self, batch: list, **kwargs) -> list:
-        """Run inference.  Default: sequential per-item."""
-        return [self.model.infer(item) for item in batch]
+        """Run inference. Delegates to ``model.infer_batch`` so models that
+        support multi-image batching (GDINO, SAM3-DART) share a single
+        backbone pass across the LitServe-batched requests."""
+        return self.model.infer_batch(batch)
 
     def encode_response(self, output, **kwargs):
         """Convert model output to wire response."""

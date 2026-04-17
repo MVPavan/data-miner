@@ -36,6 +36,7 @@ from ..configs import (
 )
 from ..utils import get_image_size
 from ..workers.base import StageWorker
+from ..workers.http_retry import http_retry
 
 logger = logging.getLogger("data_miner.auto_annotation_v4.detect_model")
 
@@ -221,12 +222,21 @@ class DetectModelWorker(StageWorker):
             if self._server_semaphore is not None:
                 await self._server_semaphore.acquire()
                 acquired = True
-            async with asyncio.timeout(60):
-                async with self._session.post(
-                    url, json=req.model_dump(), timeout=request_timeout,
-                ) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
+            async for attempt in http_retry():
+                with attempt:
+                    if attempt.retry_state.attempt_number > 1:
+                        self.logger.warning(
+                            "Retrying %s for %s (attempt %d)",
+                            self.model_name.value,
+                            image_id,
+                            attempt.retry_state.attempt_number,
+                        )
+                    async with asyncio.timeout(60):
+                        async with self._session.post(
+                            url, json=req.model_dump(), timeout=request_timeout,
+                        ) as resp:
+                            resp.raise_for_status()
+                            data = await resp.json()
         except TimeoutError:
             self.logger.warning(
                 "%s timed out for %s", self.model_name.value, image_id,

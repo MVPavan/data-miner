@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import time
 from pathlib import Path
 from typing import TypeVar
@@ -48,6 +49,7 @@ _SCHEMA = """\
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA busy_timeout = 5000;
+PRAGMA wal_autocheckpoint = 1000;
 
 CREATE TABLE IF NOT EXISTS job_info (
     job_id          TEXT NOT NULL,
@@ -268,6 +270,33 @@ class CheckpointDB:
             " (image_id, image_path, status, stages_completed, created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             (image_id, image_path, ImageStatus.PENDING, "[]", now, now),
+        )
+        await db.commit()
+
+    async def register_image_batch(
+        self, items: list[tuple[str, str]]
+    ) -> None:
+        """Register multiple images in a single transaction.
+
+        Uses INSERT OR IGNORE so re-registering already-known images is a
+        no-op.  Designed for high-throughput startup at 1M-image scale where
+        per-image transactions would dominate wall time.
+
+        Args:
+            items: List of ``(image_id, image_path)`` tuples.
+        """
+        if not items:
+            return
+        db = self._require_db()
+        now = time.time()
+        await db.executemany(
+            "INSERT OR IGNORE INTO image_meta"
+            " (image_id, image_path, status, stages_completed, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (image_id, image_path, ImageStatus.PENDING, "[]", now, now)
+                for image_id, image_path in items
+            ],
         )
         await db.commit()
 
@@ -923,6 +952,32 @@ class CheckpointDB:
     # ------------------------------------------------------------------
     # Monitoring
     # ------------------------------------------------------------------
+
+    async def wal_checkpoint(self) -> None:
+        """Force a WAL checkpoint (TRUNCATE mode). Safe to call periodically.
+
+        Uses a dedicated short-lived connection so that running checkpoints
+        never races against worker coroutines holding uncommitted transactions
+        on the shared ``self._db`` connection. On BUSY/locked failure we log
+        a warning and fall through — SQLite's ``wal_autocheckpoint=1000`` will
+        still keep the WAL from growing unbounded.
+        """
+        try:
+            conn = await aiosqlite.connect(str(self.db_path))
+        except Exception as exc:  # pragma: no cover - connect failure is rare
+            logger.warning("WAL checkpoint connect failed: %s", exc)
+            return
+        try:
+            await conn.execute("PRAGMA busy_timeout = 5000")
+            await conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            await conn.commit()
+        except sqlite3.OperationalError as exc:
+            # Most commonly "database is locked" when a long writer is active.
+            logger.warning("WAL checkpoint skipped (BUSY): %s", exc)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("WAL checkpoint failed: %s", exc)
+        finally:
+            await conn.close()
 
     async def recover_stale(
         self,

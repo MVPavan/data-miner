@@ -111,8 +111,8 @@ class SAM3DartModel(BaseDetectorModel):
             sys.path.insert(0, str(dart_root))
 
         from sam3.model_builder import build_sam3_image_model
-        from sam3.model.sam3_multiclass_fast import Sam3MultiClassPredictorFast
         from sam3.model.sam3_image_processor import Sam3Processor as DartProcessor
+        from .sam3_dart_batch import Sam3MultiClassPredictorBatch
 
         self.device = device
         self.dtype = torch.bfloat16 if "cuda" in str(device) else torch.float32
@@ -132,11 +132,13 @@ class SAM3DartModel(BaseDetectorModel):
         )
 
         logger.info(
-            "Wrapping with Sam3MultiClassPredictorFast "
+            "Wrapping with Sam3MultiClassPredictorBatch "
             "(detection_only=%s, presence_threshold=%s)",
             detection_only, presence_threshold,
         )
-        self.predictor = Sam3MultiClassPredictorFast(
+        # Batch predictor subclasses Fast, so single-image set_image/predict
+        # still work unchanged for proposal-mode fallback.
+        self.predictor = Sam3MultiClassPredictorBatch(
             self.model,
             device=device,
             use_fp16=True,
@@ -209,6 +211,57 @@ class SAM3DartModel(BaseDetectorModel):
             prompts=prepared.prompts,
             threshold=prepared.threshold,
         )
+
+    def infer_batch(self, prepareds: list[PreparedInput]) -> list[RawPrediction]:
+        """Run a batched proposal forward pass across B images.
+
+        All images must share the same prompt list (the pipeline case). When
+        prompts diverge across items, falls back to per-item :meth:`infer`.
+        Uses :meth:`Sam3MultiClassPredictorBatch.set_images` +
+        :meth:`predict_batch` to share the backbone encode across the batch.
+
+        Args:
+            prepareds: Batch of prepared inputs.
+
+        Returns:
+            List of ``RawPrediction`` in the same order as *prepareds*.
+        """
+        if not prepareds:
+            return []
+
+        first_prompts = tuple(prepareds[0].prompts)
+        first_threshold = prepareds[0].threshold
+        homogeneous = all(
+            tuple(p.prompts) == first_prompts and p.threshold == first_threshold
+            for p in prepareds
+        )
+        if not homogeneous:
+            return [self.infer(p) for p in prepareds]
+
+        threshold = first_threshold if first_threshold is not None else 0.5
+        with self._class_lock:
+            if self._current_classes != first_prompts:
+                self.predictor.set_classes(list(first_prompts))
+                self._current_classes = first_prompts
+
+            images = [p.image for p in prepareds]
+            state = self.predictor.set_images(images)
+            results = self.predictor.predict_batch(
+                state,
+                confidence_threshold=float(threshold),
+                nms_threshold=0.7,
+            )
+
+        raws: list[RawPrediction] = []
+        for p, res in zip(prepareds, results):
+            raws.append(RawPrediction(
+                outputs=res,
+                inputs=None,
+                image_size=p.image_size,
+                prompts=p.prompts,
+                threshold=p.threshold,
+            ))
+        return raws
 
     def postprocess(self, raw: RawPrediction) -> DetectorResponse:
         """Post-process DART results into normalized boxes/scores/labels.

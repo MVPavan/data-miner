@@ -4,7 +4,7 @@ runtime:
   job_id: null
   log_level: INFO
   log_file: null
-  stages: [detect, evaluate, refine, finalize]
+  stages: [detect, filter, evaluate, refine, finalize]
   force_stages: []
   force_rerun: false
   detect_models: []

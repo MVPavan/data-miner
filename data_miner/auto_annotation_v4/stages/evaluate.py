@@ -17,6 +17,9 @@ from ..configs import (
     Candidate,
     DetectResult,
     EvaluateResult,
+    FilterContext,
+    FilterDrop,
+    FilterResult,
     FinalAction,
     FinalAnnotation,
     PromptRef,
@@ -24,6 +27,7 @@ from ..configs import (
     StageMessage,
     VLMVerdict,
 )
+from ..filters import FilterPipeline
 from ..prompt_manager import load_prompt
 from ..utils import (
     crop_candidate,
@@ -33,6 +37,7 @@ from ..utils import (
     resolve_canonical_class,
 )
 from ..workers.base import StageWorker
+from ..workers.http_retry import http_retry
 from .detect import _build_v4_alias_map
 
 logger = logging.getLogger("data_miner.auto_annotation_v4.evaluate")
@@ -54,6 +59,9 @@ class EvaluateWorker(StageWorker):
     ) -> None:
         super().__init__(config, db, output_writer=output_writer, worker_id=worker_id, job_id=job_id)
         self.alias_map = _build_v4_alias_map(self.config.classes)
+        # Cache a single FilterPipeline per worker — constructor is cheap but
+        # we still build it once so POST_REVIEW calls share one instance.
+        self._filter_pipeline = FilterPipeline(self.config)
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -62,22 +70,28 @@ class EvaluateWorker(StageWorker):
     async def process(self, msg: StageMessage) -> BaseModel:
         t0 = time.monotonic()
 
-        # 1. Load detect checkpoint — mandatory prerequisite.
-        detect: DetectResult | None = await self.load_checkpoint(
-            msg.image_id, Stage.DETECT, DetectResult
+        # 1. Load filter checkpoint — mandatory prerequisite (Phase 2b: the
+        # filter stage owns POST_DETECT filtering + routing, so evaluate reads
+        # from FILTER, not DETECT).
+        filter_result: FilterResult | None = await self.load_checkpoint(
+            msg.image_id, Stage.FILTER, FilterResult
         )
-        if detect is None:
-            raise RuntimeError(f"No detect checkpoint for {msg.image_id}")
+        if filter_result is None:
+            raise RuntimeError(f"filter stage missing for {msg.image_id}")
 
-        # Stash detect for _resolve_next_stage (which needs original class
-        # names to decide refine routing).
-        self._last_detect = detect
+        candidates_in = filter_result.candidates
+        routing = filter_result.routing
+
+        # Stash candidates + routing for _resolve_next_stage and POST_REVIEW
+        # rebuild (which needs original class names + bboxes).
+        self._last_candidates = candidates_in
+        self._last_routing = routing
 
         # 2. Identify candidates that need VLM evaluation.
         to_eval: list[Candidate] = [
             c
-            for c in detect.candidates
-            if c.candidate_id in detect.routing.needs_evaluation
+            for c in candidates_in
+            if c.candidate_id in routing.needs_evaluation
         ]
 
         if not to_eval:
@@ -88,10 +102,11 @@ class EvaluateWorker(StageWorker):
                 vlm_total_tokens=0,
                 prompts_used=[],
                 verdicts=[],
-                accepted=list(detect.routing.auto_accepted),
+                accepted=list(routing.auto_accepted),
                 review=[],
                 rejected=[],
                 relabels={},
+                drops=[],
                 stage_timing_ms=(time.monotonic() - t0) * 1000,
             )
             await self.save_checkpoint(msg.image_id, Stage.EVALUATE, eval_result)
@@ -145,11 +160,36 @@ class EvaluateWorker(StageWorker):
 
         # ---- Resolve verdicts to three-way routing (accept / review / reject) ----
         accepted, review, rejected, relabels = self._resolve_verdicts(
-            all_verdicts, detect
+            all_verdicts, candidates_in
         )
 
-        # Merge auto-accepted candidates from detect with VLM-accepted ones.
-        all_accepted = list(detect.routing.auto_accepted) + accepted
+        # Merge auto-accepted candidates from filter with VLM-accepted ones.
+        all_accepted = list(routing.auto_accepted) + accepted
+
+        # ---- POST_REVIEW filter pass (cross_class + per_class_cap) ----
+        # After VLM verdicts + relabels, re-check class-level invariants that
+        # relabels may have broken. Only survivors (accept | review) go through
+        # the filter; rejected candidates are excluded outright.
+        survivor_ids: set[str] = set(all_accepted) | set(review)
+        candidates_after_verdicts: list[Candidate] = []
+        for cand in candidates_in:
+            if cand.candidate_id not in survivor_ids:
+                continue
+            cls_post = relabels.get(cand.candidate_id, cand.class_name)
+            if cls_post == cand.class_name:
+                candidates_after_verdicts.append(cand)
+            else:
+                # Re-labeled survivor — clone with updated class_name so filters
+                # see the post-VLM class for cross-class + per-class-cap rules.
+                candidates_after_verdicts.append(cand.model_copy(update={"class_name": cls_post}))
+
+        kept, drops = self._filter_pipeline.run(
+            candidates_after_verdicts, FilterContext.POST_REVIEW
+        )
+        dropped_ids: set[str] = {d.candidate_id for d in drops}
+        # Remove filter-dropped ids from accepted / review buckets.
+        all_accepted = [cid for cid in all_accepted if cid not in dropped_ids]
+        review = [cid for cid in review if cid not in dropped_ids]
 
         elapsed_ms = (time.monotonic() - t0) * 1000
         eval_result = EvaluateResult(
@@ -162,6 +202,7 @@ class EvaluateWorker(StageWorker):
             review=review,
             rejected=rejected,
             relabels=relabels,
+            drops=drops,
             stage_timing_ms=elapsed_ms,
         )
         await self.save_checkpoint(msg.image_id, Stage.EVALUATE, eval_result)
@@ -176,8 +217,8 @@ class EvaluateWorker(StageWorker):
         """Forward to refine if any non-rejected survivor's class (post-relabel)
         is in refine_rules; otherwise forward to finalize.
 
-        Uses ``self._last_detect`` (stashed during :meth:`process`) to resolve
-        original class names for non-relabeled candidates — mirrors v3
+        Uses ``self._last_candidates`` (stashed during :meth:`process`) to
+        resolve original class names for non-relabeled candidates — mirrors v3
         ``_route_after_evaluate`` exactly.
         """
         eval_result: EvaluateResult = result  # type: ignore[assignment]
@@ -185,13 +226,13 @@ class EvaluateWorker(StageWorker):
         if not refine_classes:
             return Stage.FINALIZE
 
-        detect: DetectResult | None = getattr(self, "_last_detect", None)
-        if detect is None:
-            # Should never happen — process() always sets _last_detect.
+        candidates: list[Candidate] | None = getattr(self, "_last_candidates", None)
+        if candidates is None:
+            # Should never happen — process() always sets _last_candidates.
             return Stage.FINALIZE
 
         survivor_ids = set(eval_result.accepted) | set(eval_result.review)
-        for cand in detect.candidates:
+        for cand in candidates:
             if cand.candidate_id in eval_result.rejected:
                 continue
             if cand.candidate_id not in survivor_ids:
@@ -294,14 +335,16 @@ class EvaluateWorker(StageWorker):
         vlm_timeout = aiohttp.ClientTimeout(total=120)
         async with sem:
             try:
-                async with asyncio.timeout(120):
-                    async with self._session.post(
-                        vlm_url, json=payload,
-                        headers={"Authorization": f"Bearer {vlm_cfg.api_key}"},
-                        timeout=vlm_timeout,
-                    ) as resp:
-                        resp.raise_for_status()
-                        vlm_response = await resp.json()
+                async for attempt in http_retry():
+                    with attempt:
+                        async with asyncio.timeout(120):
+                            async with self._session.post(
+                                vlm_url, json=payload,
+                                headers={"Authorization": f"Bearer {vlm_cfg.api_key}"},
+                                timeout=vlm_timeout,
+                            ) as resp:
+                                resp.raise_for_status()
+                                vlm_response = await resp.json()
             except TimeoutError:
                 self.logger.warning(
                     "VLM classify_one timed out for %s", cand.candidate_id,
@@ -348,7 +391,7 @@ class EvaluateWorker(StageWorker):
     def _resolve_verdicts(
         self,
         verdicts: list[VLMVerdict],
-        detect: DetectResult,
+        candidates: list[Candidate],
     ) -> tuple[list[str], list[str], list[str], dict[str, str]]:
         """Partition verdict IDs into accept / review / reject buckets.
 
@@ -366,7 +409,7 @@ class EvaluateWorker(StageWorker):
         relabels: dict[str, str] = {}
 
         cand_by_id: dict[str, Candidate] = {
-            c.candidate_id: c for c in detect.candidates
+            c.candidate_id: c for c in candidates
         }
         eval_cfg = self.config.evaluate
 
