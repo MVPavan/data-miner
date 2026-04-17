@@ -1,0 +1,150 @@
+# ============================================================================
+# Qwen3.5-27B-FP8 Annotation Validator — 4× vLLM replicas + nginx LB
+#
+# Topology: 4 independent TP=1 replicas, one per L40S (GPUs 4..7), fronted by
+# nginx (least-conn). L40S has no NVLink, so TP>1 pays a PCIe allreduce tax —
+# running 4 independent replicas maximises throughput.
+#
+# Qwen3.5-27B (hybrid GatedDeltaNet + attention, 16/64 layers full-attn) has a
+# ~4× smaller KV footprint than a pure-attention 27B, so TP=1 with a single
+# 46 GB L40S comfortably holds the model + a large KV pool.
+#
+# Pipeline endpoint (unchanged): http://<host>:${VLLM_PORT:-8956}/v1/...
+# nginx fans out to the 4 backend replicas internally.
+#
+# MODEL OPTIONS (override via env):
+#   VALIDATOR_MODEL=Qwen/Qwen3.5-27B-FP8       (default; ~28 GB, recommended)
+#   VALIDATOR_MODEL=Qwen/Qwen3.5-27B           (BF16, ~56 GB — requires TP=2)
+#   VALIDATOR_MODEL=Qwen/Qwen3.5-27B-GPTQ-Int4 (~14 GB, slower on Ada than FP8)
+#   VALIDATOR_MODEL=Qwen/Qwen3.5-35B-A3B-FP8   (MoE; worse on grounding bench)
+#
+# GPU SELECTION:
+#   Each replica pins one GPU via deploy.resources...device_ids. To shift to
+#   a different 4-GPU block, edit the 4 device_ids below.
+# ============================================================================
+
+x-vllm-service: &vllm-service
+  image: vllm/vllm-openai:latest
+  environment:
+    - HF_TOKEN=${HF_TOKEN:-}
+    - VLLM_WORKER_MULTIPROC_METHOD=spawn
+    - NVIDIA_DISABLE_REQUIRE=1
+  volumes:
+    - ${HF_HOME:-/mnt/data_2/all_cache/hf_home}:/root/.cache/huggingface
+  ipc: host
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 600s
+
+x-vllm-command: &vllm-command
+  - --model
+  - ${VALIDATOR_MODEL:-Qwen/Qwen3.5-27B-FP8}
+  - --tensor-parallel-size
+  - "1"
+  # Annotation prompts ~1500-2000 tokens; 4096 gives 2× headroom with cheap KV
+  - --max-model-len
+  - "${VALIDATOR_MAX_MODEL_LEN:-4096}"
+  - --gpu-memory-utilization
+  - "${VALIDATOR_GPU_MEM_UTIL:-0.92}"
+  # Hybrid-arch KV is ~4× smaller per token; can sustain large batches per GPU
+  - --max-num-seqs
+  - "${VALIDATOR_MAX_NUM_SEQS:-64}"
+  - --enable-chunked-prefill
+  - --max-num-batched-tokens
+  - "4096"
+  # FP8 KV cache: ~2× KV capacity, negligible quality loss
+  - --kv-cache-dtype
+  - fp8_e4m3
+  - --reasoning-parser
+  - qwen3
+  - --enable-prefix-caching
+  - --mm-processor-cache-type
+  - shm
+  - --dtype
+  - ${VALIDATOR_DTYPE:-auto}
+  - --port
+  - "8000"
+  - --default-chat-template-kwargs
+  - '{"enable_thinking": false}'
+  # Multi-Token Prediction (speculative decoding). Per Qwen3.5-27B model
+  # card. Predicts N extra tokens per step, verifies in parallel — typically
+  # +30-60% decode throughput on short JSON outputs. To disable, set
+  # VALIDATOR_SPECULATIVE='{}' or comment out the two lines below.
+  # - --speculative-config
+  # - '${VALIDATOR_SPECULATIVE:-{"method":"qwen3_next_mtp","num_speculative_tokens":2}}'
+
+services:
+  qwen35-validator-0:
+    <<: *vllm-service
+    container_name: qwen35-validator-0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['4']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-1:
+    <<: *vllm-service
+    container_name: qwen35-validator-1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['5']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-2:
+    <<: *vllm-service
+    container_name: qwen35-validator-2
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['6']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-3:
+    <<: *vllm-service
+    container_name: qwen35-validator-3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['7']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-lb:
+    image: nginx:alpine
+    container_name: qwen35-lb
+    ports:
+      - "${VLLM_PORT:-8956}:80"
+    volumes:
+      - ./nginx-vllm.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      qwen35-validator-0:
+        condition: service_healthy
+      qwen35-validator-1:
+        condition: service_healthy
+      qwen35-validator-2:
+        condition: service_healthy
+      qwen35-validator-3:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
