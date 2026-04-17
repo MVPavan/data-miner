@@ -21,6 +21,13 @@ from ..configs.enums import DetectorName
 _SERVER_REGISTRY: dict[DetectorName, type] = {}
 
 
+def _parse_gpu_arg(value: str) -> list[int]:
+    # Accepts "0", "cuda:0", "4", "cuda:4", or "0,1".
+    # litserve requires a list of ints.
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    return [int(p.removeprefix("cuda:")) for p in parts]
+
+
 def _get_registry() -> dict[DetectorName, type]:
     """Lazy import to avoid loading all model deps at startup."""
     if not _SERVER_REGISTRY:
@@ -56,7 +63,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Launch detector model servers")
     parser.add_argument("--model", type=str, help="Single model to launch")
     parser.add_argument("--port", type=int, default=3001)
-    parser.add_argument("--gpu", type=str, default="cuda:0")
+    parser.add_argument("--gpu", type=str, default="0",
+                        help='GPU index for litserve devices=[N]. '
+                             'Accepts "N", "cuda:N", or "N,M" for multi-GPU.')
     parser.add_argument("--config", type=str, help="Path to user config YAML")
     parser.add_argument("--all", action="store_true", help="Launch all enabled")
     parser.add_argument("--models", nargs="+", help="Specific models to launch")
@@ -70,6 +79,7 @@ def main() -> None:
     if args.model:
         import litserve as ls
 
+        devices = _parse_gpu_arg(args.gpu)
         registry = _get_registry()
         name = DetectorName(args.model)
         api_cls = registry[name]
@@ -77,7 +87,7 @@ def main() -> None:
         server = ls.LitServer(
             api,
             accelerator="gpu",
-            devices=[args.gpu],
+            devices=devices,
             max_batch_size=args.max_batch_size,
             batch_timeout=args.batch_timeout,
         )

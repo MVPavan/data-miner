@@ -348,8 +348,11 @@ class WorkersConfig(BaseModel):
     """Workers per enabled detector model. Total detect workers =
     detect_per_model × number of enabled detectors."""
     detect_merge: int = 2
-    """Workers for the detect merge stage (combine per-model proposals,
-    filter, dedup, route)."""
+    """Workers for the detect merge stage (combine per-model proposals
+    into raw merged detections; filter/dedup/route is now the filter stage)."""
+    filter_count: int = 4
+    """Workers for the filter stage (programmatic geometric + score filters,
+    IoU dedup, and auto-accept routing)."""
     evaluate_count: int = 6
     refine_count: int = 2
     finalize_count: int = 2

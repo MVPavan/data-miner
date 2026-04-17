@@ -111,23 +111,44 @@ def load_config(
     return AutoAnnotationV4Config.model_validate(data)
 
 
+# Subset of top-level config fields whose changes should invalidate cached
+# stage checkpoints. Excludes runtime/database/output/workers/prompts_dir —
+# those either don't affect stage outputs or are handled separately (prompt
+# file contents are hashed below).
+_HASH_FIELDS: tuple[str, ...] = (
+    "servers",
+    "class_registry",
+    "detect_classes",
+    "auto_accept",
+    "evaluate",
+    "evaluation_groups",
+    "co_existence",
+    "refine_rules",
+    "filtering",
+)
+
+
 def compute_config_hash(
     config: AutoAnnotationV4Config,
     prompts_dir: str | Path,
 ) -> str:
-    """Stable hash of the full config + all active prompt files.
+    """Stable hash of invalidation-relevant config fields + active prompts.
 
-    Used to detect config/prompt changes between runs so downstream stages
-    can be invalidated selectively.
+    Only fields that actually drive stage output differences are included
+    (see ``_HASH_FIELDS``). Runtime knobs (job_id, image paths, log level,
+    stage selection), database connection params, output paths, worker
+    counts, and the raw ``prompts_dir`` string are deliberately excluded —
+    they do not change what a cached stage result would have looked like.
 
     Returns:
         First 16 characters of the SHA-256 hex digest.
     """
     hasher = hashlib.sha256()
 
-    # Hash the serialised config (excluding the hash itself, obviously).
-    config_json = config.model_dump_json(indent=None)
-    hasher.update(config_json.encode())
+    # Hash only the invalidation-relevant subtrees of the validated config.
+    subset = config.model_dump(mode="json", include=set(_HASH_FIELDS))
+    import json as _json
+    hasher.update(_json.dumps(subset, sort_keys=True, separators=(",", ":")).encode())
 
     # Hash every prompt file under the active version directory.
     prompts_root = Path(prompts_dir)

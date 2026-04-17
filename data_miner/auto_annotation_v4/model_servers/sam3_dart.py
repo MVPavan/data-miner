@@ -60,12 +60,21 @@ class SAM3DartApi(DetectorServerBase):
         return super().decode_request(request, **kwargs)
 
     def predict(self, batch, **kwargs):
-        results = []
-        for item in batch:
+        # Split refine items (per-request serial) from proposal items
+        # (batched through model.infer_batch for a shared backbone pass).
+        results: list = [None] * len(batch)
+        proposal_items: list = []
+        proposal_idx: list[int] = []
+        for i, item in enumerate(batch):
             if isinstance(item, dict) and item.get("__mode__") == _REFINE_TAG:
-                results.append(self.model.refine(item))
+                results[i] = self.model.refine(item)
             else:
-                results.append(self.model.infer(item))
+                proposal_items.append(item)
+                proposal_idx.append(i)
+        if proposal_items:
+            proposal_raws = self.model.infer_batch(proposal_items)
+            for i, raw in zip(proposal_idx, proposal_raws):
+                results[i] = raw
         return results
 
     def encode_response(self, output, **kwargs):

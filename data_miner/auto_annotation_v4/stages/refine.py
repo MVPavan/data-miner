@@ -32,6 +32,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from ..workers.base import StageWorker
+from ..workers.http_retry import http_retry
 from ..configs import (
     AutoAnnotationV4Config,
     BoundingBox,
@@ -39,8 +40,10 @@ from ..configs import (
     DetectorName,
     DetectorRequest,
     DetectorResponse,
-    DetectResult,
     EvaluateResult,
+    FilterContext,
+    FilterDrop,
+    FilterResult,
     FinalAction,
     FinalAnnotation,
     MergeRulesConfig,
@@ -59,6 +62,7 @@ from ..configs import (
     BboxSource,
     RefinePromptConfig,
 )
+from ..filters import FilterPipeline
 from ..output import OutputWriter
 from ..prompt_manager import load_prompt
 from ..utils import (
@@ -101,6 +105,9 @@ class RefineWorker(StageWorker):
         job_id: str | None = None,
     ) -> None:
         super().__init__(config, db, output_writer=output_writer, server_semaphore=server_semaphore, worker_id=worker_id, job_id=job_id)
+        # Cache a single FilterPipeline per worker — reused for every POST_REFINE
+        # pass after refine/merge completes.
+        self._filter_pipeline = FilterPipeline(self.config)
 
     # ------------------------------------------------------------------
     # Core process
@@ -126,39 +133,43 @@ class RefineWorker(StageWorker):
     async def process(self, msg: StageMessage) -> BaseModel:
         t0 = time.monotonic()
 
-        detect: DetectResult | None = await self.load_checkpoint(
-            msg.image_id, Stage.DETECT, DetectResult
+        filtered: FilterResult | None = await self.load_checkpoint(
+            msg.image_id, Stage.FILTER, FilterResult
         )
         evaluate: EvaluateResult | None = await self.load_checkpoint(
             msg.image_id, Stage.EVALUATE, EvaluateResult
         )
-        if detect is None:
-            raise RuntimeError(f"No detect checkpoint for {msg.image_id}")
+        if filtered is None:
+            raise RuntimeError(f"No filter checkpoint for {msg.image_id}")
 
-        # Evaluate may not exist if detect routed all auto-accepts directly to
+        # Evaluate may not exist if filter routed all auto-accepts directly to
         # refine (no VLM path). Treat as empty in that case.
         if evaluate is None:
             evaluate = EvaluateResult(
                 image_id=msg.image_id,
-                accepted=list(detect.routing.auto_accepted),
+                accepted=list(filtered.routing.auto_accepted),
                 review=[],
                 rejected=[],
                 relabels={},
             )
 
-        image_w, image_h = detect.image_size[0], detect.image_size[1]
+        # FilterResult does not carry image_size (parallel-shape contract with
+        # DetectResult, but size lives only on detect). Read it from the PIL
+        # image — ``Image.open`` is lazy and only touches the header for .size.
+        image = Image.open(msg.image_path).convert("RGB")
+        image_w, image_h = image.size
         sam_port = self._sam_port()
         refine_classes = self.config.refine_rules.classes
 
         # Build candidate lookup + identify those eligible for refine.
         cand_by_id: dict[str, Candidate] = {
-            c.candidate_id: c for c in detect.candidates
+            c.candidate_id: c for c in filtered.candidates
         }
         accepted_set: set[str] = set(evaluate.accepted)
         review_set: set[str] = set(evaluate.review)
 
         eligible: list[tuple[Candidate, str]] = []  # (cand, eval_verdict)
-        for cand in detect.candidates:
+        for cand in filtered.candidates:
             cls_post = evaluate.relabels.get(cand.candidate_id, cand.class_name)
             if cls_post not in refine_classes:
                 continue
@@ -181,11 +192,9 @@ class RefineWorker(StageWorker):
             await self.save_checkpoint(msg.image_id, Stage.REFINE, refine_result)
 
             if self.output_writer is not None:
-                self._write_final_output(msg.image_id, detect, evaluate, refine_result)
+                self._write_final_output(msg.image_id, filtered, evaluate, refine_result)
 
             return refine_result
-
-        image = Image.open(msg.image_path).convert("RGB")
 
         for cand, eval_verdict in eligible:
             cls_post = evaluate.relabels.get(
@@ -242,9 +251,32 @@ class RefineWorker(StageWorker):
                 )
             )
 
+        # ---- POST_REFINE filter pass (geometric + dedup) ----
+        # Refined bboxes may violate geometric thresholds or collide with
+        # neighbours that were previously non-overlapping. Build a snapshot of
+        # the post-refine candidate list (accepted survivors only, with final
+        # bboxes and post-relabel class) and run the filter chain.
+        # Note: cluster_and_collapse mutates .agreement / .agreeing_models on
+        # survivors — tolerable here since these fields are already stale
+        # relative to the pre-refine merge state.
+        post_refine_candidates = self._build_post_refine_candidates(
+            filtered, evaluate, results,
+        )
+        kept, drops = self._filter_pipeline.run(
+            post_refine_candidates, FilterContext.POST_REFINE
+        )
+        dropped_ids: set[str] = {d.candidate_id for d in drops}
+        # Flip any filter-dropped candidate's final_verdict to reject so
+        # finalize's canonical builder skips it.
+        if dropped_ids:
+            for r in results:
+                if r.candidate_id in dropped_ids:
+                    r.final_verdict = Verdict.REJECT
+                    r.accepted = False
+
         refine_result = self._build_refine_result(
             msg, results, instructions_used, sam_calls, vlm_calls,
-            prompt_used, t0,
+            prompt_used, t0, drops=drops,
         )
         await self.save_checkpoint(msg.image_id, Stage.REFINE, refine_result)
 
@@ -255,7 +287,7 @@ class RefineWorker(StageWorker):
         )
 
         if self.output_writer is not None:
-            self._write_final_output(msg.image_id, detect, evaluate, refine_result)
+            self._write_final_output(msg.image_id, filtered, evaluate, refine_result)
 
         return refine_result
 
@@ -279,6 +311,7 @@ class RefineWorker(StageWorker):
         vlm_calls: int,
         prompt_used: PromptRef,
         t0: float,
+        drops: list[FilterDrop] | None = None,
     ) -> RefineResult:
         elapsed_ms = (time.monotonic() - t0) * 1000
         return RefineResult(
@@ -288,8 +321,64 @@ class RefineWorker(StageWorker):
             vlm_calls=vlm_calls,
             sam_calls=sam_calls,
             prompt_used=prompt_used,
+            drops=list(drops) if drops else [],
             stage_timing_ms=elapsed_ms,
         )
+
+    # ------------------------------------------------------------------
+    # Post-refine canonical list (for POST_REFINE filter pass)
+    # ------------------------------------------------------------------
+
+    def _build_post_refine_candidates(
+        self,
+        filtered: FilterResult,
+        evaluate: EvaluateResult,
+        results: list[RefinementResult],
+    ) -> list[Candidate]:
+        """Return the candidate list that reflects updated bboxes + relabels
+        for every accept/review survivor (refined and non-refined alike).
+
+        Used as input to the POST_REFINE FilterPipeline pass so geometric /
+        dedup invariants are re-checked against the post-refine state.
+        """
+        refine_by_id: dict[str, RefinementResult] = {
+            r.candidate_id: r for r in results
+        }
+        accepted_set: set[str] = set(evaluate.accepted)
+        review_set: set[str] = set(evaluate.review)
+        rejected_set: set[str] = set(evaluate.rejected)
+        relabels = evaluate.relabels
+
+        snapshot: list[Candidate] = []
+        for cand in filtered.candidates:
+            if cand.candidate_id in rejected_set:
+                continue
+            if (
+                cand.candidate_id not in accepted_set
+                and cand.candidate_id not in review_set
+            ):
+                continue
+
+            ref = refine_by_id.get(cand.candidate_id)
+            if ref is not None:
+                if ref.final_verdict == Verdict.REJECT:
+                    continue
+                final_bbox = (
+                    ref.refined_bbox
+                    if (
+                        ref.final_bbox_source == BboxSource.REFINED
+                        and ref.refined_bbox is not None
+                    )
+                    else ref.original_bbox
+                )
+            else:
+                final_bbox = cand.bbox
+
+            cls_post = relabels.get(cand.candidate_id, cand.class_name)
+            snapshot.append(
+                cand.model_copy(update={"bbox": final_bbox, "class_name": cls_post})
+            )
+        return snapshot
 
     # ------------------------------------------------------------------
     # Per-prompt inner loop
@@ -571,15 +660,17 @@ class RefineWorker(StageWorker):
             ),
             "max_tokens": template.model_params.get("max_tokens", max_tokens),
         }
-        async with asyncio.timeout(60):
-            async with self._session.post(
-                f"{vlm_cfg.url}/chat/completions",
-                json=payload,
-                headers={"Authorization": f"Bearer {vlm_cfg.api_key}"},
-                timeout=aiohttp.ClientTimeout(total=60),
-            ) as resp:
-                resp.raise_for_status()
-                response = await resp.json()
+        async for attempt in http_retry():
+            with attempt:
+                async with asyncio.timeout(60):
+                    async with self._session.post(
+                        f"{vlm_cfg.url}/chat/completions",
+                        json=payload,
+                        headers={"Authorization": f"Bearer {vlm_cfg.api_key}"},
+                        timeout=aiohttp.ClientTimeout(total=60),
+                    ) as resp:
+                        resp.raise_for_status()
+                        response = await resp.json()
         text = response["choices"][0]["message"]["content"]
         parsed = parse_vlm_json(text)
         if isinstance(parsed, list):
@@ -606,13 +697,15 @@ class RefineWorker(StageWorker):
             if self._server_semaphore is not None:
                 await self._server_semaphore.acquire()
                 acquired = True
-            async with asyncio.timeout(30):
-                async with self._session.post(
-                    url, json=req.model_dump(),
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
+            async for attempt in http_retry():
+                with attempt:
+                    async with asyncio.timeout(30):
+                        async with self._session.post(
+                            url, json=req.model_dump(),
+                            timeout=aiohttp.ClientTimeout(total=30),
+                        ) as resp:
+                            resp.raise_for_status()
+                            data = await resp.json()
         except TimeoutError:
             self.logger.warning("SAM refine timed out for bbox")
             return None
@@ -654,13 +747,15 @@ class RefineWorker(StageWorker):
             if self._server_semaphore is not None:
                 await self._server_semaphore.acquire()
                 acquired = True
-            async with asyncio.timeout(30):
-                async with self._session.post(
-                    url, json=req.model_dump(),
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
+            async for attempt in http_retry():
+                with attempt:
+                    async with asyncio.timeout(30):
+                        async with self._session.post(
+                            url, json=req.model_dump(),
+                            timeout=aiohttp.ClientTimeout(total=30),
+                        ) as resp:
+                            resp.raise_for_status()
+                            data = await resp.json()
         except TimeoutError:
             self.logger.warning("SAM presence timed out for bbox")
             return 0.0
@@ -704,7 +799,7 @@ class RefineWorker(StageWorker):
     def _write_final_output(
         self,
         image_id: str,
-        detect: DetectResult,
+        filtered: FilterResult,
         evaluate: EvaluateResult,
         refine: RefineResult,
     ) -> None:
@@ -722,7 +817,7 @@ class RefineWorker(StageWorker):
         annotations: list[FinalAnnotation] = []
         review_items: list[dict] = []
 
-        for cand in detect.candidates:
+        for cand in filtered.candidates:
             if cand.candidate_id in rejected_set:
                 continue
             cls_post = evaluate.relabels.get(cand.candidate_id, cand.class_name)
@@ -775,8 +870,8 @@ class RefineWorker(StageWorker):
         self.output_writer.write_yolo_labels(image_id, annotations, class_map)
         self.output_writer.write_trace(image_id, {
             "image_id": image_id,
-            "stages": ["detect", "evaluate", "refine"],
-            "detect": detect.model_dump(mode="json"),
+            "stages": ["filter", "evaluate", "refine"],
+            "filter": filtered.model_dump(mode="json"),
             "evaluate": evaluate.model_dump(mode="json"),
             "refine": refine.model_dump(mode="json"),
             "annotations": [a.model_dump(mode="json") for a in annotations],

@@ -21,15 +21,15 @@ class_registry:
     id: 0
     tier: 1
     prompts: [person]
-    synonyms: [human, pedestrian, man, woman]
+    synonyms: []
     tags: [overlap_exempt]
-    description: "Full visible human body in any pose."
+    description: "Full/partial visible human body in any pose."
 
   bicycle:
     id: 1
     tier: 1
     prompts: [bicycle]
-    synonyms: [bike, cycle]
+    synonyms: []
     tags: [vehicle]
     description: ""
 
@@ -37,7 +37,7 @@ class_registry:
     id: 2
     tier: 1
     prompts: [car]
-    synonyms: [automobile, sedan]
+    synonyms: []
     tags: [vehicle, confusion:road_vehicle]
     description: ""
 
@@ -53,7 +53,7 @@ class_registry:
     id: 4
     tier: 1
     prompts: [airplane]
-    synonyms: [aeroplane, plane, aircraft]
+    synonyms: [aeroplane, aircraft]
     tags: [vehicle]
     description: ""
 
@@ -69,7 +69,7 @@ class_registry:
     id: 6
     tier: 1
     prompts: [train]
-    synonyms: [locomotive]
+    synonyms: []
     tags: [vehicle]
     description: ""
 
@@ -77,7 +77,7 @@ class_registry:
     id: 7
     tier: 1
     prompts: [truck]
-    synonyms: [lorry]
+    synonyms: []
     tags: [vehicle, confusion:road_vehicle, confusion:industrial]
     description: "Large road vehicle for cargo. No mast, no forks."
 
@@ -85,7 +85,7 @@ class_registry:
     id: 8
     tier: 1
     prompts: [boat]
-    synonyms: [ship, vessel]
+    synonyms: [ship]
     tags: [vehicle]
     description: ""
 
@@ -139,7 +139,7 @@ class_registry:
     id: 31
     tier: 2
     prompts: [helicopter]
-    synonyms: [chopper]
+    synonyms: []
     tags: [vehicle]
     description: ""
 
@@ -147,7 +147,7 @@ class_registry:
     id: 32
     tier: 2
     prompts: [wallet]
-    synonyms: [billfold]
+    synonyms: []
     tags: [confusion:electronics]
     description: "Small, flat, foldable. Fits in pocket."
 
@@ -158,14 +158,13 @@ class_registry:
     synonyms: [face]
     tags: [overlap_exempt]
     description: >
-      Annotate separately ONLY when body is NOT fully visible
-      (head through window, behind counter, in vehicle cabin).
+      Annotate separately even when body is fully visible
 
   laptop:
     id: 63
     tier: 2
     prompts: [laptop]
-    synonyms: [notebook computer]
+    synonyms: []
     tags: [confusion:electronics]
     description: "Open or closed portable computer on flat surface."
 
@@ -182,7 +181,7 @@ class_registry:
     id: 30
     tier: 3
     prompts: [shopping cart]
-    synonyms: [trolley, cart]
+    synonyms: [trolley]
     tags: [confusion:industrial]
     description: "Wheeled cart with handle, flat platform or basket. No forks, no mast."
 
@@ -190,7 +189,7 @@ class_registry:
     id: 33
     tier: 3
     prompts: [forklift]
-    synonyms: [fork lift, forklift truck]
+    synonyms: []
     tags: [confusion:industrial]
     description: >
       Powered truck with vertical MAST, counterweight body, overhead guard.
@@ -200,7 +199,7 @@ class_registry:
     id: 34
     tier: 3
     prompts: [pallet jack]
-    synonyms: [pallet jack, pump truck, hand truck]
+    synonyms: []
     tags: [confusion:industrial]
     description: >
       LOW-PROFILE, NO mast, forks slide under pallets at ground level.

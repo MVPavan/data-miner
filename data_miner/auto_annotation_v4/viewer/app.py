@@ -240,7 +240,7 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
             except (json.JSONDecodeError, TypeError):
                 meta["stages_completed"] = []
 
-        # Stage checkpoints (detect, evaluate, refine, finalize).
+        # Stage checkpoints (detect, filter, evaluate, refine, finalize).
         stages_data: dict[str, Any] = {}
         stage_rows = _query(
             "SELECT stage, data FROM stages WHERE image_id = ?", (image_id,)
@@ -316,6 +316,7 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
             "image_id": image_id,
             "meta": meta,
             "detect": stages_data.get("detect"),
+            "filter": stages_data.get("filter"),
             "evaluate": stages_data.get("evaluate"),
             "refine": stages_data.get("refine"),
             "finalize": stages_data.get("finalize"),
