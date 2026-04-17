@@ -48,11 +48,21 @@ class DetectorServerBase(ls.LitAPI):
             raise ValueError(f"Cannot open image '{req.image_path}': {exc}") from exc
         return self.model.prepare(image, req.prompts, req.threshold)
 
-    def predict(self, batch: list, **kwargs) -> list:
-        """Run inference. Delegates to ``model.infer_batch`` so models that
-        support multi-image batching (GDINO, SAM3-DART) share a single
-        backbone pass across the LitServe-batched requests."""
-        return self.model.infer_batch(batch)
+    def predict(self, batch, **kwargs):
+        """Run inference. Delegates to ``model.infer_batch``.
+
+        LitServe's calling convention depends on ``max_batch_size``:
+          - ``max_batch_size >= 2``: batched-loop mode — passes a **list**
+            of prepared items, expects a list of responses back.
+          - ``max_batch_size == 1``: single-loop mode — passes a **single**
+            prepared item, expects a single response back.
+
+        ``infer_batch`` always works on a list. We wrap/unwrap as needed so
+        both conventions are supported with one code path.
+        """
+        if isinstance(batch, list):
+            return self.model.infer_batch(batch)
+        return self.model.infer_batch([batch])[0]
 
     def encode_response(self, output, **kwargs):
         """Convert model output to wire response."""

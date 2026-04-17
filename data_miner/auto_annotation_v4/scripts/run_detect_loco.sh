@@ -18,9 +18,11 @@ set -euo pipefail
 
 IMG_DIR=/media/data_2/datasets/datasets_pavan/loco_unannotated_full_sam_filtered
 JOB_ID=loco_unannotated_full_sam_filtered_detect
-LOG_DIR="${LOG_DIR:-logs/aav4_detect_pipeline}"
+JOB_OUT="${JOB_OUT:-output/auto_annotation_v4/${JOB_ID}}"
+LOG_DIR="${JOB_OUT}/logs"
+TS="$(date +%Y%m%d-%H%M%S)"
+LOG_FILE="${LOG_DIR}/${JOB_ID}-${TS}.log"
 mkdir -p "$LOG_DIR"
-LOG_FILE="${LOG_DIR}/${JOB_ID}.log"
 
 echo "[run] job=${JOB_ID} log=${LOG_FILE}"
 

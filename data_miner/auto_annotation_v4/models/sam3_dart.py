@@ -126,6 +126,22 @@ class SAM3DartModel(BaseDetectorModel):
         self.model = build_sam3_image_model(
             device="cuda", eval_mode=True, enable_inst_interactivity=True
         ).to(device)
+        # DART's decoder pre-populates ``compilable_cord_cache`` with
+        # ``device="cuda"`` in __init__ (see scratchpad/DART/sam3/model/
+        # decoder.py:275-281). Those tensors are stored as a plain tuple
+        # attribute, so .to(device) above does NOT move them. When LitServe
+        # runs multiple workers (one per GPU), workers assigned cuda:1+ end
+        # up with the cache on cuda:0 and inputs on cuda:1, triggering a
+        # cross-device RuntimeError in _get_rpb_matrix. Reset the caches so
+        # the lazy path at decoder.py:332-334 re-populates them on the
+        # correct per-worker device at first forward.
+        for m in self.model.modules():
+            if hasattr(m, "compilable_cord_cache"):
+                m.compilable_cord_cache = None
+            if hasattr(m, "compilable_stored_size"):
+                m.compilable_stored_size = None
+            if hasattr(m, "coord_cache"):
+                m.coord_cache = {}
         assert self.model.inst_interactive_predictor is not None, (
             "inst_interactive_predictor missing — enable_inst_interactivity=True "
             "should have loaded the tracker half of sam3.pt."

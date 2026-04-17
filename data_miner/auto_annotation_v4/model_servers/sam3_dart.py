@@ -60,6 +60,12 @@ class SAM3DartApi(DetectorServerBase):
         return super().decode_request(request, **kwargs)
 
     def predict(self, batch, **kwargs):
+        # LitServe passes a list in batched mode (max_batch_size>=2) or a
+        # single item in single-loop mode (max_batch_size==1). Normalize to
+        # a list internally; unwrap on return when called single-loop.
+        single = not isinstance(batch, list)
+        batch = [batch] if single else batch
+
         # Split refine items (per-request serial) from proposal items
         # (batched through model.infer_batch for a shared backbone pass).
         results: list = [None] * len(batch)
@@ -75,7 +81,7 @@ class SAM3DartApi(DetectorServerBase):
             proposal_raws = self.model.infer_batch(proposal_items)
             for i, raw in zip(proposal_idx, proposal_raws):
                 results[i] = raw
-        return results
+        return results[0] if single else results
 
     def encode_response(self, output, **kwargs):
         if isinstance(output, SAM3RefineResponse):

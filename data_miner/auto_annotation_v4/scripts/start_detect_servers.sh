@@ -37,15 +37,19 @@ nohup "$PY" -m "$MODULE" \
     > "$SAM3_LOG" 2>&1 &
 echo $! > "$SAM3_PID"
 
-# ---------- GDINO on GPUs 6,7 ----------
+# ---------- GDINO on GPUs 6,7 (batch=1 per GPU) ----------
+# 43-prompt request list (23 classes + synonyms) causes OOM at batch>=2 on
+# 24 GB 3090s even with expandable_segments. batch=1 ≈ 15 GB / 24 GB per
+# worker — safe headroom. Two workers (one per GPU) keeps throughput up.
 GDINO_LOG="${LOG_DIR}/grounding_dino.log"
 GDINO_PID="${LOG_DIR}/grounding_dino.pid"
 echo "[start] grounding_dino  port=3001 gpus=6,7  log=${GDINO_LOG}"
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 nohup "$PY" -m "$MODULE" \
     --model grounding_dino \
     --port 3001 \
     --gpu 6,7 \
-    --max-batch-size 4 \
+    --max-batch-size 1 \
     > "$GDINO_LOG" 2>&1 &
 echo $! > "$GDINO_PID"
 

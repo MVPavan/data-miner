@@ -74,6 +74,25 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
     if image_dir is not None:
         allowed_roots.append(Path(image_dir))
 
+    # Auto-add job_info.image_dir (recorded when the job was submitted) so
+    # the viewer can serve source images without a CLI --image-dir override.
+    # This is the submission-time directory and is trusted by construction.
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=5)
+            try:
+                row = conn.execute(
+                    "SELECT image_dir FROM job_info LIMIT 1"
+                ).fetchone()
+            finally:
+                conn.close()
+            if row and row[0]:
+                recorded = Path(row[0])
+                if recorded.exists() and recorded not in allowed_roots:
+                    allowed_roots.append(recorded)
+        except sqlite3.Error:
+            pass
+
     # ------------------------------------------------------------------
     # SQLite helpers (sync reads via WAL — safe alongside async pipeline)
     # ------------------------------------------------------------------
