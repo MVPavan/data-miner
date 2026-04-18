@@ -64,7 +64,7 @@ filtering:
 # ---------------------------------------------------------------------------
 
 workers:
-  detect_per_model: 2
+  detect_per_model: 16
   detect_merge: 2
   filter_count: 4
   evaluate_count: 6

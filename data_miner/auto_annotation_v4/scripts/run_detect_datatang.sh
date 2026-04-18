@@ -30,5 +30,5 @@ python -u -m data_miner.auto_annotation_v4 \
     runtime.image_dir="${IMG_DIR}" \
     runtime.job_id="${JOB_ID}" \
     'runtime.stages=[detect]' \
-    'runtime.detect_models=[grounding_dino,sam3_dart]' \
+    'runtime.detect_models=[grounding_dino]' \
     "$@" 2>&1 | tee -a "$LOG_FILE"

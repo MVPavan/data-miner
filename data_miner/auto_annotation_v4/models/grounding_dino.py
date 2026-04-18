@@ -48,13 +48,21 @@ class GDINOModel(BaseDetectorModel):
         Args:
             device: Torch device string (``"cuda:0"``, ``"cpu"``, etc.).
             model_id: HuggingFace model identifier.
-            **options: Unused — reserved for forward-compat.
+            **options: Forwarded from servers.yaml. Recognised keys:
+                ``prompt_chunk_size`` -- per-image prompt fan-out chunk size
+                (default 4; see ``gdino_batch.GDINOBatchPredictor``).
         """
         from .gdino_batch import GDINOBatchPredictor
 
         self.device = device
-        logger.info("Loading GDINOBatchPredictor (%s) onto %s", model_id, device)
-        self.predictor = GDINOBatchPredictor(model_id=model_id, device=device)
+        chunk_size = int(options.get("prompt_chunk_size", 4))
+        logger.info(
+            "Loading GDINOBatchPredictor (%s) onto %s prompt_chunk_size=%d",
+            model_id, device, chunk_size,
+        )
+        self.predictor = GDINOBatchPredictor(
+            model_id=model_id, device=device, prompt_chunk_size=chunk_size,
+        )
 
     def prepare(self, image: Image.Image, prompts: list[str],
                 threshold: float | None = None) -> PreparedInput:
