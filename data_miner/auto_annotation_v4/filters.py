@@ -25,6 +25,7 @@ from .utils import (
     apply_cross_class_rules,
     cluster_and_collapse,
     filter_by_model_score,
+    filter_by_source_model,
     geometric_filter,
     get_logger,
     limit_per_class,
@@ -34,9 +35,11 @@ __all__ = ["FilterPipeline"]
 
 
 # Ordered filter plan per context. Each step is a short string key resolved
-# inside FilterPipeline.run.
+# inside FilterPipeline.run. ``source_model`` runs first in every plan so a
+# post-detect allowlist change only requires a filter-stage re-run.
 _PLAN: dict[FilterContext, tuple[str, ...]] = {
     FilterContext.POST_DETECT: (
+        "source_model",
         "geometric",
         "score_floor",
         "dedup",
@@ -44,14 +47,17 @@ _PLAN: dict[FilterContext, tuple[str, ...]] = {
         "cross_class",
     ),
     FilterContext.POST_REVIEW: (
+        "source_model",
         "cross_class",
         "per_class_cap",
     ),
     FilterContext.POST_REFINE: (
+        "source_model",
         "geometric",
         "dedup",
     ),
     FilterContext.PRE_FINALIZE: (
+        "source_model",
         "geometric",
         "score_floor",
         "dedup",
@@ -63,6 +69,7 @@ _PLAN: dict[FilterContext, tuple[str, ...]] = {
 
 # Map filter step -> drop reason recorded on candidates removed by that step.
 _REASON: dict[str, DropReason] = {
+    "source_model": DropReason.SOURCE_MODEL,
     "geometric": DropReason.GEOMETRIC_FILTER,
     "score_floor": DropReason.SCORE_FLOOR,
     "dedup": DropReason.DEDUP,
@@ -117,6 +124,13 @@ class FilterPipeline:
     # Individual filter steps — thin wrappers that return (kept, drops).
     # ------------------------------------------------------------------
 
+    def _step_source_model(
+        self, cands: list[Candidate], context: FilterContext
+    ) -> tuple[list[Candidate], list[FilterDrop]]:
+        allowed = getattr(self.config.filtering, "allowed_source_models", []) or []
+        kept = filter_by_source_model(cands, allowed)
+        return kept, _diff_drops(cands, kept, DropReason.SOURCE_MODEL, context)
+
     def _step_geometric(
         self, cands: list[Candidate], context: FilterContext
     ) -> tuple[list[Candidate], list[FilterDrop]]:
@@ -166,6 +180,7 @@ class FilterPipeline:
             raise ValueError(f"Unknown FilterContext: {context!r}")
 
         step_fns = {
+            "source_model": self._step_source_model,
             "geometric": self._step_geometric,
             "score_floor": self._step_score_floor,
             "dedup": self._step_dedup,

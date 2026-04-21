@@ -28,6 +28,8 @@ auto_accept:
   min_model_agreement: 2
   min_score: 0.0              # global routing fallback; per-model floors live in filtering
   tiers: [1]
+  high_confidence_scores:     # per-model shortcut: auto-accept when score >= threshold
+    sam3_dart: 0.85           # enables single-detector auto-accept (loco/datatang sense-check: ~40% of tier-1 sam3 cands clear 0.85)
 
 # ---------------------------------------------------------------------------
 # Evaluate stage — confidence-based three-way routing
@@ -64,7 +66,7 @@ filtering:
 # ---------------------------------------------------------------------------
 
 workers:
-  detect_per_model: 2
+  detect_per_model: 16
   detect_merge: 2
   filter_count: 4
   evaluate_count: 6

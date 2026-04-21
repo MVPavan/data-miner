@@ -54,16 +54,25 @@ class GDINOBatchPredictor:
         self,
         model_id: str = _MODEL_ID,
         device: Union[str, torch.device] = "cuda",
+        prompt_chunk_size: int = 4,
     ) -> None:
+        # prompt_chunk_size limits the per-forward expansion (chunk, 3, H, W)
+        # of the Swin backbone. With N=43 prompts on 24 GB 3090s, chunk=4
+        # peaks at ~6 GiB; chunk=16 OOMs at ~21 GiB. See
+        # scripts/harness_gdino.py for the measurement that picked 4.
         self.device = torch.device(device)
         self.model_id = model_id
+        self.prompt_chunk_size = max(1, int(prompt_chunk_size))
 
         logger.info("Loading GroundingDINO processor %s", model_id)
         self.processor = AutoProcessor.from_pretrained(model_id)
 
         # Load in float32 — GDINO's BERT text backbone requires float32
         # weights. Use torch.autocast for mixed-precision during inference.
-        logger.info("Loading GroundingDINO model onto %s", device)
+        logger.info(
+            "Loading GroundingDINO model onto %s (prompt_chunk_size=%d)",
+            device, self.prompt_chunk_size,
+        )
         self.model = (
             AutoModelForZeroShotObjectDetection.from_pretrained(model_id)
             .to(self.device)
@@ -104,74 +113,65 @@ class GDINOBatchPredictor:
             image = PIL.Image.fromarray(image)
 
         w, h = image.size
-        N = len(prompts)
 
-        # --- Image: preprocess ONCE ---
+        # --- Image: preprocess ONCE, reuse across all prompt chunks ---
         image_inputs = self.processor.image_processor(
             images=[image], return_tensors="pt"
         )
-        # pixel_values: (1, 3, H, W), pixel_mask: (1, H, W)
+        pv_single = image_inputs["pixel_values"]   # (1, 3, H, W)
+        pm_single = image_inputs["pixel_mask"]     # (1, H, W)
 
-        # --- Text: tokenize all N prompts in one call ---
-        texts = [f"{p.strip()} ." for p in prompts]
-        text_inputs = self.processor.tokenizer(
-            text=texts,
-            padding=True,
-            return_tensors="pt",
-            return_token_type_ids=True,
-        )
-        # input_ids: (N, seq), attention_mask: (N, seq), token_type_ids: (N, seq)
+        chunk = self.prompt_chunk_size
+        results: list[dict] = []
 
-        # --- Expand image to match N prompts ---
-        pixel_values = (
-            image_inputs["pixel_values"]
-            .expand(N, -1, -1, -1)
-            .contiguous()
-            .to(self.device)
-        )
-        pixel_mask = (
-            image_inputs["pixel_mask"]
-            .expand(N, -1, -1)
-            .contiguous()
-            .to(self.device)
-        )
+        # Chunked prompt fan-out. At chunk=N this matches the old single-pass
+        # behavior; at chunk=1 it matches predict_sequential. The expand+
+        # backbone+encoder pass runs ceil(N/chunk) times — peak GPU memory
+        # is bounded by `chunk` rather than by N.
+        for start in range(0, len(prompts), chunk):
+            sub = prompts[start:start + chunk]
+            n = len(sub)
 
-        input_ids = text_inputs["input_ids"].to(self.device)
-        attention_mask = text_inputs["attention_mask"].to(self.device)
-        token_type_ids = text_inputs["token_type_ids"].to(self.device)
-
-        # --- ONE forward pass for all N prompts ---
-        with torch.autocast(
-            "cuda", dtype=torch.float16, enabled=self.device.type == "cuda"
-        ):
-            outputs = self.model(
-                pixel_values=pixel_values,
-                pixel_mask=pixel_mask,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                token_type_ids=token_type_ids,
+            texts = [f"{p.strip()} ." for p in sub]
+            text_inputs = self.processor.tokenizer(
+                text=texts, padding=True, return_tensors="pt",
+                return_token_type_ids=True,
             )
-        # outputs.logits: (N, 900, 256)
-        # outputs.pred_boxes: (N, 900, 4)
 
-        # --- Post-process all N results ---
-        post_results = self.processor.post_process_grounded_object_detection(
-            outputs,
-            input_ids=input_ids,
-            threshold=threshold,
-            text_threshold=text_threshold,
-            target_sizes=[(h, w)] * N,
-        )
+            pixel_values = pv_single.expand(n, -1, -1, -1).contiguous().to(self.device)
+            pixel_mask = pm_single.expand(n, -1, -1).contiguous().to(self.device)
+            input_ids = text_inputs["input_ids"].to(self.device)
+            attention_mask = text_inputs["attention_mask"].to(self.device)
+            token_type_ids = text_inputs["token_type_ids"].to(self.device)
 
-        # Package per-prompt results
-        results = []
-        for i, post in enumerate(post_results):
-            results.append({
-                "boxes": post["boxes"].cpu() if torch.is_tensor(post["boxes"]) else post["boxes"],
-                "scores": post["scores"].cpu() if torch.is_tensor(post["scores"]) else post["scores"],
-                "labels": post.get("text_labels", post.get("labels", [])),
-                "prompt": prompts[i],
-            })
+            with torch.autocast(
+                "cuda", dtype=torch.float16, enabled=self.device.type == "cuda"
+            ):
+                outputs = self.model(
+                    pixel_values=pixel_values,
+                    pixel_mask=pixel_mask,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    token_type_ids=token_type_ids,
+                )
+
+            post_chunk = self.processor.post_process_grounded_object_detection(
+                outputs, input_ids=input_ids,
+                threshold=threshold, text_threshold=text_threshold,
+                target_sizes=[(h, w)] * n,
+            )
+            for i, post in enumerate(post_chunk):
+                results.append({
+                    "boxes": post["boxes"].cpu() if torch.is_tensor(post["boxes"]) else post["boxes"],
+                    "scores": post["scores"].cpu() if torch.is_tensor(post["scores"]) else post["scores"],
+                    "labels": post.get("text_labels", post.get("labels", [])),
+                    "prompt": sub[i],
+                })
+
+            # Free per-chunk activations before the next chunk so the peak
+            # is bounded by one chunk rather than the running sum.
+            del outputs, pixel_values, pixel_mask, input_ids, attention_mask, token_type_ids
+
         return results
 
     # ------------------------------------------------------------------
@@ -236,6 +236,7 @@ class GDINOBatchPredictor:
     # Multi-image convenience (per-image N-prompt batching)
     # ------------------------------------------------------------------
 
+    @torch.inference_mode()
     def predict_images(
         self,
         images: list[PIL.Image.Image | np.ndarray],
@@ -243,13 +244,22 @@ class GDINOBatchPredictor:
         threshold: float = 0.25,
         text_threshold: float = 0.25,
     ) -> list[list[dict]]:
-        """Run detection on B images, each with N-prompt batching.
+        """Run detection on B images, each with N-prompt fan-out, fused.
 
-        Each image is processed independently to avoid DETR padding artifacts
-        (different-sized images in a fused batch get different pixel_masks,
-        which changes deformable attention sampling and produces different
-        results). Per-image N-prompt batching still applies — each image
-        runs all N prompts in a single forward pass.
+        For each prompt-chunk of size k, runs ONE Swin forward of shape
+        (B*k, 3, H, W) instead of B independent passes. Throughput on
+        24 GB 3090 with N=43 prompts (see scripts/harness_gdino.py):
+            per-image, single-image chunked4 : 6676 ms
+            per-image, B=2 + chunk=4         : 5208 ms  (1.28x)
+            per-image, B=4 + chunk=2         : 4714 ms  (1.42x)
+            per-image, B=8 + chunk=1         : 4421 ms  (1.51x)
+        Peak memory at all winning rows is ~11 GiB (the Swin batch is the
+        same B*k=8 in each), so the choice is purely how the batch arrives.
+
+        Padding caveat: ``image_processor`` pads the batch to the largest
+        per-image (H, W). Per-image ``pixel_mask`` carries the valid region
+        so deformable attention sampling is unaffected; postprocess uses
+        per-image target sizes so boxes return in original pixel coords.
 
         Args:
             images: List of B input images.
@@ -265,7 +275,64 @@ class GDINOBatchPredictor:
         if not prompts:
             return [[] for _ in images]
 
-        return [
-            self.predict(img, prompts, threshold=threshold, text_threshold=text_threshold)
-            for img in images
+        pil_images = [
+            PIL.Image.fromarray(im) if isinstance(im, np.ndarray) else im
+            for im in images
         ]
+        B = len(pil_images)
+        sizes = [(im.size[1], im.size[0]) for im in pil_images]  # (h, w)
+
+        # Image padding/normalisation is done ONCE for the batch.
+        image_inputs = self.processor.image_processor(
+            images=pil_images, return_tensors="pt"
+        )
+        pv_all = image_inputs["pixel_values"]   # (B, 3, H, W)
+        pm_all = image_inputs["pixel_mask"]     # (B, H, W)
+
+        chunk = self.prompt_chunk_size
+        # results[i] is the per-prompt list for image i, in prompt order.
+        results: list[list[dict]] = [[] for _ in range(B)]
+
+        for start in range(0, len(prompts), chunk):
+            sub = prompts[start:start + chunk]
+            k = len(sub)
+
+            texts = [f"{p.strip()} ." for p in sub]
+            text_inputs = self.processor.tokenizer(
+                text=texts, padding=True, return_tensors="pt",
+                return_token_type_ids=True,
+            )
+
+            # Image side: each image i appears at rows i*k .. i*k+k-1.
+            pv = pv_all.repeat_interleave(k, dim=0).contiguous().to(self.device)
+            pm = pm_all.repeat_interleave(k, dim=0).contiguous().to(self.device)
+            # Text side: prompt list tiled B times -> rows align with image rows.
+            ids = text_inputs["input_ids"].repeat(B, 1).to(self.device)
+            am = text_inputs["attention_mask"].repeat(B, 1).to(self.device)
+            tt = text_inputs["token_type_ids"].repeat(B, 1).to(self.device)
+
+            with torch.autocast(
+                "cuda", dtype=torch.float16, enabled=self.device.type == "cuda"
+            ):
+                outputs = self.model(
+                    pixel_values=pv, pixel_mask=pm,
+                    input_ids=ids, attention_mask=am, token_type_ids=tt,
+                )
+
+            target_sizes = [sizes[i] for i in range(B) for _ in range(k)]
+            post = self.processor.post_process_grounded_object_detection(
+                outputs, input_ids=ids,
+                threshold=threshold, text_threshold=text_threshold,
+                target_sizes=target_sizes,
+            )
+            for row, p in enumerate(post):
+                img_idx, prompt_idx = divmod(row, k)
+                results[img_idx].append({
+                    "boxes": p["boxes"].cpu() if torch.is_tensor(p["boxes"]) else p["boxes"],
+                    "scores": p["scores"].cpu() if torch.is_tensor(p["scores"]) else p["scores"],
+                    "labels": p.get("text_labels", p.get("labels", [])),
+                    "prompt": sub[prompt_idx],
+                })
+
+            del outputs, pv, pm, ids, am, tt
+        return results

@@ -197,6 +197,7 @@ class BboxSource(StrEnum):
 class DropReason(StrEnum):
     """Reason a candidate was dropped during finalize."""
 
+    SOURCE_MODEL = "source_model"
     GEOMETRIC_FILTER = "geometric_filter"
     SCORE_FLOOR = "score_floor"
     DEDUP = "dedup"

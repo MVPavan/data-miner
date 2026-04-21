@@ -25,33 +25,45 @@ mkdir -p "$LOG_DIR"
 PY="${PY:-python}"
 MODULE="data_miner.auto_annotation_v4.model_servers.serve"
 
-# ---------- SAM3-DART on GPUs 4,5 ----------
-SAM3_LOG="${LOG_DIR}/sam3_dart.log"
-SAM3_PID="${LOG_DIR}/sam3_dart.pid"
-echo "[start] sam3_dart  port=3013 gpus=0,1,2,3,4,5,6,7  log=${SAM3_LOG}"
-nohup "$PY" -m "$MODULE" \
-    --model sam3_dart \
-    --port 3013 \
-    --gpu 0,1,2,3,4,5,6,7 \
-    --max-batch-size 16 \
-    > "$SAM3_LOG" 2>&1 &
-echo $! > "$SAM3_PID"
-
-# # ---------- GDINO on GPUs 6,7 (batch=1 per GPU) ----------
-# # 43-prompt request list (23 classes + synonyms) causes OOM at batch>=2 on
-# # 24 GB 3090s even with expandable_segments. batch=1 ≈ 15 GB / 24 GB per
-# # worker — safe headroom. Two workers (one per GPU) keeps throughput up.
-# GDINO_LOG="${LOG_DIR}/grounding_dino.log"
-# GDINO_PID="${LOG_DIR}/grounding_dino.pid"
-# echo "[start] grounding_dino  port=3001 gpus=6,7  log=${GDINO_LOG}"
-# PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+# # ---------- SAM3-DART on GPUs 4,5 ----------
+# # CUDA_VISIBLE_DEVICES isolates this process to GPUs 4,5 only — prevents
+# # it from creating ~256 MiB CUDA "ghost contexts" on every other GPU
+# # (including 6,7 where GDINO lives, which previously ate GDINO's OOM
+# # headroom). Inside the process the visible pair is renumbered 0,1.
+# SAM3_LOG="${LOG_DIR}/sam3_dart.log"
+# SAM3_PID="${LOG_DIR}/sam3_dart.pid"
+# echo "[start] sam3_dart  port=3013 physical-gpus=4,5 (logical 0,1)  log=${SAM3_LOG}"
+# CUDA_VISIBLE_DEVICES=4,5 \
 # nohup "$PY" -m "$MODULE" \
-#     --model grounding_dino \
-#     --port 3001 \
-#     --gpu 6,7 \
-#     --max-batch-size 1 \
-#     > "$GDINO_LOG" 2>&1 &
-# echo $! > "$GDINO_PID"
+#     --model sam3_dart \
+#     --port 3013 \
+#     --gpu 0,1 \
+#     --max-batch-size 8 \
+#     > "$SAM3_LOG" 2>&1 &
+# echo $! > "$SAM3_PID"
+
+# ---------- GDINO on GPUs 6,7 ----------
+# Multi-image batched: max-batch=8 + prompt-chunk-size=1 makes every Swin
+# forward (8,3,H,W) ~11 GiB peak per worker on 24 GB 3090s. Harness numbers
+# (scripts/harness_gdino.py, 43 prompts):
+#     B=8 chunk=1  ~11 GiB  ~4.4 s per image  (this config)
+#     B=4 chunk=2  ~11 GiB  ~4.7 s per image  (use if requests rarely fill 8)
+#     B=1 chunk=4   ~6 GiB  ~6.7 s per image  (single-image baseline)
+# CUDA_VISIBLE_DEVICES isolates to GPUs 6,7 only so SAM3-DART ghost contexts
+# from GPUs 4,5 don't steal headroom (~512 MiB each before isolation).
+GDINO_LOG="${LOG_DIR}/grounding_dino.log"
+GDINO_PID="${LOG_DIR}/grounding_dino.pid"
+echo "[start] grounding_dino  port=3001 physical-gpus=6,7 (logical 0,1)  log=${GDINO_LOG}"
+# CUDA_VISIBLE_DEVICES=6,7 \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+nohup "$PY" -m "$MODULE" \
+    --model grounding_dino \
+    --port 3001 \
+    --gpu 0,1,2,3,4,5,6,7 \
+    --max-batch-size 8 \
+    --prompt-chunk-size 1 \
+    > "$GDINO_LOG" 2>&1 &
+echo $! > "$GDINO_PID"
 
 # ---------- health wait ----------
 wait_ready() {
@@ -72,7 +84,7 @@ wait_ready() {
     exit 1
 }
 
-wait_ready sam3_dart       3013 "$SAM3_PID"  "$SAM3_LOG"
-# wait_ready grounding_dino  3001 "$GDINO_PID" "$GDINO_LOG"
+# wait_ready sam3_dart       3013 "$SAM3_PID"  "$SAM3_LOG"
+wait_ready grounding_dino  3001 "$GDINO_PID" "$GDINO_LOG"
 
 echo "[start] both detectors up."

@@ -9,10 +9,28 @@ servers:
       enabled: false
       port: 3001
       gpu: "cuda:0"
+      # Multi-image batched: with batch=8 and prompt_chunk_size=1, every
+      # Swin forward is (8, 3, H, W) which peaks at ~11 GiB on 24 GB 3090s.
+      # See harness in scripts/harness_gdino.py: this row delivers ~4.4 s
+      # per image vs 6.7 s for single-image chunked4 (1.51x throughput).
+      # batch=8 only helps when LitServe can fill the queue; with bursty
+      # traffic it falls back to smaller batches at the same per-batch cost.
       max_batch_size: 8
       batch_timeout_ms: 50
       model_id: "IDEA-Research/grounding-dino-base"
       script: "serve_gdino.py"
+      options:
+        # Per-image prompt fan-out. The Swin backbone runs ONE forward per
+        # prompt chunk on (B*chunk, 3, H, W) where B is the LitServe batch.
+        # Peak memory scales with B*chunk, so paired with max_batch_size=8
+        # we keep chunk=1 to land at the 11 GiB / 4.4 ms-per-img sweet spot.
+        # Harness data (43 prompts, 24 GB 3090):
+        #   B=1  chunk=4   ~6  GiB,  6676 ms/img   (single-image baseline)
+        #   B=2  chunk=4   ~11 GiB,  5208 ms/img
+        #   B=4  chunk=2   ~11 GiB,  4714 ms/img
+        #   B=8  chunk=1   ~11 GiB,  4421 ms/img   (default)
+        #   B=8  chunk=2   OOM at ~21 GiB
+        prompt_chunk_size: 1
 
     falcon:
       enabled: false
@@ -33,7 +51,7 @@ servers:
       script: "serve_sam3.py"
 
     sam3_dart:
-      enabled: true
+      enabled: false
       port: 3013
       gpu: "cuda:1"           # same slot sam3 used to occupy
       max_batch_size: 8       # LitServe needs >=2 to enter batched mode (predict gets list)

@@ -71,6 +71,11 @@ def main() -> None:
     parser.add_argument("--models", nargs="+", help="Specific models to launch")
     parser.add_argument("--max-batch-size", type=int, default=8)
     parser.add_argument("--batch-timeout", type=float, default=0.05)
+    # GDINO-only knob; ignored by other detectors. Limits per-image prompt
+    # fan-out so the Swin backbone runs on (chunk, 3, H, W) instead of
+    # (N, 3, H, W). See models/gdino_batch.py for the memory/time tradeoff.
+    parser.add_argument("--prompt-chunk-size", type=int, default=None,
+                        help="GDINO only: prompts per forward pass (default 4).")
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
@@ -84,6 +89,10 @@ def main() -> None:
         name = DetectorName(args.model)
         api_cls = registry[name]
         api = api_cls()
+        # Apply detector-specific knobs after instantiation so the LitServe
+        # setup() call (in worker subprocesses) sees the right value.
+        if args.prompt_chunk_size is not None and name is DetectorName.GROUNDING_DINO:
+            api.prompt_chunk_size = args.prompt_chunk_size
         server = ls.LitServer(
             api,
             accelerator="gpu",

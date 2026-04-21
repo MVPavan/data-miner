@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-import logging
 import os
 import signal
 import sys
@@ -29,9 +28,9 @@ from .configs.enums import DetectorName, Stage
 from .configs.loader import compute_config_hash, load_config
 from .configs.settings import AutoAnnotationV4Config
 from .output import OutputWriter
-from .workers.submitter import JobSubmitter
-from .workers.monitor import PipelineMonitor
 from .utils import configure_logging, get_logger
+from .workers.monitor import PipelineMonitor
+from .workers.submitter import JobSubmitter
 
 logger = get_logger("pipeline")
 
@@ -69,9 +68,7 @@ class AutoAnnotationPipelineV4:
 
         # Prefer explicit job_id, then config.runtime.job_id, then autogen.
         self.job_id = (
-            job_id
-            or config.runtime.job_id
-            or f"job_{datetime.now():%Y%m%d_%H%M%S}"
+            job_id or config.runtime.job_id or f"job_{datetime.now():%Y%m%d_%H%M%S}"
         )
 
         # Setup output directory
@@ -79,9 +76,7 @@ class AutoAnnotationPipelineV4:
         self.job_dir.mkdir(parents=True, exist_ok=True)
 
         # Save frozen config as JSON (config.yaml extension kept for readability)
-        (self.job_dir / "config.yaml").write_text(
-            config.model_dump_json(indent=2)
-        )
+        (self.job_dir / "config.yaml").write_text(config.model_dump_json(indent=2))
 
         # ONE database for everything: checkpoints, work queue, proposals, metadata.
         db_path = self.job_dir / config.database.filename
@@ -223,10 +218,10 @@ class AutoAnnotationPipelineV4:
         """
         from .stages.detect import DetectMergeWorker
         from .stages.detect_model import DetectModelWorker
-        from .stages.filter import FilterWorker
         from .stages.evaluate import EvaluateWorker
-        from .stages.refine import RefineWorker
+        from .stages.filter import FilterWorker
         from .stages.finalize import FinalizeWorker
+        from .stages.refine import RefineWorker
 
         active_stages = set(self.config.runtime.stages)
         workers = []
