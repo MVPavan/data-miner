@@ -11,6 +11,7 @@ from data_miner.auto_annotation_v4.configs.enums import (
     FilterContext,
 )
 from data_miner.auto_annotation_v4.configs.settings import (
+    AutoAcceptConfig,
     AutoAnnotationV4Config,
     ClassConfig,
     CoExistenceConfig,
@@ -18,6 +19,7 @@ from data_miner.auto_annotation_v4.configs.settings import (
     IouDedupConfig,
 )
 from data_miner.auto_annotation_v4.filters import FilterPipeline
+from data_miner.auto_annotation_v4.utils import route_candidates
 
 
 # ---------------------------------------------------------------------------
@@ -223,3 +225,164 @@ def test_drops_are_context_tagged():
                 f"Drop {d.candidate_id} reason is {type(d.reason)}, "
                 f"not DropReason enum member"
             )
+
+
+# ---------------------------------------------------------------------------
+# route_candidates — auto-accept high-confidence shortcut
+# ---------------------------------------------------------------------------
+
+
+def _build_config_with_hi_conf(hi_conf: dict[str, float]) -> AutoAnnotationV4Config:
+    """Minimal config for route_candidates tests.
+
+    Tier-1 eligible ``person``, per-model floor 0.5 for sam3_dart, and the
+    high-confidence shortcut under test. ``min_model_agreement=2`` so the
+    agreement path never fires for single-detector cases.
+    """
+    return AutoAnnotationV4Config(
+        class_registry={
+            "person": ClassConfig(id=0, tier=1, prompts=["person"], tags=[]),
+        },
+        co_existence=CoExistenceConfig(),
+        filtering=FilterConfig(
+            per_model_score={"sam3_dart": 0.5, "gdino": 0.35},
+            iou_dedup=IouDedupConfig(
+                threshold=0.5,
+                tiebreak_by=["agreement", "model_priority", "score"],
+                model_priority=["sam3_dart", "gdino"],
+            ),
+        ),
+        auto_accept=AutoAcceptConfig(
+            min_model_agreement=2,
+            tiers=[1],
+            high_confidence_scores=hi_conf,
+        ),
+    )
+
+
+def _mk(cid: str, model: str, score: float, agreement: int = 1) -> Candidate:
+    return Candidate(
+        candidate_id=cid, class_name="person", label="person",
+        source_model=model, expression="person",
+        bbox=BoundingBox(x1=0.1, y1=0.1, x2=0.5, y2=0.5),
+        score=score, agreement=agreement, agreeing_models=[model],
+    )
+
+
+def test_auto_accept_hi_conf_single_model():
+    """sam3_dart alone (agreement=1) auto-accepts when score >= 0.85."""
+    cfg = _build_config_with_hi_conf({"sam3_dart": 0.85})
+    out = route_candidates(
+        [
+            _mk("hi",  "sam3_dart", 0.90, agreement=1),  # passes shortcut
+            _mk("eq",  "sam3_dart", 0.85, agreement=1),  # boundary passes
+            _mk("low", "sam3_dart", 0.84, agreement=1),  # just under -> VLM
+        ],
+        cfg,
+    )
+    assert out["auto_accepted"] == ["hi", "eq"]
+    assert out["needs_evaluation"] == ["low"]
+
+
+def test_auto_accept_hi_conf_respects_per_model_floor():
+    """Per-model floor is still enforced even if hi_conf_score passes."""
+    cfg = _build_config_with_hi_conf({"sam3_dart": 0.40})  # pathological
+    out = route_candidates(
+        [_mk("under_floor", "sam3_dart", 0.45, agreement=1)],  # hi_conf ok, floor 0.5 fails
+        cfg,
+    )
+    assert out["auto_accepted"] == []
+    assert out["needs_evaluation"] == ["under_floor"]
+
+
+def test_auto_accept_hi_conf_other_models_unaffected():
+    """Models without a hi_conf entry fall back to the agreement path."""
+    cfg = _build_config_with_hi_conf({"sam3_dart": 0.85})
+    out = route_candidates(
+        [
+            _mk("gdino_hi",  "gdino", 0.99, agreement=1),  # no hi_conf -> VLM
+            _mk("gdino_agr", "gdino", 0.99, agreement=2),  # agreement path -> auto
+        ],
+        cfg,
+    )
+    assert out["auto_accepted"] == ["gdino_agr"]
+    assert out["needs_evaluation"] == ["gdino_hi"]
+
+
+def test_auto_accept_hi_conf_empty_is_legacy():
+    """Empty high_confidence_scores preserves the pre-change behavior."""
+    cfg = _build_config_with_hi_conf({})  # no shortcut
+    out = route_candidates(
+        [_mk("strong", "sam3_dart", 0.99, agreement=1)],
+        cfg,
+    )
+    assert out["auto_accepted"] == []
+    assert out["needs_evaluation"] == ["strong"]
+
+
+# ---------------------------------------------------------------------------
+# allowed_source_models — pipeline-wide source_model suppression
+# ---------------------------------------------------------------------------
+
+
+def _build_config_with_allowlist(allowed: list[str]) -> AutoAnnotationV4Config:
+    return AutoAnnotationV4Config(
+        class_registry={
+            "person": ClassConfig(id=0, tier=1, prompts=["person"], tags=[]),
+        },
+        co_existence=CoExistenceConfig(),
+        filtering=FilterConfig(
+            per_model_score={"sam3_dart": 0.0, "gdino": 0.0},
+            iou_dedup=IouDedupConfig(
+                threshold=0.9,
+                tiebreak_by=["agreement", "model_priority", "score"],
+                model_priority=["sam3_dart", "gdino"],
+            ),
+            max_per_class=100,
+            allowed_source_models=allowed,
+        ),
+    )
+
+
+def _mk_cand(cid: str, model: str, x_offset: float = 0.0) -> Candidate:
+    """Non-overlapping bbox per ``x_offset`` so dedup doesn't cluster these."""
+    return Candidate(
+        candidate_id=cid, class_name="person", label="person",
+        source_model=model, expression="person",
+        bbox=BoundingBox(
+            x1=0.05 + x_offset, y1=0.05,
+            x2=0.15 + x_offset, y2=0.15,
+        ),
+        score=0.8,
+    )
+
+
+def test_allowed_source_models_empty_is_passthrough():
+    """Empty allowlist = no-op (preserves existing config behavior)."""
+    cfg = _build_config_with_allowlist([])
+    pipeline = FilterPipeline(cfg)
+    cands = [_mk_cand("gd", "gdino", 0.0), _mk_cand("s3", "sam3_dart", 0.5)]
+
+    kept, drops = pipeline.run(cands, FilterContext.POST_DETECT)
+
+    source_drops = [d for d in drops if d.reason == DropReason.SOURCE_MODEL]
+    assert source_drops == []
+    assert {c.candidate_id for c in kept} == {"gd", "s3"}
+
+
+def test_allowed_source_models_suppresses_disallowed():
+    """Non-empty allowlist drops anything outside it with SOURCE_MODEL reason."""
+    cfg = _build_config_with_allowlist(["sam3_dart"])
+    pipeline = FilterPipeline(cfg)
+    cands = [
+        _mk_cand("gd1", "gdino", 0.0),
+        _mk_cand("gd2", "gdino", 0.3),
+        _mk_cand("s3", "sam3_dart", 0.6),
+    ]
+
+    kept, drops = pipeline.run(cands, FilterContext.POST_DETECT)
+
+    source_drops = [d for d in drops if d.reason == DropReason.SOURCE_MODEL]
+    assert {d.candidate_id for d in source_drops} == {"gd1", "gd2"}
+    assert all(d.context == FilterContext.POST_DETECT for d in source_drops)
+    assert {c.candidate_id for c in kept} == {"s3"}

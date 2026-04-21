@@ -26,6 +26,7 @@ from ..configs import (
 )
 from ..output import OutputWriter
 from ..utils import (
+    filter_by_source_model,
     get_image_size,
     normalize_class_alias,
 )
@@ -106,6 +107,21 @@ class DetectMergeWorker(StageWorker):
         all_candidates: list[Candidate] = []
         for candidates in model_results.values():
             all_candidates.extend(candidates)
+
+        # Primary application of the source_model allowlist. Downstream
+        # stages inherit clean input; FilterPipeline also re-applies it as
+        # a defensive belt-and-braces for re-runs after the allowlist flips.
+        allowed = list(
+            getattr(self.config.filtering, "allowed_source_models", []) or []
+        )
+        if allowed:
+            before = len(all_candidates)
+            all_candidates = filter_by_source_model(all_candidates, allowed)
+            if before != len(all_candidates):
+                self.logger.info(
+                    "%s: source_model allowlist %s dropped %d/%d candidates",
+                    msg.image_id, allowed, before - len(all_candidates), before,
+                )
 
         if not all_candidates:
             self.logger.info(

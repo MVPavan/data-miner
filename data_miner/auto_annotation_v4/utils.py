@@ -185,6 +185,25 @@ def geometric_filter(candidates: list, config: Any) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Source-model allowlist
+# ---------------------------------------------------------------------------
+
+
+def filter_by_source_model(candidates: list, allowed: list[str]) -> list:
+    """Drop candidates whose ``source_model`` is not in ``allowed``.
+
+    Empty/None ``allowed`` is treated as "allow all" so this is a no-op
+    in default configs. Called both at the merge boundary and as the first
+    step of every ``FilterPipeline`` plan, so flipping the allowlist in
+    config only requires a filter-stage re-run to take effect.
+    """
+    if not allowed:
+        return list(candidates)
+    allow = set(allowed)
+    return [c for c in candidates if c.source_model in allow]
+
+
+# ---------------------------------------------------------------------------
 # Per-model score filtering
 # ---------------------------------------------------------------------------
 
@@ -459,14 +478,23 @@ def route_candidates(candidates: list, config: Any) -> dict:
 
     per_model_score = getattr(config.filtering, "per_model_score", {}) or {}
     fallback_score = aa_cfg.min_score
+    # Per-model high-confidence shortcut — a strong score bypasses the
+    # agreement requirement for single-detector runs (e.g. sam3_dart-only
+    # where agreement can never reach 2).
+    hi_conf_scores = getattr(aa_cfg, "high_confidence_scores", {}) or {}
 
     for cand in candidates:
         is_eligible = cand.class_name in eligible_names
         score_floor = per_model_score.get(cand.source_model, fallback_score)
+        hi_conf_floor = hi_conf_scores.get(cand.source_model)
+        passes_agreement = cand.agreement >= aa_cfg.min_model_agreement
+        passes_hi_conf = (
+            hi_conf_floor is not None and cand.score >= hi_conf_floor
+        )
         qualifies = (
             is_eligible
-            and cand.agreement >= aa_cfg.min_model_agreement
             and cand.score >= score_floor
+            and (passes_agreement or passes_hi_conf)
         )
         if qualifies:
             auto_accepted.append(cand.candidate_id)

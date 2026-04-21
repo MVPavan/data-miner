@@ -146,6 +146,12 @@ class AutoAcceptConfig(BaseModel):
     """
     tiers: list[int] = Field(default_factory=lambda: [1])
     """Tiers eligible for auto-accept. Empty list disables auto-accept entirely."""
+    high_confidence_scores: dict[str, float] = Field(default_factory=dict)
+    """Per-model high-confidence shortcut: a candidate auto-accepts if
+    ``source_model`` is keyed here and ``score >= threshold``, even when
+    agreement is below ``min_model_agreement``. Primary use: single-detector
+    runs (e.g. sam3_dart-only) where agreement can never reach 2.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +323,13 @@ class FilterConfig(BaseModel):
     """
     iou_dedup: IouDedupConfig = Field(default_factory=IouDedupConfig)
     max_per_class: int = 30
+    allowed_source_models: list[str] = Field(default_factory=list)
+    """Pipeline-wide source_model allowlist. Empty = allow all (default).
+    When non-empty, any candidate whose ``source_model`` is not in the list
+    is dropped at the merge boundary and again at the start of every
+    ``FilterPipeline`` run — so flipping this post-detect only requires a
+    filter-stage re-run (not a full detect re-run) to take effect.
+    """
 
 
 # ---------------------------------------------------------------------------
