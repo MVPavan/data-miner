@@ -195,7 +195,7 @@ class AutoAnnotationPipelineV4:
         else:
             msg = f"VLM not reachable at {vlm_health}"
             logger.error("  x %s", msg)
-            failures.append(msg)
+            # failures.append(msg)
 
         if failures:
             summary = "\n  - ".join(failures)

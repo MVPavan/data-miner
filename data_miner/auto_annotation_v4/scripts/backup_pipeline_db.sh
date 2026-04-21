@@ -11,14 +11,49 @@
 #   - Delete everything else matching the backup naming pattern.
 #
 # Usage:
-#   backup_pipeline_db.sh <JOB_DIR>
+#   backup_pipeline_db.sh [--loop [INTERVAL_SECONDS]] <JOB_DIR>
+#
+# Flags:
+#   --loop [N]   Keep running, backing up every N seconds (default 3600).
+#                Without this flag, runs one backup and exits (cron-friendly).
 #
 
 set -euo pipefail
 
 # ---------- args ----------
+LOOP_MODE=0
+LOOP_INTERVAL=3600
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --loop)
+            LOOP_MODE=1
+            shift
+            if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+                LOOP_INTERVAL="$1"
+                shift
+            fi
+            ;;
+        -h|--help)
+            echo "usage: $0 [--loop [INTERVAL_SECONDS]] <JOB_DIR>" >&2
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "[backup] ERROR: unknown flag: $1" >&2
+            exit 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
 if [[ $# -ne 1 ]]; then
-    echo "usage: $0 <JOB_DIR>" >&2
+    echo "usage: $0 [--loop [INTERVAL_SECONDS]] <JOB_DIR>" >&2
     exit 2
 fi
 
@@ -45,7 +80,8 @@ fi
 
 mkdir -p "$BACKUP_DIR"
 
-# ---------- backup ----------
+# ---------- backup iteration ----------
+do_backup() {
 TS="$(date +%Y%m%d-%H%M%S)"
 NEW_NAME="${PATTERN_PREFIX}${TS}${PATTERN_SUFFIX}"
 NEW_PATH="${BACKUP_DIR}/${NEW_NAME}"
@@ -114,10 +150,34 @@ kept=${#KEEP[@]}
 SUMMARY="[backup] job_dir=${JOB_DIR} new=${NEW_NAME} kept=${kept} deleted=${deleted}"
 echo "$SUMMARY"
 printf '%s %s\n' "$(date +'%Y-%m-%dT%H:%M:%S%z')" "$SUMMARY" >> "$LOG_FILE"
+}
+
+# ---------- dispatch ----------
+if (( LOOP_MODE )); then
+    echo "[backup] loop mode: interval=${LOOP_INTERVAL}s job_dir=${JOB_DIR} pid=$$"
+    trap 'echo "[backup] stopping (signal received)"; exit 0' INT TERM
+    while true; do
+        if ! do_backup; then
+            ts="$(date +'%Y-%m-%dT%H:%M:%S%z')"
+            echo "[backup] WARN: iteration failed, continuing"
+            printf '%s [backup] WARN: iteration failed rc=%s\n' "$ts" "$?" >> "$LOG_FILE" || true
+        fi
+        sleep "$LOOP_INTERVAL"
+    done
+else
+    do_backup
+fi
 
 exit 0
 
 # ---------------------------------------------------------------------------
-# Add to crontab (run every hour):
-#   0 * * * * /path/to/backup_pipeline_db.sh /path/to/job_dir >> /path/to/backup.log 2>&1
+# One-shot (cron-friendly, run every hour):
+#   0 * * * * /path/to/backup_pipeline_db.sh /path/to/job_dir >> /path/to/cron.log 2>&1
+#
+# Loop mode (no cron needed, useful inside a Docker container):
+#   nohup /path/to/backup_pipeline_db.sh --loop 3600 /path/to/job_dir \
+#       >> /path/to/loop.log 2>&1 &
+#   echo $! > /tmp/backup_loop.pid
+# Stop:
+#   kill "$(cat /tmp/backup_loop.pid)"
 # ---------------------------------------------------------------------------

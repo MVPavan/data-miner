@@ -6,7 +6,7 @@
 servers:
   detectors:
     grounding_dino:
-      enabled: true
+      enabled: false
       port: 3001
       gpu: "cuda:0"
       max_batch_size: 8
