@@ -20,8 +20,12 @@
   #refresh-btn:hover { background: var(--bg3); }
   #search { width: 100%; padding: 6px 10px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 13px; outline: none; }
   #search:focus { border-color: var(--accent); }
+  #filters { display: flex; gap: 6px; margin-top: 6px; }
+  #filters select { flex: 1; min-width: 0; padding: 4px 6px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 12px; outline: none; }
+  #filters select:focus { border-color: var(--accent); }
   #count { font-size: 12px; color: var(--muted); margin-top: 6px; }
   #image-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+  #image-list .loading-row { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 0; }
   .stem-btn { display: flex; justify-content: space-between; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 6px 10px; margin-bottom: 2px; background: none; border: none; color: var(--text); cursor: pointer; border-radius: 4px; font-size: 13px; }
   .stem-btn:hover { background: var(--bg3); }
   .stem-btn.active { background: #1e3a5f; color: #93c5fd; }
@@ -101,6 +105,14 @@
   <div id="sidebar-header">
     <h2>Images <button id="refresh-btn" title="Re-scan job directory">↻</button></h2>
     <input id="search" type="text" placeholder="Search image ids…">
+    <div id="filters">
+      <select id="status-filter" title="Filter by image_meta.status">
+        <option value="">All statuses</option>
+      </select>
+      <select id="stage-filter" title="Filter by completed pipeline stage">
+        <option value="">Any stage</option>
+      </select>
+    </div>
     <div id="count"></div>
   </div>
   <div id="image-list"></div>
@@ -142,8 +154,16 @@
 // State
 // ---------------------------------------------------------------------------
 const S = {
-  stems: [],
-  stemMeta: {},        // stem -> meta status (cached lazily)
+  // Sidebar pagination / filters
+  stems: [],           // currently loaded page items: {image_id, status, stages_completed}
+  stemTotal: 0,        // total rows matching current filter
+  stemOffset: 0,       // offset of next page to fetch
+  stemLimit: 500,
+  stemQuery: '',
+  stemStatus: '',
+  stemStage: '',
+  stemLoading: false,
+  stemHasMore: true,
   currentStem: null,
   currentStage: 'proposals',
   data: null,
@@ -216,6 +236,8 @@ function pickColor(stageFn, className) {
 // ---------------------------------------------------------------------------
 const $list = document.getElementById('image-list');
 const $search = document.getElementById('search');
+const $statusFilter = document.getElementById('status-filter');
+const $stageFilter = document.getElementById('stage-filter');
 const $count = document.getElementById('count');
 const $img = document.getElementById('viewer-img');
 const $svg = document.getElementById('overlay-svg');
@@ -236,35 +258,120 @@ async function fetchJSON(url) {
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar
+// Sidebar (server-side pagination + filters)
 // ---------------------------------------------------------------------------
-function renderSidebar() {
-  const q = $search.value.toLowerCase();
-  let visible = 0;
-  $list.innerHTML = '';
-  for (const stem of S.stems) {
-    if (q && !stem.toLowerCase().includes(q)) continue;
-    visible++;
-    const btn = document.createElement('button');
-    btn.className = 'stem-btn' + (stem === S.currentStem ? ' active' : '');
-    const status = S.stemMeta[stem] || '';
-    btn.innerHTML = `<span class="name">${escHTML(stem)}</span><span class="status-dot ${escAttr(status)}"></span>`;
-    btn.title = stem + (status ? ` — ${status}` : '');
-    btn.onclick = () => selectImage(stem);
-    $list.appendChild(btn);
-  }
-  $count.textContent = q ? `${visible}/${S.stems.length} images` : `${S.stems.length} images`;
+
+// Build the URL for /api/stems with the current filter state.
+function stemsURL(offset) {
+  const params = new URLSearchParams();
+  params.set('offset', String(offset));
+  params.set('limit', String(S.stemLimit));
+  if (S.stemQuery)  params.set('q',      S.stemQuery);
+  if (S.stemStatus) params.set('status', S.stemStatus);
+  if (S.stemStage)  params.set('stage',  S.stemStage);
+  return '/api/stems?' + params.toString();
 }
+
+// Append a single item button to the sidebar.
+function appendStemButton(item) {
+  const btn = document.createElement('button');
+  btn.className = 'stem-btn' + (item.image_id === S.currentStem ? ' active' : '');
+  btn.dataset.stem = item.image_id;
+  const status = item.status || '';
+  btn.innerHTML = `<span class="name">${escHTML(item.image_id)}</span><span class="status-dot ${escAttr(status)}"></span>`;
+  const stagesLbl = (item.stages_completed && item.stages_completed.length)
+    ? ` [${item.stages_completed.join(',')}]` : '';
+  btn.title = item.image_id + (status ? ` — ${status}` : '') + stagesLbl;
+  btn.onclick = () => selectImage(item.image_id);
+  $list.appendChild(btn);
+}
+
+function renderCount() {
+  $count.textContent = `${S.stems.length} of ${S.stemTotal} images`
+    + (S.stemHasMore ? ' (scroll for more)' : '');
+}
+
+// Populate the status dropdown from API-provided distinct values.
+function populateFilters(filters) {
+  const prevStatus = $statusFilter.value;
+  $statusFilter.innerHTML = '<option value="">All statuses</option>';
+  for (const s of (filters.statuses || [])) {
+    const opt = document.createElement('option');
+    opt.value = s; opt.textContent = s;
+    $statusFilter.appendChild(opt);
+  }
+  $statusFilter.value = prevStatus;
+
+  const prevStage = $stageFilter.value;
+  $stageFilter.innerHTML = '<option value="">Any stage</option>';
+  for (const s of (filters.stages || [])) {
+    const opt = document.createElement('option');
+    opt.value = s; opt.textContent = `completed: ${s}`;
+    $stageFilter.appendChild(opt);
+  }
+  $stageFilter.value = prevStage;
+}
+
+// Fetch one page. If `reset`, clear the sidebar and restart at offset 0.
+async function loadStemsPage({ reset = false } = {}) {
+  if (S.stemLoading) return;
+  if (!reset && !S.stemHasMore) return;
+  S.stemLoading = true;
+  if (reset) {
+    S.stemOffset = 0;
+    S.stemHasMore = true;
+    S.stems = [];
+    $list.innerHTML = '<div class="loading-row">Loading…</div>';
+  }
+  try {
+    const d = await fetchJSON(stemsURL(S.stemOffset));
+    if (reset) {
+      $list.innerHTML = '';
+      populateFilters(d.filters || {});
+    }
+    S.stemTotal = d.total || 0;
+    for (const item of (d.items || [])) {
+      S.stems.push(item);
+      appendStemButton(item);
+    }
+    S.stemOffset += (d.items || []).length;
+    S.stemHasMore = S.stems.length < S.stemTotal && (d.items || []).length > 0;
+    renderCount();
+  } catch (e) {
+    $list.innerHTML = `<div class="loading-row">Failed to load: ${escHTML(String(e))}</div>`;
+  } finally {
+    S.stemLoading = false;
+  }
+}
+
+// Infinite scroll: fetch next page when near the bottom of the list.
+$list.addEventListener('scroll', () => {
+  if (S.stemLoading || !S.stemHasMore) return;
+  const remaining = $list.scrollHeight - $list.scrollTop - $list.clientHeight;
+  if (remaining < 400) loadStemsPage();
+});
+
+// Debounced re-fetch on search/filter change.
+let _searchTimer = null;
+function scheduleReload() {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    S.stemQuery  = $search.value.trim();
+    S.stemStatus = $statusFilter.value;
+    S.stemStage  = $stageFilter.value;
+    loadStemsPage({ reset: true });
+  }, 200);
+}
+$search.addEventListener('input', scheduleReload);
+$statusFilter.addEventListener('change', scheduleReload);
+$stageFilter.addEventListener('change', scheduleReload);
 
 async function refreshStems() {
-  const old = new Set(S.stems);
-  S.stems = await fetchJSON('/api/stems');
-  renderSidebar();
-  const added = S.stems.filter(s => !old.has(s)).length;
-  showToast(added > 0 ? `${added} new image(s) found` : 'No new images');
+  const before = S.stemTotal;
+  await loadStemsPage({ reset: true });
+  const delta = S.stemTotal - before;
+  showToast(delta > 0 ? `${delta} new image(s)` : 'No new images');
 }
-
-$search.addEventListener('input', renderSidebar);
 document.getElementById('refresh-btn').onclick = refreshStems;
 
 // ---------------------------------------------------------------------------
@@ -272,7 +379,10 @@ document.getElementById('refresh-btn').onclick = refreshStems;
 // ---------------------------------------------------------------------------
 async function selectImage(stem) {
   S.currentStem = stem;
-  renderSidebar();
+  // Toggle the active class on existing buttons without rebuilding the list.
+  for (const btn of $list.querySelectorAll('.stem-btn')) {
+    btn.classList.toggle('active', btn.dataset.stem === stem);
+  }
   $detail.innerHTML = '<div class="loading">Loading…</div>';
   $svg.innerHTML = '';
 
@@ -284,12 +394,6 @@ async function selectImage(stem) {
   }
   S.imgW = S.data.image_width || 0;
   S.imgH = S.data.image_height || 0;
-
-  // Cache meta status for sidebar coloring.
-  if (S.data.meta && S.data.meta.status) {
-    S.stemMeta[stem] = S.data.meta.status;
-    renderSidebar();
-  }
 
   if (S.data.image_url) {
     $img.src = S.data.image_url;
@@ -955,14 +1059,8 @@ document.addEventListener('keydown', (e) => {
 // Init
 // ---------------------------------------------------------------------------
 (async () => {
-  try {
-    S.stems = await fetchJSON('/api/stems');
-  } catch (e) {
-    $detail.innerHTML = `<div class="loading">Failed to load stems: ${escHTML(String(e))}</div>`;
-    return;
-  }
-  renderSidebar();
-  if (S.stems.length) await selectImage(S.stems[0]);
+  await loadStemsPage({ reset: true });
+  if (S.stems.length) await selectImage(S.stems[0].image_id);
 })();
 </script>
 </body>

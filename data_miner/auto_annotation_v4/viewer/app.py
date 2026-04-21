@@ -7,7 +7,8 @@ pipeline without contention.
 
 Endpoints:
   GET /                       — Single-page frontend (index.html).
-  GET /api/stems              — List all image_ids in the database.
+  GET /api/stems              — Paginated list of image_ids with status/stages.
+                                Query params: offset, limit, q, status, stage.
   GET /api/data/{image_id}    — Full per-image data: stages, proposals, meta.
   GET /api/job                — Job-level info (config, classes, summary).
   GET /api/image/{image_id}   — Serve the source image file.
@@ -20,9 +21,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+
+# Canonical pipeline stage order; used for the sidebar "stage completed" filter.
+PIPELINE_STAGES = ("detect", "filter", "evaluate", "refine", "finalize")
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 
@@ -107,6 +111,8 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
         conn = sqlite3.connect(str(db_path), timeout=5)
         conn.row_factory = sqlite3.Row
         try:
+            conn.execute("PRAGMA query_only = TRUE")
+            conn.execute("PRAGMA cache_size = -32768")
             rows = conn.execute(sql, params).fetchall()
             return [dict(row) for row in rows]
         finally:
@@ -227,12 +233,102 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
         }
 
     @app.get("/api/stems")
-    async def get_stems() -> list[str]:
-        """Return all image_ids ordered alphabetically."""
+    async def get_stems(
+        offset: int = Query(0, ge=0),
+        limit: int = Query(500, ge=1, le=5000),
+        q: str = Query("", description="Substring match on image_id"),
+        status: str = Query("", description="Exact image_meta.status filter"),
+        stage: str = Query(
+            "",
+            description="Only images whose stages_completed contains this stage",
+        ),
+    ) -> dict[str, Any]:
+        """Return a paginated slice of image_ids with status and stages_completed.
+
+        Response shape::
+
+            {
+              "items":  [{image_id, status, stages_completed: [...]}, ...],
+              "total":  matching-row count,
+              "offset": echo of offset,
+              "limit":  echo of limit,
+              "filters": {
+                "statuses": [...distinct image_meta.status values...],
+                "stages":   [...canonical pipeline stage names...]
+              }
+            }
+        """
+        empty: dict[str, Any] = {
+            "items": [],
+            "total": 0,
+            "offset": offset,
+            "limit": limit,
+            "filters": {"statuses": [], "stages": list(PIPELINE_STAGES)},
+        }
         if not db_path.exists():
-            return []
-        rows = _query("SELECT image_id FROM image_meta ORDER BY image_id")
-        return [r["image_id"] for r in rows]
+            return empty
+
+        where: list[str] = []
+        params: list[Any] = []
+        if q:
+            where.append("image_id LIKE ?")
+            params.append(f"%{q}%")
+        if status:
+            where.append("status = ?")
+            params.append(status)
+        if stage:
+            # stages_completed is a JSON array stored as TEXT; match the literal
+            # "stage_name" token so "detect" doesn't match "detect_merge".
+            where.append("stages_completed LIKE ?")
+            params.append(f'%"{stage}"%')
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+        total_row = _query(
+            f"SELECT COUNT(*) AS n FROM image_meta {where_sql}",
+            tuple(params),
+        )
+        total = int(total_row[0]["n"]) if total_row else 0
+
+        rows = _query(
+            f"""
+            SELECT image_id, status, stages_completed
+            FROM image_meta
+            {where_sql}
+            ORDER BY image_id
+            LIMIT ? OFFSET ?
+            """,
+            tuple(params + [limit, offset]),
+        )
+
+        items: list[dict[str, Any]] = []
+        for r in rows:
+            raw = r.get("stages_completed") or "[]"
+            try:
+                stages = json.loads(raw) if isinstance(raw, str) else raw
+                if not isinstance(stages, list):
+                    stages = []
+            except (json.JSONDecodeError, TypeError):
+                stages = []
+            items.append(
+                {
+                    "image_id": r["image_id"],
+                    "status": r.get("status") or "",
+                    "stages_completed": stages,
+                }
+            )
+
+        status_rows = _query(
+            "SELECT DISTINCT status FROM image_meta WHERE status IS NOT NULL AND status <> '' ORDER BY status"
+        )
+        statuses = [s["status"] for s in status_rows]
+
+        return {
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "filters": {"statuses": statuses, "stages": list(PIPELINE_STAGES)},
+        }
 
     @app.get("/api/data/{image_id}")
     async def get_data(image_id: str) -> dict[str, Any]:
