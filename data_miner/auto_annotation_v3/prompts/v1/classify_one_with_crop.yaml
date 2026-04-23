@@ -1,8 +1,14 @@
 id: classify_one_with_crop
-version: "2"
+version: "3"
 stage: evaluate
 group: null
-changelog: "v2: independent classification (no proposed-class priming), split class_confidence + continuous bbox_score, per-class descriptions from class_registry, overview + close-up crop"
+changelog: |
+  v3: reasoning emitted FIRST in the JSON (conditions the scores);
+  FIELD SEMANTICS moved above the JSON schema; bucket wording cleaned up;
+  presence_penalty 1.3 → 0.2 (old value penalised JSON structural tokens).
+  v2: independent classification (no proposed-class priming), split
+  class_confidence + continuous bbox_score, per-class descriptions from
+  class_registry, overview + close-up crop.
 
 system: |
   You are classifying ONE highlighted object in an image.
@@ -25,6 +31,8 @@ system: |
        material, small features).
 
   Focus ONLY on what is inside the red TARGET box; ignore everything else.
+  If the two views disagree, the CROP wins for class identity (finer
+  detail) and the FULL view wins for bbox fit (true scene coordinates).
 
   Decide, based solely on visual evidence:
     1. What class the object is, from the list above (or "other" if nothing
@@ -34,29 +42,36 @@ system: |
        reasonable annotation or needs correction.
     4. Whether the object is fully visible (for telemetry only).
 
-  Return EXACTLY one JSON object — no array, no markdown fence, no prose:
+  FIELD SEMANTICS (use these anchors when scoring):
+    - class_confidence (how sure you are of detected_class):
+        0.90-1.00 : certain — visual cues unambiguously match this class
+        0.70-0.89 : likely — one dominant hypothesis, minor ambiguity
+        0.50-0.69 : plausible — two listed classes fit comparably
+        0.30-0.49 : uncertain — cues are weak or contradictory
+        0.00-0.29 : nothing identifiable inside the box (empty / blurred /
+                    target missing) — pair with detected_class="other"
+    - bbox_score (how well the red TARGET box frames the object):
+        0.90-1.00 : tight and complete — box matches the object outline
+        0.70-0.89 : acceptable — small padding or minor crop at one edge
+        0.40-0.69 : LOOSE or CROPPED — box much larger than object OR
+                    object significantly extends outside the box (band
+                    means "bbox needs re-drawing" not unusable)
+        0.00-0.39 : unusable — box on empty region / wrong object / object
+                    entirely missing inside the box
+    - object_complete : telemetry — true if the object is fully visible;
+      false if occluded by another object or cropped by the image edge.
+
+  Return EXACTLY one JSON object — no array, no markdown fence, no prose.
+  Emit the fields in the order shown so reasoning is committed BEFORE the
+  scores (the scores are conditioned on the reasoning, not retrofitted):
   {{
-    "detected_class": "<one of: {class_list}, or \"other\">",
+    "reasoning":        "<under 40 words — cite the visual cues that
+                         decided the class>",
+    "detected_class":   "<one of: {class_list}, or \"other\">",
     "class_confidence": 0.0-1.0,
     "bbox_score":       0.0-1.0,
-    "object_complete":  true | false,
-    "reasoning":        "<under 40 words — cite the visual cues that decided the class>"
+    "object_complete":  true | false
   }}
-
-  FIELD SEMANTICS (important):
-    - class_confidence — anchored:
-        0.90-1.00 : certain it is <detected_class>
-        0.70-0.89 : very likely; some visual ambiguity
-        0.50-0.69 : plausible but could be another listed class
-        0.30-0.49 : uncertain — could be wrong or unclear
-        0.00-0.29 : wrong class, or nothing identifiable in the box
-    - bbox_score — anchored:
-        0.90-1.00 : box fits the object tightly and completely
-        0.70-0.89 : acceptable — small padding or slight crop
-        0.40-0.69 : major issue — loose/overflowing or cut off significantly
-        0.00-0.39 : bbox unusable — on wrong region or object missing
-    - object_complete — telemetry: true if the object is fully visible;
-      false if occluded by another object / cropped by the image edge.
 
 variables:
   - class_list
@@ -67,4 +82,4 @@ variables:
 model_params:
   temperature: 0.0
   max_tokens: 512
-  presence_penalty: 1.3
+  presence_penalty: 0.2

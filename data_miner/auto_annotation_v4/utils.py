@@ -479,10 +479,12 @@ def route_candidates(candidates: list, config: Any) -> dict:
 
     # Head+person co-existence shortcut: if a head is contained in a person
     # bbox above filtering.head_person_containment_min AND auto_accept
-    # has opted in, both candidates auto-accept regardless of individual
-    # score. The head detection + person detection reinforcing each other
-    # at the same spatial location is a strong enough signal that VLM
-    # disambiguation rarely changes the verdict.
+    # has opted in, both candidates auto-accept. The spatial reinforcement
+    # is strong enough that VLM disambiguation rarely changes the verdict,
+    # EXCEPT when either leg of the pair is itself a weak detection — a
+    # marginal head riding a spurious person box must not auto-accept.
+    # Both head and person therefore must clear
+    # ``head_person_coexistence_min_score`` (default 0.0 = no gate).
     coexist_auto_ids: set[str] = set()
     coexist_enabled = getattr(
         aa_cfg, "head_person_coexistence", False
@@ -491,7 +493,27 @@ def route_candidates(candidates: list, config: Any) -> dict:
     ) > 0
     if coexist_enabled:
         thr = config.filtering.head_person_containment_min
+        coexist_min_score = getattr(
+            aa_cfg, "head_person_coexistence_min_score", 0.0
+        ) or 0.0
+        cand_by_id = {c.candidate_id: c for c in candidates}
+        _coex_log = get_logger("utils.route_candidates.coexist")
         for hid, pid in head_person_coexist_pairs(candidates, thr):
+            head = cand_by_id.get(hid)
+            person = cand_by_id.get(pid)
+            if head is None or person is None:
+                continue
+            if head.score < coexist_min_score or person.score < coexist_min_score:
+                # One leg too weak — pair doesn't qualify for the
+                # shortcut; each candidate still routes via baseline
+                # tier/score/agreement logic below. Log so an operator
+                # can see *why* a plausible-looking pair didn't auto-accept.
+                _coex_log.debug(
+                    "coexist shortcut declined: head=%s(%.2f) person=%s(%.2f) "
+                    "gate=%.2f",
+                    hid, head.score, pid, person.score, coexist_min_score,
+                )
+                continue
             coexist_auto_ids.add(hid)
             coexist_auto_ids.add(pid)
 
@@ -839,19 +861,22 @@ def draw_focus_on_image(
     VLM overview input. Keeps the rest of the scene visible (spatial context)
     without any other bboxes that could confuse which one is being asked about.
 
-    Border is drawn OUTWARD from the bbox (offset outward by the stroke
-    width) so the object pixels inside the bbox are never obscured. This
-    matters for small objects: PIL's default ``rectangle(outline=, width=N)``
-    grows the stroke INWARD, so on a 15×15 head bbox a width-4 stroke
-    obscures ~78% of the content pixels. Drawing outward keeps the
-    object pristine.
+    Border is drawn OUTWARD from the bbox so the object pixels inside the
+    bbox are never obscured. For bboxes that touch the image edge we
+    **pad the canvas** by ``stroke+1`` px on all sides with a neutral
+    dark-grey gutter before drawing, so the border has room to extend
+    outward on every side. Without this pad the previous implementation
+    clamped the outward offset at the image boundary, which caused PIL's
+    ``width=N`` stroke to fall back to drawing *inward* on the edge side —
+    re-occluding the very pixels the outward-draw change was meant to
+    protect.
 
-    Border width also scales with bbox size so tiny objects still get a
-    visible outline without a chunky overlay.
+    Border width scales with bbox size (1-2 px for tiny boxes up to 4 px
+    for large). Label has a filled background for contrast and renders
+    above the outward border when there's room.
     """
-    rendered = image.copy().convert("RGB")
-    draw = ImageDraw.Draw(rendered)
-    w, h = rendered.size
+    base = image if image.mode == "RGB" else image.convert("RGB")
+    w, h = base.size
 
     try:
         font = ImageFont.truetype(
@@ -861,25 +886,49 @@ def draw_focus_on_image(
         font = ImageFont.load_default()
 
     x1, y1, x2, y2 = bbox_to_pixels(candidate.bbox, w, h)
+    # Degenerate bbox guard: collapse to a 1-px seed so PIL doesn't
+    # silently draw nothing on a zero-area rectangle. We still emit the
+    # overview (with a tiny marker) so the caller isn't left wondering
+    # why a candidate vanished.
     side_px = max(1, min(x2 - x1, y2 - y1))
-    # Width: 1-2 px for tiny boxes, up to 4 px for large — keeps the
-    # outline visible in the VLM's thumbnail rendering without dominating
-    # small objects.
     stroke = max(1, min(4, side_px // 15))
 
-    # Offset outward by the stroke width so the border lives OUTSIDE the
-    # bbox. Clamp to image bounds.
-    ox1 = max(0, x1 - stroke)
-    oy1 = max(0, y1 - stroke)
-    ox2 = min(w - 1, x2 + stroke)
-    oy2 = min(h - 1, y2 + stroke)
+    # Pad the canvas with a neutral dark gutter so the outward stroke
+    # ALWAYS has room, even when the bbox touches an image edge. +1 so
+    # the outline never shares a row/col with the padded boundary.
+    pad = stroke + 1
+    padded = Image.new("RGB", (w + 2 * pad, h + 2 * pad), (32, 32, 32))
+    padded.paste(base, (pad, pad))
+    draw = ImageDraw.Draw(padded)
+
+    # Shift bbox into padded coords, then offset outward by stroke.
+    sx1, sy1 = x1 + pad, y1 + pad
+    sx2, sy2 = x2 + pad, y2 + pad
+    ox1, oy1 = sx1 - stroke, sy1 - stroke
+    ox2, oy2 = sx2 + stroke, sy2 + stroke
     draw.rectangle((ox1, oy1, ox2, oy2), outline=color, width=stroke)
 
-    # Place label ABOVE the outward border; if cropped at image top,
-    # put it just inside the top-left of the original bbox.
-    label_y = oy1 - 22 if oy1 >= 22 else y1 + 2
-    draw.text((ox1, max(0, label_y)), label, fill=color, font=font)
-    return rendered
+    # Label: filled background + white text for readability on any
+    # scene colour. Try above the outward border first, then below; if
+    # neither fits, skip the label (the red border alone is enough to
+    # identify the target, and drawing inside the bbox would occlude
+    # the very object we want the VLM to see).
+    try:
+        tw = int(draw.textlength(label, font=font))
+    except AttributeError:  # old PIL
+        tw = 8 * len(label)
+    label_h = 20
+    ph = padded.size[1]
+    label_xy: tuple[int, int] | None = None
+    if oy1 >= label_h + 2:
+        label_xy = (ox1, oy1 - (label_h + 2))
+    elif oy2 + label_h + 2 <= ph:
+        label_xy = (ox1, oy2 + 2)
+    if label_xy is not None:
+        lx, ly = label_xy
+        draw.rectangle((lx, ly, lx + tw + 6, ly + label_h), fill=color)
+        draw.text((lx + 3, ly + 1), label, fill=(255, 255, 255), font=font)
+    return padded
 
 
 def draw_candidates_on_image(
@@ -936,15 +985,38 @@ def crop_candidate(
     )
 
 
-def pil_to_data_url(image: Image.Image, max_size: int = 1024) -> str:
-    """Encode PIL image as base64 data URL. Resize if larger than max_size."""
+def pil_to_data_url(
+    image: Image.Image,
+    max_size: int = 1280,
+    fmt: str = "JPEG",
+    quality: int = 90,
+) -> str:
+    """Encode PIL image as a base64 data URL for the VLM payload.
+
+    Defaults: JPEG q=90 at 1280 px longest side. JPEG is 5-10x smaller
+    than PNG at negligible quality cost for natural-image VLM inputs —
+    the bench harness (tests/bench_vllm.py) already uses JPEG, so this
+    brings production in line. 1280 px keeps patch density for small
+    objects (a 40x40 head bbox on a 4K frame lands at ~20 px here
+    instead of ~10 px under the old 1024 cap).
+
+    When ``fmt == "PNG"`` ``quality`` is ignored.
+    """
     img = image.copy()
     if max(img.size) > max_size:
         img.thumbnail((max_size, max_size), Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    fmt_up = fmt.upper()
+    if fmt_up == "JPEG":
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        mime = "image/jpeg"
+    else:
+        img.save(buf, format="PNG", optimize=True)
+        mime = "image/png"
     payload = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f"data:image/png;base64,{payload}"
+    return f"data:{mime};base64,{payload}"
 
 
 def pil_to_png_bytes(image: Image.Image) -> bytes:

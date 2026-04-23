@@ -40,7 +40,7 @@ def _build_config() -> AutoAnnotationV4Config:
     iou = IouDedupConfig(
         threshold=0.5,
         tiebreak_by=["agreement", "model_priority", "score"],
-        model_priority=["gdino", "sam3"],
+        model_priority=["grounding_dino", "sam3"],
     )
     filtering = FilterConfig(
         min_area=0.001,
@@ -48,7 +48,7 @@ def _build_config() -> AutoAnnotationV4Config:
         min_aspect_ratio=0.1,
         max_aspect_ratio=10.0,
         min_edge_distance=0.0,
-        per_model_score={"gdino": 0.2, "sam3": 0.0},
+        per_model_score={"grounding_dino": 0.2, "sam3": 0.0},
         iou_dedup=iou,
         max_per_class=1,
     )
@@ -84,7 +84,7 @@ def _build_candidates() -> list[Candidate]:
             candidate_id="geom1",
             class_name="class_geom_fail",
             label="geom_fail",
-            source_model="gdino",
+            source_model="grounding_dino",
             expression="tiny",
             bbox=_bbox(0.10, 0.10, 0.101, 0.101),  # area ~1e-6
             score=0.9,
@@ -94,7 +94,7 @@ def _build_candidates() -> list[Candidate]:
             candidate_id="scor1",
             class_name="class_score_fail",
             label="low_score",
-            source_model="gdino",
+            source_model="grounding_dino",
             expression="low",
             bbox=_bbox(0.20, 0.20, 0.30, 0.30),
             score=0.1,
@@ -104,7 +104,7 @@ def _build_candidates() -> list[Candidate]:
             candidate_id="dup_A",
             class_name="class_dup",
             label="dup",
-            source_model="gdino",
+            source_model="grounding_dino",
             expression="dup",
             bbox=_bbox(0.40, 0.40, 0.60, 0.60),
             score=0.8,
@@ -123,7 +123,7 @@ def _build_candidates() -> list[Candidate]:
             candidate_id="cap1",
             class_name="class_small_cap",
             label="cap1",
-            source_model="gdino",
+            source_model="grounding_dino",
             expression="cap",
             bbox=_bbox(0.70, 0.05, 0.80, 0.15),
             score=0.9,
@@ -132,7 +132,7 @@ def _build_candidates() -> list[Candidate]:
             candidate_id="cap2",
             class_name="class_small_cap",
             label="cap2",
-            source_model="gdino",
+            source_model="grounding_dino",
             expression="cap",
             bbox=_bbox(0.05, 0.70, 0.15, 0.80),
             score=0.85,
@@ -144,7 +144,7 @@ def _build_candidates() -> list[Candidate]:
             candidate_id="cross_A",
             class_name="class_A",
             label="A",
-            source_model="gdino",
+            source_model="grounding_dino",
             expression="A",
             bbox=_bbox(0.50, 0.05, 0.70, 0.25),
             score=0.9,
@@ -245,11 +245,11 @@ def _build_config_with_hi_conf(hi_conf: dict[str, float]) -> AutoAnnotationV4Con
         },
         co_existence=CoExistenceConfig(),
         filtering=FilterConfig(
-            per_model_score={"sam3_dart": 0.5, "gdino": 0.35},
+            per_model_score={"sam3_dart": 0.5, "grounding_dino": 0.35},
             iou_dedup=IouDedupConfig(
                 threshold=0.5,
                 tiebreak_by=["agreement", "model_priority", "score"],
-                model_priority=["sam3_dart", "gdino"],
+                model_priority=["sam3_dart", "grounding_dino"],
             ),
         ),
         auto_accept=AutoAcceptConfig(
@@ -300,8 +300,8 @@ def test_auto_accept_hi_conf_other_models_unaffected():
     cfg = _build_config_with_hi_conf({"sam3_dart": 0.85})
     out = route_candidates(
         [
-            _mk("gdino_hi",  "gdino", 0.99, agreement=1),  # no hi_conf -> VLM
-            _mk("gdino_agr", "gdino", 0.99, agreement=2),  # agreement path -> auto
+            _mk("gdino_hi",  "grounding_dino", 0.99, agreement=1),  # no hi_conf -> VLM
+            _mk("gdino_agr", "grounding_dino", 0.99, agreement=2),  # agreement path -> auto
         ],
         cfg,
     )
@@ -332,11 +332,11 @@ def _build_config_with_allowlist(allowed: list[str]) -> AutoAnnotationV4Config:
         },
         co_existence=CoExistenceConfig(),
         filtering=FilterConfig(
-            per_model_score={"sam3_dart": 0.0, "gdino": 0.0},
+            per_model_score={"sam3_dart": 0.0, "grounding_dino": 0.0},
             iou_dedup=IouDedupConfig(
                 threshold=0.9,
                 tiebreak_by=["agreement", "model_priority", "score"],
-                model_priority=["sam3_dart", "gdino"],
+                model_priority=["sam3_dart", "grounding_dino"],
             ),
             max_per_class=100,
             allowed_source_models=allowed,
@@ -361,7 +361,7 @@ def test_allowed_source_models_empty_is_passthrough():
     """Empty allowlist = no-op (preserves existing config behavior)."""
     cfg = _build_config_with_allowlist([])
     pipeline = FilterPipeline(cfg)
-    cands = [_mk_cand("gd", "gdino", 0.0), _mk_cand("s3", "sam3_dart", 0.5)]
+    cands = [_mk_cand("gd", "grounding_dino", 0.0), _mk_cand("s3", "sam3_dart", 0.5)]
 
     kept, drops = pipeline.run(cands, FilterContext.POST_DETECT)
 
@@ -375,8 +375,8 @@ def test_allowed_source_models_suppresses_disallowed():
     cfg = _build_config_with_allowlist(["sam3_dart"])
     pipeline = FilterPipeline(cfg)
     cands = [
-        _mk_cand("gd1", "gdino", 0.0),
-        _mk_cand("gd2", "gdino", 0.3),
+        _mk_cand("gd1", "grounding_dino", 0.0),
+        _mk_cand("gd2", "grounding_dino", 0.3),
         _mk_cand("s3", "sam3_dart", 0.6),
     ]
 

@@ -8,11 +8,16 @@ This module intentionally holds no filter logic of its own — it only orders
 and tags drops produced by util functions. If a util returns only the kept
 list, drops are recovered by set-difference on ``candidate_id``.
 
-Filter subsets per context:
-    POST_DETECT:  geometric -> score_floor -> dedup -> per_class_cap -> cross_class
-    POST_REVIEW:  cross_class -> per_class_cap   (relabels may break these)
-    POST_REFINE:  geometric -> dedup             (bbox changes may break these)
-    PRE_FINALIZE: geometric -> score_floor -> dedup -> per_class_cap -> cross_class
+Filter subsets per context (see ``_PLAN`` below for the authoritative list):
+    POST_DETECT:  source_model -> geometric -> head_no_person ->
+                  score_floor -> dedup -> per_class_cap -> cross_class ->
+                  class_agnostic_nms
+    POST_REVIEW:  source_model -> cross_class -> per_class_cap
+                  (relabels may break these; spatial NMS deliberately
+                   skipped — see note on _PLAN)
+    POST_REFINE:  source_model -> geometric -> dedup
+                  (bbox changes may break these)
+    PRE_FINALIZE: same as POST_DETECT
 """
 
 from __future__ import annotations
@@ -38,20 +43,34 @@ __all__ = ["FilterPipeline"]
 
 # Ordered filter plan per context. Each step is a short string key resolved
 # inside FilterPipeline.run. ``source_model`` runs first in every plan so a
-# post-detect allowlist change only requires a filter-stage re-run.
+# post-detect allowlist change only requires a filter-stage re-run (no
+# full detect re-run).
 #
-# ``head_no_person`` runs after dedup so survivors already reflect cross-model
-# agreement. ``class_agnostic_nms`` runs last so it sees the same set the
-# router would consume, and can prune confusion-pair redundancy. Both steps
-# are no-ops when their config fields are left at defaults (off), so existing
-# jobs are unaffected until a job explicitly opts in via override YAML.
+# Placement notes:
+#   * ``head_no_person`` runs BEFORE ``score_floor`` so that low-confidence
+#     persons (those the score floor would later drop) still shield their
+#     heads from the orphan check. Only ``source_model`` (allowlist) and
+#     ``geometric`` (degenerate-bbox drop) precede it — the person
+#     "presence" we check is "did the detector fire a valid-geometry
+#     person here at all?", not "did it fire one we trust for auto-accept".
+#   * ``class_agnostic_nms`` runs LAST, so it sees the same set the router
+#     would consume and can prune confusion-pair redundancy that the
+#     earlier steps intentionally leave intact.
+#
+# POST_REVIEW notes:
+#   * ``class_agnostic_nms`` is deliberately NOT in POST_REVIEW. After VLM
+#     evaluates + relabels, the surviving set is curated by the VLM and
+#     another spatial NMS pass could drop legitimate candidates. The class
+#     level ``cross_class`` rules still re-apply because a relabel can
+#     invalidate a previously-resolved pair.
+#   * ``head_no_person`` is also omitted — the VLM never relabels a
+#     non-head into a head spatially, so head orphan status cannot change
+#     post-review.
+#
+# Both new steps are no-ops when their config fields are left at defaults
+# (off), so existing jobs are unaffected until a job opts in via override
+# YAML (e.g. overrides/loco_rules.yaml).
 _PLAN: dict[FilterContext, tuple[str, ...]] = {
-    # ``head_no_person`` runs BEFORE ``score_floor`` so that low-confidence
-    # persons (those that would later be dropped by the score floor) still
-    # shield heads. Only ``source_model`` (allowlist) and ``geometric``
-    # (degenerate bbox drop) precede it — the person "presence" we're
-    # checking is "did the detector fire a valid-geometry person here at
-    # all", not "did it fire one we trust for auto-accept".
     FilterContext.POST_DETECT: (
         "source_model",
         "geometric",
@@ -63,6 +82,11 @@ _PLAN: dict[FilterContext, tuple[str, ...]] = {
         "class_agnostic_nms",
     ),
     FilterContext.POST_REVIEW: (
+        # NOTE: dedup is not in this plan, so ``_cross_class_winner`` sees
+        # ``agreement=0`` on both sides of any overlap (Candidate's default).
+        # The tiebreak cascade silently collapses the agreement tier and
+        # falls through to model_priority / score. Safe, but means the
+        # cascade behaves slightly differently post-VLM than post-detect.
         "source_model",
         "cross_class",
         "per_class_cap",

@@ -15,11 +15,14 @@
 
 auto_accept:
   # Head+person co-existence shortcut: if a head is contained in a person
-  # bbox above filtering.head_person_containment_min (below), both candidates
-  # auto-accept regardless of score. A head+person pair landing on the same
-  # body reinforces both detections so VLM review is usually redundant.
-  # Reduces VLM load dramatically for crowd/person-heavy images.
+  # bbox above filtering.head_person_containment_min (below), BOTH candidates
+  # auto-accept provided their scores also clear head_person_coexistence_min_score.
+  # The spatial reinforcement alone isn't enough — a weak head riding any
+  # spurious person box would otherwise get a free pass to VLM-free accept.
+  # 0.60 sits comfortably above the sam3_dart 0.50 per-model floor, so both
+  # legs must be meaningfully confident.
   head_person_coexistence: true
+  head_person_coexistence_min_score: 0.60
 
 filtering:
   # Single-detector run: only sam3_dart proposals are considered. grounding_dino
@@ -55,10 +58,28 @@ filtering:
   # Lower the floor for naturally-small classes; everything else keeps the
   # global 0.0005.
   per_class_min_area:
-    head:      0 #0.0001    # ≈14x14 px
-    cellphone: 0.00005   # ≈10x10 px
+    # 0 disables the area floor entirely for heads — LOCO head annotations
+    # include many tiny far-field heads that would otherwise be culled at
+    # the global 0.0005 (≈32x32 px) floor.
+    head:      0
+    cellphone: 0.00005   # ≈10x10 px on 1920x1080
     wallet:    0.00005
     bird:      0.0001
     cat:       0.0001
     dog:       0.0001
     handbag:   0.0002    # ≈20x20 px
+
+# Evaluate-stage tuning. Tighter than the default 0.3/0.5 because LOCO has
+# a lot of tier-3 industrial confusion pairs (forklift/palletjack/shopping-
+# cart/truck) and we want the VLM to be *confident* before auto-accepting.
+# Bbox axis tuned independently so a class-correct but loose-bbox call
+# goes to human review instead of silently accepting a bad annotation.
+evaluate:
+  reject_below: 0.4          # class_conf < 0.4 → reject (was 0.3)
+  accept_above: 0.7          # class_conf ≥ 0.7 → trusted (was 0.5)
+  bbox_reject_below: 0.4     # bbox < 0.4 (with class trusted) → reject
+  bbox_accept_above: 0.7     # bbox ≥ 0.7 → accepted; [0.4,0.7) → review
+  vlm_image:
+    format: JPEG
+    max_size: 1280
+    quality: 90
