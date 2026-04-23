@@ -1,44 +1,66 @@
 id: classify_one
-version: "1"
+version: "2"
 stage: evaluate
 group: null
-changelog: "Per-candidate classification (overview only — bbox highlighted in red)"
+changelog: "v2: independent classification (no proposed-class priming), split class_confidence + continuous bbox_score, per-class descriptions from class_registry"
 
 system: |
-  You are evaluating ONE candidate annotation.
+  You are classifying ONE highlighted object in an image.
 
-  Possible classes for this candidate: {class_list}.
+  Possible classes: {class_list}.
 
-  CLASS DESCRIPTIONS:
+  CLASS DISAMBIGUATION:
   {class_descriptions}
+
+  PER-CLASS DETAILS:
+  {per_class_details}
 
   ANNOTATION RULES:
   {annotation_rules}
 
-  You will be shown the FULL image with the target bounding box highlighted
-  in RED and labelled "TARGET". Evaluate ONLY the target — ignore all other
-  objects in the scene.
+  You will be shown the full image. A RED bounding box labelled "TARGET"
+  marks the object to classify. Focus ONLY on what is inside that red box.
+  Ignore everything else in the scene.
 
-  Decide:
-  - which class the TARGET is (or "other" if none of the listed classes fit),
-  - your confidence (0.0 - 1.0),
-  - whether the bbox geometry is good, needs_expansion, too_loose, or bad,
-  - whether the object is fully visible (object_complete).
+  Decide, based solely on visual evidence inside the TARGET box:
+    1. What class the object is, from the list above (or "other" if nothing
+       in the list fits).
+    2. How confident you are in that class call.
+    3. How well the red TARGET bbox fits the object — whether it's a
+       reasonable annotation or needs correction.
+    4. Whether the object is fully visible (for telemetry only).
 
-  Return EXACTLY one JSON object — no array, no markdown fence:
+  Return EXACTLY one JSON object — no array, no markdown fence, no prose:
   {{
-    "correct_class": "{class_list} or other",
-    "confidence": 0.0-1.0,
-    "bbox_quality": "good | needs_expansion | too_loose | bad",
-    "object_complete": true/false,
-    "reasoning": "brief explanation"
+    "detected_class": "<one of: {class_list}, or \"other\">",
+    "class_confidence": 0.0-1.0,
+    "bbox_score":       0.0-1.0,
+    "object_complete":  true | false,
+    "reasoning":        "<under 40 words — cite the visual cues that decided the class>"
   }}
+
+  FIELD SEMANTICS (important):
+    - class_confidence — anchored:
+        0.90-1.00 : certain it is <detected_class>
+        0.70-0.89 : very likely; some visual ambiguity
+        0.50-0.69 : plausible but could be another listed class
+        0.30-0.49 : uncertain — could be wrong or unclear
+        0.00-0.29 : wrong class, or nothing identifiable in the box
+    - bbox_score — anchored:
+        0.90-1.00 : box fits the object tightly and completely
+        0.70-0.89 : acceptable — small padding or slight crop
+        0.40-0.69 : major issue — loose/overflowing or cut off significantly
+        0.00-0.39 : bbox unusable — on wrong region or object missing
+    - object_complete — telemetry: true if the object is fully visible;
+      false if occluded by another object / cropped by the image edge.
 
 variables:
   - class_list
   - class_descriptions
+  - per_class_details
   - annotation_rules
 
 model_params:
   temperature: 0.0
-  max_tokens: 384
+  max_tokens: 512
+  presence_penalty: 1.3

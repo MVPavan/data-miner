@@ -121,7 +121,7 @@
 <div id="main">
   <div id="tabs">
     <div class="tab active" data-stage="proposals">1. Proposals</div>
-    <div class="tab" data-stage="detect">2. Detect</div>
+    <div class="tab" data-stage="filter">2. Filter</div>
     <div class="tab" data-stage="evaluate">3. Evaluate</div>
     <div class="tab" data-stage="refine">4. Refine</div>
     <div class="tab" data-stage="finalize">5. Finalize</div>
@@ -173,6 +173,20 @@ const S = {
     detectRouting: { auto_accepted: true, needs_evaluation: true, other: true },
     evaluateVerdict: { accepted: true, review: true, rejected: true },
     refineShow: { original: true, refined: true, rejected: true },
+    // Filter tab: one toggle for "survivors" (kept) + one per drop reason.
+    // Defaults: survivors on, drops off (user enables them per reason).
+    filterKept: true,
+    filterDrops: {
+      source_model: false,
+      geometric_filter: false,
+      score_floor: false,
+      dedup: false,
+      per_class_cap: false,
+      cross_class: false,
+      head_without_person: true,
+      class_agnostic_nms: true,
+      rejected_upstream: false,
+    },
     // Global cross-tab filters: only show overlays whose class/source_model
     // is enabled here. Keys initialised on first data load.
     classFilter: {},      // class_name -> bool (true = visible)
@@ -207,6 +221,17 @@ const REFINE_COLORS = {
   original: '#888888',
   refined:  '#00C800',
   rejected: '#FF0000',
+};
+const FILTER_DROP_COLORS = {
+  source_model:        '#888888',
+  geometric_filter:    '#B8860B',
+  score_floor:         '#CD853F',
+  dedup:               '#9370DB',
+  per_class_cap:       '#DC143C',
+  cross_class:         '#FF69B4',
+  head_without_person: '#E6194B',
+  class_agnostic_nms:  '#F032E6',
+  rejected_upstream:   '#FF0000',
 };
 const FALLBACK = ['#FF6347','#4ECDC4','#FFD700','#FF69B4','#7CFC00','#00CED1','#FFA07A','#9370DB',
   '#E6194B','#3CB44B','#4363D8','#F58231','#911EB4','#42D4F4','#F032E6','#BFEF45'];
@@ -457,12 +482,22 @@ function renderToolbar() {
   if (stage === 'proposals') {
     // The per-tab Models toggle was removed — it duplicated the global Model
     // filter rendered below. Per-model overlay control is unified there.
-  } else if (stage === 'detect') {
+  } else if (stage === 'filter') {
     addToolbarGroup('Routing', [
       { label: 'auto_accepted', color: ROUTING_COLORS.auto_accepted, checked: S.toggles.detectRouting.auto_accepted, onChange: v => { S.toggles.detectRouting.auto_accepted = v; renderStage(); } },
       { label: 'needs_evaluation', color: ROUTING_COLORS.needs_evaluation, checked: S.toggles.detectRouting.needs_evaluation, onChange: v => { S.toggles.detectRouting.needs_evaluation = v; renderStage(); } },
-      { label: 'other', color: ROUTING_COLORS.other, checked: S.toggles.detectRouting.other, onChange: v => { S.toggles.detectRouting.other = v; renderStage(); } },
     ]);
+    addToolbarGroup('Kept', [
+      { label: 'survivors', color: '#00C800', checked: S.toggles.filterKept, onChange: v => { S.toggles.filterKept = v; renderStage(); } },
+    ]);
+    // One toggle per drop reason — default off for the noisy ones, on for the
+    // two new rules so the user sees them immediately.
+    addToolbarGroup('Drops', Object.keys(S.toggles.filterDrops).map(reason => ({
+      label: reason,
+      color: FILTER_DROP_COLORS[reason] || '#888',
+      checked: S.toggles.filterDrops[reason],
+      onChange: v => { S.toggles.filterDrops[reason] = v; renderStage(); },
+    })));
   } else if (stage === 'evaluate') {
     addToolbarGroup('Verdicts', [
       { label: 'accepted', color: VERDICT_COLORS.accepted, checked: S.toggles.evaluateVerdict.accepted, onChange: v => { S.toggles.evaluateVerdict.accepted = v; renderStage(); } },
@@ -726,6 +761,134 @@ function renderProposals() {
   return { svg, detail: header + detailParts.join('') };
 }
 
+function renderFilter() {
+  // Post-filter view. Shows survivors (kept) colored by routing bucket, plus
+  // dropped candidates faded and colored by drop reason. Drop bboxes are
+  // reconstructed by looking up candidate_id in the merged detect stage.
+  const flt = S.data.filter;
+  if (!flt) return { svg: '', detail: '<div class="detail-header">No filter checkpoint for this image.</div>' };
+  const det = S.data.detect || {};
+  const detCands = det.candidates || [];
+  // Also include per-model proposals for drop bbox lookup — source_model drops
+  // happen before merge so the merged detect.candidates may be missing them.
+  const propCands = [];
+  const props = S.data.proposals || {};
+  for (const m of Object.keys(props)) {
+    for (const c of (props[m].candidates || [])) propCands.push(c);
+  }
+  const candById = {};
+  for (const c of detCands) candById[c.candidate_id] = c;
+  for (const c of propCands) if (!candById[c.candidate_id]) candById[c.candidate_id] = c;
+
+  const kept = flt.candidates || [];
+  const drops = flt.drops || [];
+  const routing = flt.routing || {};
+  const auto = new Set(routing.auto_accepted || []);
+  const needs = new Set(routing.needs_evaluation || []);
+  const confusion = routing.confusion_flags || [];
+
+  function bucketOf(cid) {
+    if (auto.has(cid)) return 'auto_accepted';
+    if (needs.has(cid)) return 'needs_evaluation';
+    return 'other';
+  }
+
+  let svg = '';
+  let shownKept = 0, shownDrops = 0;
+
+  // Survivors
+  if (S.toggles.filterKept) {
+    for (const c of kept) {
+      const b = bucketOf(c.candidate_id);
+      if (!S.toggles.detectRouting[b]) continue;
+      if (!passesFilter(c)) continue;
+      shownKept++;
+      const color = pickColor(() => ROUTING_COLORS[b], c.class_name);
+      svg += svgRect(c.bbox, color,
+        `${c.class_name} (${c.source_model}) ${(c.score||0).toFixed(2)} ${b}`);
+    }
+  }
+
+  // Drops — faded outline, reason-colored
+  const reasonCounts = {};
+  for (const d of drops) {
+    const reason = d.reason || 'unknown';
+    reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+    if (!S.toggles.filterDrops[reason]) continue;
+    const c = candById[d.candidate_id];
+    if (!c) continue;  // bbox not recoverable (unlikely)
+    if (!passesFilter(c)) continue;
+    shownDrops++;
+    const color = FILTER_DROP_COLORS[reason] || '#888';
+    svg += svgRect(c.bbox, color,
+      `DROP[${reason}] ${c.class_name} (${c.source_model}) ${(c.score||0).toFixed(2)}`);
+  }
+
+  // Header with summary
+  const stats = flt.filter_stats || {};
+  const reasonSummary = Object.entries(reasonCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([r, n]) => `<span style="color:${FILTER_DROP_COLORS[r]||'#888'}">${r}:${n}</span>`)
+    .join(' · ');
+  const header = `<div class="detail-header">
+    <b>${kept.length}</b> kept |
+    <b>${drops.length}</b> dropped |
+    <b>${(routing.auto_accepted||[]).length}</b> auto-accept |
+    <b>${(routing.needs_evaluation||[]).length}</b> → VLM |
+    <b>${confusion.length}</b> confusion-flag
+    <br>raw → ${stats.total_proposed||0}, after filters ${stats.after_filters||0}, timing ${(flt.stage_timing_ms||0).toFixed(1)} ms
+    <br>Drops by reason: ${reasonSummary || '(none)'}
+    <br>Shown: <b>${shownKept}</b> kept + <b>${shownDrops}</b> drops
+  </div>`;
+
+  // Candidate detail cards — kept first, then drops grouped by reason
+  const keptCards = kept.map(c => {
+    const b = bucketOf(c.candidate_id);
+    return `<div class="detail-card ${b === 'auto_accepted' ? 'accept' : (b === 'needs_evaluation' ? 'refine' : '')}">
+      <div class="field"><span class="label">id:</span> <span class="value">${escHTML(c.candidate_id)}</span></div>
+      <div class="field"><span class="label">Class:</span> <span class="value">${escHTML(c.class_name)}</span> | <span class="label">Source:</span> <span class="value">${escHTML(c.source_model)}</span></div>
+      <div class="field"><span class="label">Score:</span> <span class="value">${(c.score||0).toFixed(4)}</span> | <span class="label">Agreement:</span> <span class="value">${c.agreement||0}</span></div>
+      <div class="field"><span class="label">Routing:</span> <span class="value" style="color:${ROUTING_COLORS[b]}">${b}</span></div>
+    </div>`;
+  }).join('');
+
+  // Group drops by reason for the detail pane
+  const dropsByReason = {};
+  for (const d of drops) {
+    (dropsByReason[d.reason] = dropsByReason[d.reason] || []).push(d);
+  }
+  const dropCards = Object.entries(dropsByReason).map(([reason, ds]) => {
+    const color = FILTER_DROP_COLORS[reason] || '#888';
+    const lines = ds.slice(0, 20).map(d => {
+      const c = candById[d.candidate_id] || {};
+      return `<div class="field" style="font-family:monospace;font-size:11px">
+        <span style="color:${color}">■</span> ${escHTML(d.candidate_id)} — ${escHTML(c.class_name||'?')} / ${escHTML(c.source_model||'?')} ${(c.score||0).toFixed(2)}
+      </div>`;
+    }).join('');
+    const overflow = ds.length > 20 ? `<div class="field" style="opacity:0.7">...and ${ds.length - 20} more</div>` : '';
+    return `<div class="detail-card" style="border-left-color:${color}">
+      <div class="field"><b style="color:${color}">${escHTML(reason)}</b> &mdash; ${ds.length} dropped</div>
+      ${lines}${overflow}
+    </div>`;
+  }).join('');
+
+  // Confusion flags (cross-class overlaps the router flagged)
+  let confusionCard = '';
+  if (confusion.length) {
+    const rows = confusion.slice(0, 10).map(f => {
+      return `<div class="field" style="font-family:monospace;font-size:11px">
+        ${escHTML((f.classes||[]).join(' ↔ '))} &nbsp; IoU=${(f.iou||0).toFixed(2)}
+      </div>`;
+    }).join('');
+    confusionCard = `<div class="detail-card refine">
+      <div class="field"><b>Confusion flags (${confusion.length})</b> &mdash; cross-class overlaps the router left for VLM</div>
+      ${rows}
+    </div>`;
+  }
+
+  return { svg, detail: header + confusionCard + keptCards + dropCards };
+}
+
 function renderDetect() {
   const det = S.data.detect;
   if (!det) return { svg: '', detail: '<div class="detail-header">No detect.json checkpoint.</div>' };
@@ -821,10 +984,16 @@ function renderEvaluate() {
   const cards = verdicts.map(v => {
     const b = bucketOf(v.candidate_id);
     const cls = b === 'accepted' ? 'accept' : (b === 'rejected' ? 'reject' : (b === 'review' ? 'refine' : ''));
+    // Prefer v2 fields (detected_class / class_confidence / bbox_score) and
+    // fall back to legacy names (correct_class / confidence / bbox_quality)
+    // so old DB rows keep rendering.
+    const detected = v.detected_class || v.correct_class || '?';
+    const classConf = (v.class_confidence != null ? v.class_confidence : v.confidence) || 0;
+    const bboxVal = (v.bbox_score != null ? v.bbox_score.toFixed(3) : (v.bbox_quality || '?'));
     return `<div class="detail-card ${cls}">
       <div class="field"><span class="label">id:</span> <span class="value">${escHTML(v.candidate_id)}</span></div>
-      <div class="field"><span class="label">Verdict:</span> <span class="value" style="color:${VERDICT_COLORS[b]||'#888'}">${b||'unknown'}</span> | <span class="label">Class:</span> <span class="value">${escHTML(v.correct_class||'?')}</span></div>
-      <div class="field"><span class="label">Confidence:</span> <span class="value">${(v.confidence||0).toFixed(3)}</span> | <span class="label">BBox:</span> <span class="value">${escHTML(v.bbox_quality||'?')}</span> | <span class="label">Complete:</span> <span class="value">${v.object_complete}</span></div>
+      <div class="field"><span class="label">Verdict:</span> <span class="value" style="color:${VERDICT_COLORS[b]||'#888'}">${b||'unknown'}</span> | <span class="label">Detected:</span> <span class="value">${escHTML(detected)}</span></div>
+      <div class="field"><span class="label">class_conf:</span> <span class="value">${classConf.toFixed(3)}</span> | <span class="label">bbox_score:</span> <span class="value">${bboxVal}</span> | <span class="label">complete:</span> <span class="value">${v.object_complete}</span></div>
       <div class="reasoning">${escHTML(v.reasoning||'(no reasoning)')}</div>
     </div>`;
   }).join('');
@@ -1009,7 +1178,7 @@ function renderStage() {
   let r = { svg: '', detail: '' };
   switch (S.currentStage) {
     case 'proposals': r = renderProposals(); break;
-    case 'detect':    r = renderDetect();    break;
+    case 'filter':    r = renderFilter();    break;
     case 'evaluate':  r = renderEvaluate();  break;
     case 'refine':    r = renderRefine();    break;
     case 'finalize':  r = renderFinalize();  break;

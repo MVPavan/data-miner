@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .enums import (
     BboxQuality,
@@ -207,16 +207,86 @@ class FilterResult(BaseModel):
 
 
 class VLMVerdict(BaseModel):
-    """Per-candidate verdict from the VLM classification and quality call."""
+    """Per-candidate verdict from the VLM classification and quality call.
 
-    model_config = ConfigDict(extra="forbid")
+    Two signals drive routing (class_match computed post-hoc from
+    ``detected_class`` vs the original candidate's class):
+
+      - ``class_confidence``: VLM's confidence in its ``detected_class``
+        call. Anchored in the prompt: 0.9+ = certain, 0.7-0.9 = likely,
+        0.5-0.7 = plausible, 0.3-0.5 = uncertain, <0.3 = wrong.
+      - ``bbox_score``: continuous 0-1 score of how well the red TARGET
+        bbox fits the object. 1.0 = perfect; 0.7 = loose/slightly tight;
+        0.4 = major issue; <0.4 = bbox unusable.
+
+    ``object_complete`` and ``bbox_quality`` (legacy) remain as telemetry
+    only — not consumed by current routing.
+
+    Backward compatibility: ``correct_class`` / ``confidence`` /
+    ``bbox_quality`` kept as optional fields so old checkpoint rows still
+    load. A pre-validator copies legacy field values into the v2 fields
+    when the v2 fields are missing — so an old DB row with only
+    ``correct_class`` / ``confidence`` becomes a valid v2 verdict on load.
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     candidate_id: str
-    correct_class: str
-    confidence: float = Field(ge=0.0, le=1.0)
-    bbox_quality: BboxQuality
-    object_complete: bool
-    reasoning: str
+    detected_class: str = ""
+    class_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    bbox_score: float = Field(default=1.0, ge=0.0, le=1.0)
+    object_complete: bool = True
+    reasoning: str = ""
+
+    # ---- Legacy aliases (kept for old DB rows and viewer compatibility) ----
+    correct_class: str = ""
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    bbox_quality: BboxQuality = BboxQuality.GOOD
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_fields(cls, data: Any) -> Any:
+        """Accept old-format payloads: if the v2 fields are missing but the
+        v1 fields are present, fill them in. Mirrors v2 fields back into
+        the legacy aliases too so both schema views stay consistent.
+        """
+        if not isinstance(data, dict):
+            return data
+        # Normalize v1 → v2 when v2 is absent
+        if data.get("detected_class") in (None, "") and data.get("correct_class"):
+            data["detected_class"] = data["correct_class"]
+        if data.get("class_confidence") is None and "confidence" in data:
+            data["class_confidence"] = data["confidence"]
+        # Mirror v2 → v1 so the viewer's legacy-field path keeps working
+        if data.get("correct_class") in (None, "") and data.get("detected_class"):
+            data["correct_class"] = data["detected_class"]
+        if data.get("confidence") in (None, 0.0) and data.get("class_confidence") is not None:
+            data["confidence"] = data["class_confidence"]
+        # Clamp out-of-range floats (some VLMs emit 1.01 etc.) and coerce
+        # None / malformed values to sensible defaults.
+        defaults = {"class_confidence": 0.0, "confidence": 0.0, "bbox_score": 1.0}
+        for k, default in defaults.items():
+            if k in data:
+                v = data[k]
+                if v is None:
+                    data[k] = default
+                    continue
+                try:
+                    data[k] = max(0.0, min(1.0, float(v)))
+                except (TypeError, ValueError):
+                    data[k] = default
+        return data
+
+    @classmethod
+    def from_vlm_payload(
+        cls, candidate_id: str, data: dict
+    ) -> "VLMVerdict":
+        """Build a VLMVerdict from parsed VLM JSON. The before-validator
+        handles v1/v2 field migration + clamping.
+        """
+        payload = dict(data)
+        payload["candidate_id"] = candidate_id
+        return cls.model_validate(payload)
 
 
 class RefinementInstruction(BaseModel):

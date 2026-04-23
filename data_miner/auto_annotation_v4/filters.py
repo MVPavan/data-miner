@@ -22,8 +22,10 @@ from typing import Any
 from .configs.contracts import Candidate, FilterDrop
 from .configs.enums import DropReason, FilterContext
 from .utils import (
+    apply_class_agnostic_nms,
     apply_cross_class_rules,
     cluster_and_collapse,
+    drop_head_without_person,
     filter_by_model_score,
     filter_by_source_model,
     geometric_filter,
@@ -37,14 +39,28 @@ __all__ = ["FilterPipeline"]
 # Ordered filter plan per context. Each step is a short string key resolved
 # inside FilterPipeline.run. ``source_model`` runs first in every plan so a
 # post-detect allowlist change only requires a filter-stage re-run.
+#
+# ``head_no_person`` runs after dedup so survivors already reflect cross-model
+# agreement. ``class_agnostic_nms`` runs last so it sees the same set the
+# router would consume, and can prune confusion-pair redundancy. Both steps
+# are no-ops when their config fields are left at defaults (off), so existing
+# jobs are unaffected until a job explicitly opts in via override YAML.
 _PLAN: dict[FilterContext, tuple[str, ...]] = {
+    # ``head_no_person`` runs BEFORE ``score_floor`` so that low-confidence
+    # persons (those that would later be dropped by the score floor) still
+    # shield heads. Only ``source_model`` (allowlist) and ``geometric``
+    # (degenerate bbox drop) precede it — the person "presence" we're
+    # checking is "did the detector fire a valid-geometry person here at
+    # all", not "did it fire one we trust for auto-accept".
     FilterContext.POST_DETECT: (
         "source_model",
         "geometric",
+        "head_no_person",
         "score_floor",
         "dedup",
         "per_class_cap",
         "cross_class",
+        "class_agnostic_nms",
     ),
     FilterContext.POST_REVIEW: (
         "source_model",
@@ -59,10 +75,12 @@ _PLAN: dict[FilterContext, tuple[str, ...]] = {
     FilterContext.PRE_FINALIZE: (
         "source_model",
         "geometric",
+        "head_no_person",
         "score_floor",
         "dedup",
         "per_class_cap",
         "cross_class",
+        "class_agnostic_nms",
     ),
 }
 
@@ -75,6 +93,8 @@ _REASON: dict[str, DropReason] = {
     "dedup": DropReason.DEDUP,
     "per_class_cap": DropReason.PER_CLASS_CAP,
     "cross_class": DropReason.CROSS_CLASS,
+    "head_no_person": DropReason.HEAD_WITHOUT_PERSON,
+    "class_agnostic_nms": DropReason.CLASS_AGNOSTIC_NMS,
 }
 
 
@@ -162,6 +182,35 @@ class FilterPipeline:
         kept = apply_cross_class_rules(cands, self.config)
         return kept, _diff_drops(cands, kept, DropReason.CROSS_CLASS, context)
 
+    def _step_head_no_person(
+        self, cands: list[Candidate], context: FilterContext
+    ) -> tuple[list[Candidate], list[FilterDrop]]:
+        # Skip when both toggles are off (cheap guard to keep this a no-op
+        # for jobs that don't opt in).
+        presence = getattr(
+            self.config.filtering, "reject_head_without_person", False
+        )
+        thr = getattr(
+            self.config.filtering, "head_person_containment_min", 0.0
+        ) or 0.0
+        if not presence and thr <= 0:
+            return cands, []
+        kept = drop_head_without_person(cands, self.config)
+        return kept, _diff_drops(
+            cands, kept, DropReason.HEAD_WITHOUT_PERSON, context
+        )
+
+    def _step_class_agnostic_nms(
+        self, cands: list[Candidate], context: FilterContext
+    ) -> tuple[list[Candidate], list[FilterDrop]]:
+        cfg = getattr(self.config.filtering, "class_agnostic_nms", None)
+        if cfg is None or not cfg.enabled:
+            return cands, []
+        kept = apply_class_agnostic_nms(cands, self.config)
+        return kept, _diff_drops(
+            cands, kept, DropReason.CLASS_AGNOSTIC_NMS, context
+        )
+
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
@@ -186,6 +235,8 @@ class FilterPipeline:
             "dedup": self._step_dedup,
             "per_class_cap": self._step_per_class_cap,
             "cross_class": self._step_cross_class,
+            "head_no_person": self._step_head_no_person,
+            "class_agnostic_nms": self._step_class_agnostic_nms,
         }
 
         kept: list[Candidate] = list(candidates)

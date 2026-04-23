@@ -280,6 +280,12 @@ class EvaluateWorker(StageWorker):
         crop when the candidate's evaluation group has ``requires_crops: true``.
         Picks the matching prompt template (`classify_one` vs
         `classify_one_with_crop`).
+
+        v2 prompt design: the candidate's **proposed class is hidden** from
+        the VLM — we want an independent classification, not a confirmation.
+        ``class_match`` is computed in code (see ``_resolve_verdicts``) by
+        comparing the VLM's ``detected_class`` against the candidate's
+        original class.
         """
         group_name = class_to_group.get(cand.class_name, "default")
         group_cfg = self.config.active_evaluation_groups.get(group_name)
@@ -291,13 +297,14 @@ class EvaluateWorker(StageWorker):
 
         # Per-group class context substituted into the shared template.
         class_list = ", ".join(group_cfg.classes) if group_cfg else cand.class_name
-        # v4: EvaluationGroupConfig uses .disambiguation instead of .description
         class_descriptions = (group_cfg.disambiguation or "") if group_cfg else ""
+        per_class_details = self._format_per_class_details(group_cfg)
         annotation_rules = self._format_rules(group_cfg) if group_cfg else ""
 
         rendered, prompt_hash = template.render_and_hash(
             class_list=class_list,
             class_descriptions=class_descriptions,
+            per_class_details=per_class_details,
             annotation_rules=annotation_rules,
         )
 
@@ -313,9 +320,13 @@ class EvaluateWorker(StageWorker):
                 "type": "image_url",
                 "image_url": {"url": pil_to_data_url(crop)},
             })
+        # NOTE: proposed class intentionally NOT revealed — classification
+        # must be independent of the detector's call to avoid confirmation
+        # bias, especially for confusion-pair disambiguation (the whole
+        # reason the VLM is in the loop for industrial workloads).
         content.append({
             "type": "text",
-            "text": f"Classify the TARGET (proposed class: {cand.class_name}).",
+            "text": "Classify the object inside the red TARGET box.",
         })
 
         messages = [
@@ -328,8 +339,11 @@ class EvaluateWorker(StageWorker):
             "model": vlm_cfg.model,
             "messages": messages,
             "temperature": template.model_params.get("temperature", vlm_cfg.temperature),
-            "max_tokens": template.model_params.get("max_tokens", 384),
+            "max_tokens": template.model_params.get("max_tokens", 512),
         }
+        presence_penalty = template.model_params.get("presence_penalty")
+        if presence_penalty is not None:
+            payload["presence_penalty"] = presence_penalty
         vlm_url = f"{vlm_cfg.url}/chat/completions"
 
         vlm_timeout = aiohttp.ClientTimeout(total=120)
@@ -361,14 +375,7 @@ class EvaluateWorker(StageWorker):
             data = parse_vlm_json(vlm_response["choices"][0]["message"]["content"])
             if isinstance(data, list):
                 data = data[0] if data else {}
-            verdict = VLMVerdict(
-                candidate_id=cand.candidate_id,
-                correct_class=str(data.get("correct_class", cand.class_name)),
-                confidence=float(data.get("confidence", 0.0)),
-                bbox_quality=BboxQuality(data.get("bbox_quality", BboxQuality.GOOD)),
-                object_complete=bool(data.get("object_complete", True)),
-                reasoning=str(data.get("reasoning", "")),
-            )
+            verdict = VLMVerdict.from_vlm_payload(cand.candidate_id, data)
         except Exception as exc:
             self.logger.warning(
                 "Malformed verdict for %s: %s", cand.candidate_id, exc,
@@ -393,15 +400,34 @@ class EvaluateWorker(StageWorker):
         verdicts: list[VLMVerdict],
         candidates: list[Candidate],
     ) -> tuple[list[str], list[str], list[str], dict[str, str]]:
-        """Partition verdict IDs into accept / review / reject buckets.
+        """Partition verdict IDs into accept / review / reject buckets using
+        the v2 two-signal schema: ``class_confidence`` + ``bbox_score``.
 
-        Pure confidence-driven three-way (section 10.2). ``bbox_quality`` and
-        ``object_complete`` remain on the verdict for telemetry but no longer
-        drive routing -- spatial decisions belong to the refine stage.
+        class_match is computed in code (VLM didn't see the proposed class —
+        it classified independently). The routing matrix separates class
+        issues from bbox issues so class-correct-but-bbox-bad cases don't
+        slip through as accepted.
 
-        Returns
-        -------
-        accepted, review, rejected, relabels
+        Thresholds:
+          - ``evaluate.reject_below``  (default 0.3): class_confidence below
+            this → reject
+          - ``evaluate.accept_above``  (default 0.5): class_confidence at or
+            above this → class call is trusted
+          - bbox-specific thresholds are derived from the same two knobs so
+            tuning stays centralised.
+
+        Routing matrix:
+          class_match  class_conf   bbox_score   →
+          true         ≥ accept     ≥ accept     accepted
+          true         ≥ accept     [reject,acc) review           (bbox needs work)
+          true         ≥ accept     < reject     rejected         (bbox unusable)
+          false        ≥ accept     ≥ accept     accepted+relabel
+          false        ≥ accept     [reject,acc) review+relabel
+          false        ≥ accept     < reject     rejected         (bad class + bad bbox)
+          any          < reject     any          rejected         (low confidence)
+          any          [reject,acc) any          review
+          detected_class ∈ {other,unknown,none} → rejected
+          detected_class unresolvable via alias_map → rejected
         """
         accepted: list[str] = []
         review: list[str] = []
@@ -412,27 +438,58 @@ class EvaluateWorker(StageWorker):
             c.candidate_id: c for c in candidates
         }
         eval_cfg = self.config.evaluate
+        accept_thr = eval_cfg.accept_above   # 0.5 default
+        reject_thr = eval_cfg.reject_below   # 0.3 default
+        # bbox thresholds mirror the class thresholds so one knob tunes both.
+        bbox_accept = accept_thr
+        bbox_reject = reject_thr
 
         for v in verdicts:
             cand = cand_by_id.get(v.candidate_id)
-
-            # ---- Relabeling / rejection by class ----
             original_class = cand.class_name if cand else ""
-            if v.correct_class and v.correct_class != original_class:
-                if v.correct_class.lower() in ("other", "unknown", "none"):
-                    rejected.append(v.candidate_id)
-                    continue
-                canonical = resolve_canonical_class(v.correct_class, self.alias_map)
-                if canonical is not None and canonical != original_class:
-                    relabels[v.candidate_id] = canonical
-                # Unresolvable -> fall through to confidence routing.
+            detected = (v.detected_class or "").strip()
+            class_conf = float(v.class_confidence or 0.0)
+            bbox_score = float(v.bbox_score if v.bbox_score is not None else 1.0)
 
-            # ---- Confidence-driven three-way routing ----
-            if v.confidence < eval_cfg.reject_below:
+            # ---- 1. Hard class-level rejections ----
+            if not detected or detected.lower() in ("other", "unknown", "none"):
                 rejected.append(v.candidate_id)
-            elif v.confidence >= eval_cfg.accept_above:
+                continue
+            canonical = resolve_canonical_class(detected, self.alias_map)
+            if canonical is None:
+                # VLM named something we can't map to a configured class →
+                # treat as unrecognised.
+                rejected.append(v.candidate_id)
+                continue
+
+            class_match = (canonical == original_class)
+
+            # ---- 2. Low class-confidence overrides everything else ----
+            if class_conf < reject_thr:
+                rejected.append(v.candidate_id)
+                continue
+
+            # ---- 3. Medium class-confidence → review (with relabel hint) ----
+            if class_conf < accept_thr:
+                if not class_match:
+                    relabels[v.candidate_id] = canonical
+                review.append(v.candidate_id)
+                continue
+
+            # ---- 4. High class-confidence: now gate on bbox quality ----
+            if bbox_score < bbox_reject:
+                # Class call trusted but bbox is unusable → reject.
+                rejected.append(v.candidate_id)
+                continue
+
+            if not class_match:
+                relabels[v.candidate_id] = canonical
+
+            if bbox_score >= bbox_accept:
                 accepted.append(v.candidate_id)
             else:
+                # Good class call, loose/tight bbox → human review (or the
+                # refine stage picks it up for refine-eligible classes).
                 review.append(v.candidate_id)
 
         return accepted, review, rejected, relabels
@@ -449,6 +506,28 @@ class EvaluateWorker(StageWorker):
             f"- {cls_name.upper()}: {rule}"
             for cls_name, rule in group_cfg.annotation_rules.items()
         )
+
+    def _format_per_class_details(self, group_cfg: Any) -> str:
+        """Build the PER-CLASS DETAILS block from class_registry.description.
+
+        For each class in ``group_cfg.classes``, look up its description in
+        ``config.class_registry`` and emit a bullet. Classes without a
+        description are omitted (common objects like ``car`` / ``bicycle``
+        the VLM already knows don't need extra cues).
+
+        Returns an empty string if the group or registry is missing, or no
+        class in the group has a description.
+        """
+        if not group_cfg:
+            return ""
+        registry = getattr(self.config, "class_registry", None) or {}
+        lines: list[str] = []
+        for cls_name in group_cfg.classes:
+            cls_cfg = registry.get(cls_name)
+            desc = (getattr(cls_cfg, "description", "") or "").strip()
+            if desc:
+                lines.append(f"- {cls_name}: {desc}")
+        return "\n".join(lines)
 
     def _write_final_output(
         self, image_id: str, detect: DetectResult, evaluate: EvaluateResult

@@ -204,6 +204,8 @@ class DropReason(StrEnum):
     CROSS_CLASS = "cross_class"
     PER_CLASS_CAP = "per_class_cap"
     REJECTED_UPSTREAM = "rejected_upstream"
+    HEAD_WITHOUT_PERSON = "head_without_person"
+    CLASS_AGNOSTIC_NMS = "class_agnostic_nms"
 
 
 # ---------------------------------------------------------------------------

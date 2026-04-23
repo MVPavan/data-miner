@@ -144,21 +144,25 @@ def geometric_filter(candidates: list, config: Any) -> list:
 
     config is expected to have a .filtering attribute with min_area, max_area,
     min_aspect_ratio, max_aspect_ratio, and min_edge_distance fields
-    (matches AutoAnnotationV4Config.filtering / FilterConfig).
+    (matches AutoAnnotationV4Config.filtering / FilterConfig). An optional
+    ``per_class_min_area`` dict overrides ``min_area`` for listed classes;
+    max_area and aspect ratio stay uniform.
 
     Returns the list of candidates that pass all filters.
     """
     logger = get_logger("utils.geometric_filter")
     cfg = config.filtering
+    per_class_min = getattr(cfg, "per_class_min_area", {}) or {}
     passed = []
     for cand in candidates:
         bbox = cand.bbox
-        if not passes_area_filter(bbox, cfg.min_area, cfg.max_area):
+        min_area = per_class_min.get(cand.class_name, cfg.min_area)
+        if not passes_area_filter(bbox, min_area, cfg.max_area):
             logger.debug(
                 "Filtered %s: area=%.6f not in [%.6f, %.6f]",
                 cand.candidate_id,
                 bbox_area(bbox),
-                cfg.min_area,
+                min_area,
                 cfg.max_area,
             )
             continue
@@ -473,6 +477,24 @@ def route_candidates(candidates: list, config: Any) -> dict:
     }
     _, confusion_pairs = _resolve_co_existence(config)
 
+    # Head+person co-existence shortcut: if a head is contained in a person
+    # bbox above filtering.head_person_containment_min AND auto_accept
+    # has opted in, both candidates auto-accept regardless of individual
+    # score. The head detection + person detection reinforcing each other
+    # at the same spatial location is a strong enough signal that VLM
+    # disambiguation rarely changes the verdict.
+    coexist_auto_ids: set[str] = set()
+    coexist_enabled = getattr(
+        aa_cfg, "head_person_coexistence", False
+    ) and getattr(
+        config.filtering, "head_person_containment_min", 0.0
+    ) > 0
+    if coexist_enabled:
+        thr = config.filtering.head_person_containment_min
+        for hid, pid in head_person_coexist_pairs(candidates, thr):
+            coexist_auto_ids.add(hid)
+            coexist_auto_ids.add(pid)
+
     auto_accepted: list[str] = []
     needs_evaluation: list[str] = []
 
@@ -484,6 +506,9 @@ def route_candidates(candidates: list, config: Any) -> dict:
     hi_conf_scores = getattr(aa_cfg, "high_confidence_scores", {}) or {}
 
     for cand in candidates:
+        if cand.candidate_id in coexist_auto_ids:
+            auto_accepted.append(cand.candidate_id)
+            continue
         is_eligible = cand.class_name in eligible_names
         score_floor = per_model_score.get(cand.source_model, fallback_score)
         hi_conf_floor = hi_conf_scores.get(cand.source_model)
@@ -617,6 +642,167 @@ def apply_cross_class_rules(candidates: list, config: Any) -> list:
     return [c for c in candidates if c.candidate_id not in suppressed]
 
 
+def _containment_in(small_bbox, big_bbox) -> float:
+    """Fraction of ``small_bbox`` area that falls inside ``big_bbox``.
+
+    Intersection / area(small). 0.0 means no overlap; 1.0 means fully
+    contained. More surgical than IoU when ``small`` is much smaller than
+    ``big`` (e.g. a head vs a full-body person bbox).
+    """
+    x1 = max(_x1(small_bbox), _x1(big_bbox))
+    y1 = max(_y1(small_bbox), _y1(big_bbox))
+    x2 = min(_x2(small_bbox), _x2(big_bbox))
+    y2 = min(_y2(small_bbox), _y2(big_bbox))
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    a = bbox_area(small_bbox)
+    return inter / a if a > 0 else 0.0
+
+
+def head_person_coexist_pairs(
+    candidates: list, containment_min: float
+) -> set[tuple[str, str]]:
+    """Return (head_id, person_id) pairs whose head is contained in person
+    above ``containment_min``. A head may appear in multiple pairs if it
+    overlaps several persons.
+    """
+    if containment_min <= 0:
+        return set()
+    heads = [c for c in candidates if c.class_name == "head"]
+    persons = [c for c in candidates if c.class_name == "person"]
+    pairs: set[tuple[str, str]] = set()
+    for h in heads:
+        for p in persons:
+            if _containment_in(h.bbox, p.bbox) >= containment_min:
+                pairs.add((h.candidate_id, p.candidate_id))
+    return pairs
+
+
+def drop_head_without_person(candidates: list, config: Any = None) -> list:
+    """Drop stray ``head`` candidates that are not part of a detected person.
+
+    Two modes, chosen by config:
+
+    - **Per-head containment** (when
+      ``config.filtering.head_person_containment_min > 0``): each head is
+      kept only if its maximum containment-in-person across all persons in
+      the image is >= threshold. Heads in images with no persons, and heads
+      floating away from any person, are dropped. More surgical.
+
+    - **Image-level presence** (when
+      ``config.filtering.reject_head_without_person = True`` and containment
+      threshold is 0): legacy coarse check — drop all heads if the image has
+      no person candidates.
+
+    If ``config`` is None, falls back to the legacy image-level check
+    (previously the only behavior).
+    """
+    thr = 0.0
+    legacy_presence = False
+    if config is not None:
+        thr = getattr(config.filtering, "head_person_containment_min", 0.0) or 0.0
+        legacy_presence = getattr(
+            config.filtering, "reject_head_without_person", False
+        )
+
+    heads = [c for c in candidates if c.class_name == "head"]
+    if not heads:
+        return list(candidates)
+
+    logger = get_logger("utils.drop_head_without_person")
+
+    if thr > 0:
+        persons = [c for c in candidates if c.class_name == "person"]
+        keep_head_ids: set[str] = set()
+        if persons:
+            for h in heads:
+                for p in persons:
+                    if _containment_in(h.bbox, p.bbox) >= thr:
+                        keep_head_ids.add(h.candidate_id)
+                        break
+        kept = [c for c in candidates
+                if c.class_name != "head" or c.candidate_id in keep_head_ids]
+        dropped = len(candidates) - len(kept)
+        if dropped:
+            logger.info(
+                "head_person_containment (thr=%.2f): %d head(s) lacked "
+                "containment, dropped",
+                thr, dropped,
+            )
+        return kept
+
+    if legacy_presence:
+        if any(c.class_name == "person" for c in candidates):
+            return list(candidates)
+        kept = [c for c in candidates if c.class_name != "head"]
+        dropped = len(candidates) - len(kept)
+        if dropped:
+            logger.info(
+                "reject_head_without_person (presence): no person, "
+                "dropped %d head(s)", dropped,
+            )
+        return kept
+
+    return list(candidates)
+
+
+def apply_class_agnostic_nms(candidates: list, config: Any) -> list:
+    """Class-agnostic IoU NMS across all surviving candidates.
+
+    Runs AFTER within-class dedup (cluster_and_collapse) and the legacy
+    cross_class step. Uses ``config.filtering.class_agnostic_nms`` for
+    configuration:
+      - ``enabled``: if False, returns candidates unchanged.
+      - ``threshold``: IoU threshold for suppression.
+      - ``respect_overlap_exempt``: if True, any pair where either side has
+        an ``overlap_exempt`` tag is skipped (preserves head-inside-person,
+        bag-on-person).
+      - ``suppress_confusion_pairs``: if False, pairs belonging to the same
+        confusion tag are left intact (kept for VLM disambiguation).
+
+    Tiebreak cascade matches cluster_and_collapse: agreement → model_priority
+    → score.
+    """
+    cfg = getattr(config.filtering, "class_agnostic_nms", None)
+    if cfg is None or not cfg.enabled:
+        return list(candidates)
+
+    iou_dedup_cfg = config.filtering.iou_dedup
+    threshold = cfg.threshold
+    exempt, confusion_pairs = _resolve_co_existence(config)
+    logger = get_logger("utils.apply_class_agnostic_nms")
+
+    suppressed: set[str] = set()
+    for i, a in enumerate(candidates):
+        if a.candidate_id in suppressed:
+            continue
+        for j in range(i + 1, len(candidates)):
+            b = candidates[j]
+            if b.candidate_id in suppressed:
+                continue
+            # Same-class already deduped by cluster_and_collapse.
+            if a.class_name == b.class_name:
+                continue
+            if cfg.respect_overlap_exempt and (
+                a.class_name in exempt or b.class_name in exempt
+            ):
+                continue
+            if not cfg.suppress_confusion_pairs:
+                class_pair = frozenset((a.class_name, b.class_name))
+                if class_pair in confusion_pairs:
+                    continue
+            if bbox_iou(a.bbox, b.bbox) >= threshold:
+                loser = _cross_class_winner(a, b, iou_dedup_cfg)
+                suppressed.add(loser.candidate_id)
+
+    kept = [c for c in candidates if c.candidate_id not in suppressed]
+    if suppressed:
+        logger.info(
+            "class_agnostic_nms @ IoU≥%.2f: %d → %d (%d suppressed)",
+            threshold, len(candidates), len(kept), len(suppressed),
+        )
+    return kept
+
+
 # ---------------------------------------------------------------------------
 # Image utilities
 # ---------------------------------------------------------------------------
@@ -652,6 +838,16 @@ def draw_focus_on_image(
     """Draw ONLY this candidate's bbox on a copy of *image* — for per-candidate
     VLM overview input. Keeps the rest of the scene visible (spatial context)
     without any other bboxes that could confuse which one is being asked about.
+
+    Border is drawn OUTWARD from the bbox (offset outward by the stroke
+    width) so the object pixels inside the bbox are never obscured. This
+    matters for small objects: PIL's default ``rectangle(outline=, width=N)``
+    grows the stroke INWARD, so on a 15×15 head bbox a width-4 stroke
+    obscures ~78% of the content pixels. Drawing outward keeps the
+    object pristine.
+
+    Border width also scales with bbox size so tiny objects still get a
+    visible outline without a chunky overlay.
     """
     rendered = image.copy().convert("RGB")
     draw = ImageDraw.Draw(rendered)
@@ -664,12 +860,25 @@ def draw_focus_on_image(
     except (OSError, IOError):
         font = ImageFont.load_default()
 
-    px = bbox_to_pixels(candidate.bbox, w, h)
-    draw.rectangle(px, outline=color, width=4)
-    draw.text(
-        (px[0], max(0, px[1] - 20)),
-        label, fill=color, font=font,
-    )
+    x1, y1, x2, y2 = bbox_to_pixels(candidate.bbox, w, h)
+    side_px = max(1, min(x2 - x1, y2 - y1))
+    # Width: 1-2 px for tiny boxes, up to 4 px for large — keeps the
+    # outline visible in the VLM's thumbnail rendering without dominating
+    # small objects.
+    stroke = max(1, min(4, side_px // 15))
+
+    # Offset outward by the stroke width so the border lives OUTSIDE the
+    # bbox. Clamp to image bounds.
+    ox1 = max(0, x1 - stroke)
+    oy1 = max(0, y1 - stroke)
+    ox2 = min(w - 1, x2 + stroke)
+    oy2 = min(h - 1, y2 + stroke)
+    draw.rectangle((ox1, oy1, ox2, oy2), outline=color, width=stroke)
+
+    # Place label ABOVE the outward border; if cropped at image top,
+    # put it just inside the top-left of the original bbox.
+    label_y = oy1 - 22 if oy1 >= 22 else y1 + 2
+    draw.text((ox1, max(0, label_y)), label, fill=color, font=font)
     return rendered
 
 

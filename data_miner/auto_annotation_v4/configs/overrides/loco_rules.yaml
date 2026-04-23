@@ -1,0 +1,64 @@
+# LOCO-specific filter overrides.
+#
+# Applied on top of the base config when running the
+# loco_unannotated_full_sam_filtered_detect job:
+#
+#   python -u -m data_miner.auto_annotation_v4 \
+#       --config data_miner/auto_annotation_v4/configs/overrides/loco_rules.yaml \
+#       runtime.image_dir=/media/data_2/datasets/datasets_pavan/loco_unannotated_full_sam_filtered \
+#       runtime.job_id=loco_unannotated_full_sam_filtered_detect \
+#       'runtime.stages=[filter,evaluate,finalize]' \
+#       'runtime.force_stages=[filter]' ...
+#
+# These flags are off by default on default.yaml so other jobs (fl_pj, LAION)
+# are unaffected.
+
+auto_accept:
+  # Head+person co-existence shortcut: if a head is contained in a person
+  # bbox above filtering.head_person_containment_min (below), both candidates
+  # auto-accept regardless of score. A head+person pair landing on the same
+  # body reinforces both detections so VLM review is usually redundant.
+  # Reduces VLM load dramatically for crowd/person-heavy images.
+  head_person_coexistence: true
+
+filtering:
+  # Single-detector run: only sam3_dart proposals are considered. grounding_dino
+  # ran during detect but its candidates are dropped at the source_model step
+  # (matches the previous LOCO config.yaml).
+  allowed_source_models:
+    - sam3_dart
+
+  # Per-head containment check. For each class_name=head candidate, compute
+  # containment = intersection(head, person) / area(head) across all persons
+  # in the image; drop the head if its max containment is below this threshold.
+  # Analysis on LOCO showed a bimodal split: 92% of heads have containment
+  # >= 0.9 (legitimately inside a person), 6% have < 0.1 (orphans), only ~2%
+  # in the middle. Threshold 0.3 is safely in the gap — catches all clear
+  # orphans without risking legitimate heads.
+  # Supersedes the coarser `reject_head_without_person` presence check.
+  head_person_containment_min: 0.3
+
+  # Strict class-agnostic NMS after dedup + cross_class. Respects the four
+  # overlap_exempt classes (person, head, backpack, handbag) so small-inside-
+  # big co-occurrences stay intact. Confusion pairs
+  # (forklift<->palletjack<->shopping cart<->truck, luggage, electronics,
+  # road_vehicle) are NMS'd instead of flagged, so VLM sees one survivor per
+  # spatial region rather than both.
+  class_agnostic_nms:
+    enabled: true
+    threshold: 0.7
+    respect_overlap_exempt: true
+    suppress_confusion_pairs: true
+
+  # Per-class min_area overrides. The global 0.0005 (≈32x32 px on 1920x1080)
+  # culls 27% of heads, 11% of cellphones, 8% of handbags in LOCO pre-filter.
+  # Lower the floor for naturally-small classes; everything else keeps the
+  # global 0.0005.
+  per_class_min_area:
+    head:      0 #0.0001    # ≈14x14 px
+    cellphone: 0.00005   # ≈10x10 px
+    wallet:    0.00005
+    bird:      0.0001
+    cat:       0.0001
+    dog:       0.0001
+    handbag:   0.0002    # ≈20x20 px

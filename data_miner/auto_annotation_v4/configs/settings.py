@@ -152,6 +152,13 @@ class AutoAcceptConfig(BaseModel):
     agreement is below ``min_model_agreement``. Primary use: single-detector
     runs (e.g. sam3_dart-only) where agreement can never reach 2.
     """
+    head_person_coexistence: bool = False
+    """If True, any ``head`` whose containment-in-person meets
+    ``filtering.head_person_containment_min`` is auto-accepted regardless of
+    score, and the containing ``person`` is also auto-accepted. A co-existing
+    head+person pair is a very strong signal in warehouse data — having both
+    labels fire on the same body rarely needs VLM disambiguation.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +314,31 @@ class IouDedupConfig(BaseModel):
     """Model order from most-trusted (lowest index) to least."""
 
 
+class ClassAgnosticNmsConfig(BaseModel):
+    """Post-dedup NMS across *all* classes at a configurable IoU threshold.
+
+    Within-class dedup (``cluster_and_collapse``) already merges same-class
+    overlaps. The older ``apply_cross_class_rules`` handles cross-class
+    overlaps at IoU > 0.5 but exempts ``overlap_exempt`` classes and only
+    flags confusion pairs without suppressing them.
+
+    This stricter pass runs AFTER both, optionally suppressing confusion
+    pairs too, using the same tiebreak cascade as cluster_and_collapse.
+    Off by default so existing jobs are unaffected.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    threshold: float = 0.7
+    respect_overlap_exempt: bool = True
+    """If True, any pair involving an ``overlap_exempt`` class is skipped."""
+    suppress_confusion_pairs: bool = True
+    """If True, confusion-tag pairs are NMS'd alongside non-confusion pairs.
+    If False, confusion-pair overlaps are left intact (kept for VLM review).
+    """
+
+
 class FilterConfig(BaseModel):
     """Programmatic bounding-box filtering thresholds."""
 
@@ -329,6 +361,30 @@ class FilterConfig(BaseModel):
     is dropped at the merge boundary and again at the start of every
     ``FilterPipeline`` run — so flipping this post-detect only requires a
     filter-stage re-run (not a full detect re-run) to take effect.
+    """
+    reject_head_without_person: bool = False
+    """If True (and ``head_person_containment_min`` is 0), drop all
+    class_name='head' candidates from an image whose surviving candidates
+    contain no class_name='person'. Coarse image-level presence check; superseded
+    by ``head_person_containment_min`` when that threshold is > 0.
+    """
+    head_person_containment_min: float = 0.0
+    """Per-head containment threshold. If > 0, drop any head whose maximum
+    containment-in-person across all persons in the image is below this value.
+    Containment is ``intersection(head, person) / area(head)`` — so 1.0 means
+    head fully inside a person bbox. A containment-based check is more surgical
+    than IoU (head-vs-person IoU is typically < 0.2 even when the head is fully
+    inside the person). Set to 0.0 to disable (default).
+    """
+    class_agnostic_nms: ClassAgnosticNmsConfig = Field(
+        default_factory=ClassAgnosticNmsConfig
+    )
+    """Optional stricter post-dedup NMS across classes. See ClassAgnosticNmsConfig."""
+    per_class_min_area: dict[str, float] = Field(default_factory=dict)
+    """Per-class ``min_area`` overrides. Classes in this dict use the listed
+    floor instead of the global ``min_area``; classes absent fall back to it.
+    Only affects min_area — ``max_area`` and aspect ratio stay uniform.
+    Example: ``{head: 0.0001, cellphone: 0.00005}``.
     """
 
 
