@@ -240,15 +240,23 @@ class EvaluateWorker(StageWorker):
 
     def _resolve_next_stage(self, result: BaseModel) -> Stage:
         """Forward to refine if any non-rejected survivor's class (post-relabel)
-        is in refine_rules; otherwise forward to finalize.
+        is in refine_rules AND refine is enabled in runtime.stages; otherwise
+        forward to finalize.
 
         Uses ``self._last_candidates`` (stashed during :meth:`process`) to
-        resolve original class names for non-relabeled candidates — mirrors v3
-        ``_route_after_evaluate`` exactly.
+        resolve original class names for non-relabeled candidates.
+
+        The ``Stage.REFINE in runtime.stages`` guard prevents a deadlock:
+        if the operator runs ``runtime.stages=[evaluate,finalize]`` (no
+        refine worker spawned) but ``refine_rules.classes`` is non-empty,
+        we'd enqueue work that nothing will ever claim. Honouring the
+        active-stages list avoids that orphan queue growth.
         """
         eval_result: EvaluateResult = result  # type: ignore[assignment]
         refine_classes = set(self.config.refine_rules.classes.keys())
         if not refine_classes:
+            return Stage.FINALIZE
+        if Stage.REFINE not in self.config.runtime.stages:
             return Stage.FINALIZE
 
         candidates: list[Candidate] | None = getattr(self, "_last_candidates", None)

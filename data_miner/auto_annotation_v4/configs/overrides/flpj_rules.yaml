@@ -62,3 +62,10 @@ evaluate:
     format: JPEG
     max_size: 1280
     quality: 90
+
+# Refine stage is intentionally not run in this job. Empty classes dict
+# makes evaluate's _resolve_next_stage route directly to finalize instead
+# of forwarding to refine — which would enqueue work no worker is running
+# to claim, deadlocking the pipeline (same fix as loco_rules.yaml).
+refine_rules:
+  classes: {}
