@@ -13,9 +13,9 @@ from pydantic import BaseModel
 
 from ..configs import (
     AutoAnnotationV4Config,
-    BboxQuality,
     Candidate,
     DetectResult,
+    DropReason,
     EvaluateResult,
     FilterContext,
     FilterDrop,
@@ -136,6 +136,7 @@ class EvaluateWorker(StageWorker):
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         seen_prompts: set[tuple[str, str]] = set()
+        malformed_drops: list[FilterDrop] = []
         for cand, result in zip(to_eval, results):
             if isinstance(result, Exception):
                 self.logger.warning(
@@ -144,6 +145,21 @@ class EvaluateWorker(StageWorker):
                 )
                 continue
             if result is None:
+                # HTTP failure / timeout. Logged upstream; no candidate drop
+                # so a later rerun can retry. (Ghost candidates in the
+                # routing summary are surfaced by the viewer's "unbucketed"
+                # warning.)
+                continue
+            if result.get("malformed"):
+                # Call succeeded but JSON didn't parse → typed drop.
+                vlm_total_tokens += result.get("tokens", 0)
+                vlm_calls += 1
+                malformed_drops.append(FilterDrop(
+                    candidate_id=result["candidate_id"],
+                    reason=DropReason.VLM_MALFORMED,
+                    context=FilterContext.POST_REVIEW,
+                    detail="VLMVerdict parse failed",
+                ))
                 continue
             vlm_calls += 1
             vlm_total_tokens += result["tokens"]
@@ -159,9 +175,13 @@ class EvaluateWorker(StageWorker):
             all_verdicts.append(result["verdict"])
 
         # ---- Resolve verdicts to three-way routing (accept / review / reject) ----
-        accepted, review, rejected, relabels = self._resolve_verdicts(
+        accepted, review, rejected, relabels, verdict_drops = self._resolve_verdicts(
             all_verdicts, candidates_in
         )
+        # Malformed parses also count as rejected so downstream stages
+        # don't treat them as survivors.
+        for d in malformed_drops:
+            rejected.append(d.candidate_id)
 
         # Merge auto-accepted candidates from filter with VLM-accepted ones.
         all_accepted = list(routing.auto_accepted) + accepted
@@ -191,6 +211,11 @@ class EvaluateWorker(StageWorker):
         all_accepted = [cid for cid in all_accepted if cid not in dropped_ids]
         review = [cid for cid in review if cid not in dropped_ids]
 
+        # Merge verdict-driven rejects (VLM_LOW_CONFIDENCE etc.) and
+        # malformed-parse drops into the post-filter drops so the audit
+        # trail carries every reason a candidate vanished from survivors.
+        drops = list(drops) + verdict_drops + malformed_drops
+
         elapsed_ms = (time.monotonic() - t0) * 1000
         eval_result = EvaluateResult(
             image_id=msg.image_id,
@@ -215,15 +240,23 @@ class EvaluateWorker(StageWorker):
 
     def _resolve_next_stage(self, result: BaseModel) -> Stage:
         """Forward to refine if any non-rejected survivor's class (post-relabel)
-        is in refine_rules; otherwise forward to finalize.
+        is in refine_rules AND refine is enabled in runtime.stages; otherwise
+        forward to finalize.
 
         Uses ``self._last_candidates`` (stashed during :meth:`process`) to
-        resolve original class names for non-relabeled candidates — mirrors v3
-        ``_route_after_evaluate`` exactly.
+        resolve original class names for non-relabeled candidates.
+
+        The ``Stage.REFINE in runtime.stages`` guard prevents a deadlock:
+        if the operator runs ``runtime.stages=[evaluate,finalize]`` (no
+        refine worker spawned) but ``refine_rules.classes`` is non-empty,
+        we'd enqueue work that nothing will ever claim. Honouring the
+        active-stages list avoids that orphan queue growth.
         """
         eval_result: EvaluateResult = result  # type: ignore[assignment]
         refine_classes = set(self.config.refine_rules.classes.keys())
         if not refine_classes:
+            return Stage.FINALIZE
+        if Stage.REFINE not in self.config.runtime.stages:
             return Stage.FINALIZE
 
         candidates: list[Candidate] | None = getattr(self, "_last_candidates", None)
@@ -280,6 +313,12 @@ class EvaluateWorker(StageWorker):
         crop when the candidate's evaluation group has ``requires_crops: true``.
         Picks the matching prompt template (`classify_one` vs
         `classify_one_with_crop`).
+
+        v2 prompt design: the candidate's **proposed class is hidden** from
+        the VLM — we want an independent classification, not a confirmation.
+        ``class_match`` is computed in code (see ``_resolve_verdicts``) by
+        comparing the VLM's ``detected_class`` against the candidate's
+        original class.
         """
         group_name = class_to_group.get(cand.class_name, "default")
         group_cfg = self.config.active_evaluation_groups.get(group_name)
@@ -291,31 +330,45 @@ class EvaluateWorker(StageWorker):
 
         # Per-group class context substituted into the shared template.
         class_list = ", ".join(group_cfg.classes) if group_cfg else cand.class_name
-        # v4: EvaluationGroupConfig uses .disambiguation instead of .description
         class_descriptions = (group_cfg.disambiguation or "") if group_cfg else ""
+        per_class_details = self._format_per_class_details(group_cfg)
         annotation_rules = self._format_rules(group_cfg) if group_cfg else ""
 
         rendered, prompt_hash = template.render_and_hash(
             class_list=class_list,
             class_descriptions=class_descriptions,
+            per_class_details=per_class_details,
             annotation_rules=annotation_rules,
         )
+
+        # Image-encoding knobs (JPEG q=90 @ 1280 px by default) from the
+        # evaluate config — allows per-job tuning without code edits.
+        img_cfg = self.config.evaluate.vlm_image
+        img_kw = {
+            "max_size": img_cfg.max_size,
+            "fmt": img_cfg.format,
+            "quality": img_cfg.quality,
+        }
 
         # Overview: full image with ONLY this candidate's bbox highlighted.
         overview = draw_focus_on_image(image, cand)
         content = [
             {"type": "image_url",
-             "image_url": {"url": pil_to_data_url(overview)}},
+             "image_url": {"url": pil_to_data_url(overview, **img_kw)}},
         ]
         if with_crop:
             crop = crop_candidate(image, cand.bbox)
             content.append({
                 "type": "image_url",
-                "image_url": {"url": pil_to_data_url(crop)},
+                "image_url": {"url": pil_to_data_url(crop, **img_kw)},
             })
+        # NOTE: proposed class intentionally NOT revealed — classification
+        # must be independent of the detector's call to avoid confirmation
+        # bias, especially for confusion-pair disambiguation (the whole
+        # reason the VLM is in the loop for industrial workloads).
         content.append({
             "type": "text",
-            "text": f"Classify the TARGET (proposed class: {cand.class_name}).",
+            "text": "Classify the object inside the red TARGET box.",
         })
 
         messages = [
@@ -328,8 +381,16 @@ class EvaluateWorker(StageWorker):
             "model": vlm_cfg.model,
             "messages": messages,
             "temperature": template.model_params.get("temperature", vlm_cfg.temperature),
-            "max_tokens": template.model_params.get("max_tokens", 384),
+            "max_tokens": template.model_params.get("max_tokens", 512),
+            # vLLM-compatible structured-output hint. The prompt already
+            # asks for a single JSON object; this is the defensive belt
+            # that turns most "accidentally wrapped in a fence" failures
+            # into clean JSON.
+            "response_format": {"type": "json_object"},
         }
+        presence_penalty = template.model_params.get("presence_penalty")
+        if presence_penalty is not None:
+            payload["presence_penalty"] = presence_penalty
         vlm_url = f"{vlm_cfg.url}/chat/completions"
 
         vlm_timeout = aiohttp.ClientTimeout(total=120)
@@ -361,19 +422,18 @@ class EvaluateWorker(StageWorker):
             data = parse_vlm_json(vlm_response["choices"][0]["message"]["content"])
             if isinstance(data, list):
                 data = data[0] if data else {}
-            verdict = VLMVerdict(
-                candidate_id=cand.candidate_id,
-                correct_class=str(data.get("correct_class", cand.class_name)),
-                confidence=float(data.get("confidence", 0.0)),
-                bbox_quality=BboxQuality(data.get("bbox_quality", BboxQuality.GOOD)),
-                object_complete=bool(data.get("object_complete", True)),
-                reasoning=str(data.get("reasoning", "")),
-            )
+            verdict = VLMVerdict.from_vlm_payload(cand.candidate_id, data)
         except Exception as exc:
             self.logger.warning(
                 "Malformed verdict for %s: %s", cand.candidate_id, exc,
             )
-            return None
+            # Signal "call succeeded but JSON parse failed" so the caller
+            # can book a VLM_MALFORMED drop (distinct from HTTP failure).
+            return {
+                "malformed": True,
+                "candidate_id": cand.candidate_id,
+                "tokens": vlm_response.get("usage", {}).get("total_tokens", 0),
+            }
 
         return {
             "group": group_name,
@@ -392,50 +452,124 @@ class EvaluateWorker(StageWorker):
         self,
         verdicts: list[VLMVerdict],
         candidates: list[Candidate],
-    ) -> tuple[list[str], list[str], list[str], dict[str, str]]:
-        """Partition verdict IDs into accept / review / reject buckets.
+    ) -> tuple[list[str], list[str], list[str], dict[str, str], list[FilterDrop]]:
+        """Partition verdict IDs into accept / review / reject buckets using
+        the v2 two-signal schema: ``class_confidence`` + ``bbox_score``.
 
-        Pure confidence-driven three-way (section 10.2). ``bbox_quality`` and
-        ``object_complete`` remain on the verdict for telemetry but no longer
-        drive routing -- spatial decisions belong to the refine stage.
+        Each reject carries a ``FilterDrop`` with a typed ``DropReason`` so
+        the viewer / audit can explain *why* the VLM killed a candidate.
 
-        Returns
-        -------
-        accepted, review, rejected, relabels
+        class_match is computed in code (VLM didn't see the proposed class —
+        it classified independently). Class and bbox axes are tuned
+        independently so class-correct-but-loose-bbox is a distinct outcome
+        from class-wrong.
+
+        Thresholds (all from ``evaluate`` config — independent knobs):
+          - ``reject_below``      (0.3): class_confidence floor
+          - ``accept_above``      (0.5): class_confidence ceiling
+          - ``bbox_reject_below`` (0.3): bbox_score floor
+          - ``bbox_accept_above`` (0.5): bbox_score ceiling
+
+        Routing matrix:
+          class_match  class_conf      bbox_score        →
+          true         ≥ accept        ≥ bbox_accept     accepted
+          true         ≥ accept        [bbox_rej,bbacc)  review           (bbox needs work)
+          true         ≥ accept        < bbox_reject     rejected (VLM_BBOX_UNUSABLE)
+          false        ≥ accept        ≥ bbox_accept     accepted + relabel
+          false        ≥ accept        [bbox_rej,bbacc)  review + relabel
+          false        ≥ accept        < bbox_reject     rejected (VLM_BBOX_UNUSABLE)
+          any          < reject        any               rejected (VLM_LOW_CONFIDENCE)
+          any          [reject,accept) any               review
+          detected ∈ {other,unknown,none}                rejected (VLM_OTHER_CLASS)
+          detected unresolvable via alias_map            rejected (VLM_UNKNOWN_CLASS)
         """
         accepted: list[str] = []
         review: list[str] = []
         rejected: list[str] = []
         relabels: dict[str, str] = {}
+        drops: list[FilterDrop] = []
 
         cand_by_id: dict[str, Candidate] = {
             c.candidate_id: c for c in candidates
         }
         eval_cfg = self.config.evaluate
+        accept_thr = eval_cfg.accept_above
+        reject_thr = eval_cfg.reject_below
+        bbox_accept = eval_cfg.bbox_accept_above
+        bbox_reject = eval_cfg.bbox_reject_below
+
+        def _reject(cid: str, reason: DropReason, note: str) -> None:
+            rejected.append(cid)
+            drops.append(FilterDrop(
+                candidate_id=cid,
+                reason=reason,
+                context=FilterContext.POST_REVIEW,
+                detail=note,
+            ))
 
         for v in verdicts:
             cand = cand_by_id.get(v.candidate_id)
-
-            # ---- Relabeling / rejection by class ----
             original_class = cand.class_name if cand else ""
-            if v.correct_class and v.correct_class != original_class:
-                if v.correct_class.lower() in ("other", "unknown", "none"):
-                    rejected.append(v.candidate_id)
-                    continue
-                canonical = resolve_canonical_class(v.correct_class, self.alias_map)
-                if canonical is not None and canonical != original_class:
-                    relabels[v.candidate_id] = canonical
-                # Unresolvable -> fall through to confidence routing.
+            detected = (v.detected_class or "").strip()
+            class_conf = float(v.class_confidence or 0.0)
+            # A VLM that OMITS bbox_score must not silently pass the bbox
+            # gate — default to 0.0 so a missing field reads as "unusable"
+            # rather than "perfect". The VLMVerdict default of 1.0 covers
+            # the "field present but coerced" case inside the model; this
+            # branch covers the rarer `None` that survives migration.
+            bbox_score = float(v.bbox_score if v.bbox_score is not None else 0.0)
 
-            # ---- Confidence-driven three-way routing ----
-            if v.confidence < eval_cfg.reject_below:
-                rejected.append(v.candidate_id)
-            elif v.confidence >= eval_cfg.accept_above:
+            # ---- 1. Hard class-level rejections ----
+            if not detected or detected.lower() in ("other", "unknown", "none"):
+                _reject(
+                    v.candidate_id, DropReason.VLM_OTHER_CLASS,
+                    f"detected_class={detected!r}",
+                )
+                continue
+            canonical = resolve_canonical_class(detected, self.alias_map)
+            if canonical is None:
+                _reject(
+                    v.candidate_id, DropReason.VLM_UNKNOWN_CLASS,
+                    f"detected_class={detected!r} not in alias map",
+                )
+                continue
+
+            class_match = (canonical == original_class)
+
+            # ---- 2. Low class-confidence overrides everything else ----
+            if class_conf < reject_thr:
+                _reject(
+                    v.candidate_id, DropReason.VLM_LOW_CONFIDENCE,
+                    f"class_confidence={class_conf:.2f} < {reject_thr:.2f}",
+                )
+                continue
+
+            # ---- 3. Medium class-confidence → review (with relabel hint) ----
+            if class_conf < accept_thr:
+                if not class_match:
+                    relabels[v.candidate_id] = canonical
+                review.append(v.candidate_id)
+                continue
+
+            # ---- 4. High class-confidence: now gate on bbox quality ----
+            if bbox_score < bbox_reject:
+                _reject(
+                    v.candidate_id, DropReason.VLM_BBOX_UNUSABLE,
+                    f"bbox_score={bbox_score:.2f} < {bbox_reject:.2f}",
+                )
+                continue
+
+            if not class_match:
+                relabels[v.candidate_id] = canonical
+
+            if bbox_score >= bbox_accept:
                 accepted.append(v.candidate_id)
             else:
+                # Good class call, loose/tight bbox → human review (or the
+                # refine stage picks it up for refine-eligible classes).
                 review.append(v.candidate_id)
 
-        return accepted, review, rejected, relabels
+        return accepted, review, rejected, relabels, drops
 
     # ------------------------------------------------------------------
     # Output helpers
@@ -449,6 +583,28 @@ class EvaluateWorker(StageWorker):
             f"- {cls_name.upper()}: {rule}"
             for cls_name, rule in group_cfg.annotation_rules.items()
         )
+
+    def _format_per_class_details(self, group_cfg: Any) -> str:
+        """Build the PER-CLASS DETAILS block from class_registry.description.
+
+        For each class in ``group_cfg.classes``, look up its description in
+        ``config.class_registry`` and emit a bullet. Classes without a
+        description are omitted (common objects like ``car`` / ``bicycle``
+        the VLM already knows don't need extra cues).
+
+        Returns an empty string if the group or registry is missing, or no
+        class in the group has a description.
+        """
+        if not group_cfg:
+            return ""
+        registry = getattr(self.config, "class_registry", None) or {}
+        lines: list[str] = []
+        for cls_name in group_cfg.classes:
+            cls_cfg = registry.get(cls_name)
+            desc = (getattr(cls_cfg, "description", "") or "").strip()
+            if desc:
+                lines.append(f"- {cls_name}: {desc}")
+        return "\n".join(lines)
 
     def _write_final_output(
         self, image_id: str, detect: DetectResult, evaluate: EvaluateResult

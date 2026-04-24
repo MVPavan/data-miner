@@ -23,7 +23,7 @@ class_registry:
     prompts: [person]
     synonyms: []
     tags: [overlap_exempt]
-    description: "Full/partial visible human body in any pose."
+    # description: "Full/partial visible human body in any pose."
 
   bicycle:
     id: 1
@@ -149,7 +149,7 @@ class_registry:
     prompts: [wallet]
     synonyms: []
     tags: [confusion:electronics]
-    description: "Small, flat, foldable. Fits in pocket."
+    # description: "Small, flat, foldable. Fits in pocket."
 
   head:
     id: 35
@@ -157,8 +157,8 @@ class_registry:
     prompts: [head]
     synonyms: [face]
     tags: [overlap_exempt]
-    description: >
-      Annotate separately even when body is fully visible
+    # description: >
+    #   Annotate separately even when body is fully visible
 
   laptop:
     id: 63
@@ -166,7 +166,7 @@ class_registry:
     prompts: [laptop]
     synonyms: []
     tags: [confusion:electronics]
-    description: "Open or closed portable computer on flat surface."
+    # description: "Open or closed portable computer on flat surface."
 
   cellphone:
     id: 67
@@ -174,7 +174,7 @@ class_registry:
     prompts: [cellphone]
     synonyms: [mobile phone, smartphone, phone]
     tags: [confusion:electronics]
-    description: "Rectangular device in hand, on surface, or near ear."
+    # description: "Rectangular device in hand, on surface, or near ear."
 
   # -- Tier 3 — specialized / industrial -------------------------------------------
   shopping cart:
@@ -233,13 +233,13 @@ evaluation_groups:
       rigidity (rigid + wheels -> suitcase), size (pocket-sized -> wallet).
     annotation_rules: {}
 
-  person_parts:
-    classes: [person, head]
-    requires_crops: false
-    disambiguation: >
-      If full body visible -> annotate as person only, NOT separately as head.
-      Head annotation ONLY when body is NOT visible (through window, behind counter).
-    annotation_rules: {}
+  # person_parts:
+  #   classes: [person, head]
+  #   requires_crops: false
+  #   disambiguation: >
+  #     If full body visible -> annotate as person only, NOT separately as head.
+  #     Head annotation ONLY when body is NOT visible (through window, behind counter).
+  #   annotation_rules: {}
 
   electronics:
     classes: [laptop, cellphone, wallet]

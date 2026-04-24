@@ -17,7 +17,6 @@ __all__ = [
     "ImageStatus",
     "DetectorName",
     "CandidateStatus",
-    "BboxQuality",
     "FinalAction",
     "RefineAction",
     "RefineOutcome",
@@ -124,20 +123,6 @@ class CandidateStatus(StrEnum):
 
 
 # ---------------------------------------------------------------------------
-# VLM evaluation signals
-# ---------------------------------------------------------------------------
-
-
-class BboxQuality(StrEnum):
-    """VLM assessment of bounding-box tightness during evaluate."""
-
-    GOOD = "good"
-    NEEDS_EXPANSION = "needs_expansion"
-    TOO_LOOSE = "too_loose"
-    BAD = "bad"
-
-
-# ---------------------------------------------------------------------------
 # Final / refine actions and outcomes
 # ---------------------------------------------------------------------------
 
@@ -195,7 +180,7 @@ class BboxSource(StrEnum):
 
 
 class DropReason(StrEnum):
-    """Reason a candidate was dropped during finalize."""
+    """Reason a candidate was dropped during filter / evaluate / finalize."""
 
     SOURCE_MODEL = "source_model"
     GEOMETRIC_FILTER = "geometric_filter"
@@ -204,6 +189,21 @@ class DropReason(StrEnum):
     CROSS_CLASS = "cross_class"
     PER_CLASS_CAP = "per_class_cap"
     REJECTED_UPSTREAM = "rejected_upstream"
+    HEAD_WITHOUT_PERSON = "head_without_person"
+    CLASS_AGNOSTIC_NMS = "class_agnostic_nms"
+    # ---- Evaluate-stage rejects ----
+    VLM_LOW_CONFIDENCE = "vlm_low_confidence"
+    """class_confidence below ``evaluate.reject_below``."""
+    VLM_OTHER_CLASS = "vlm_other_class"
+    """VLM returned "other"/"unknown"/"none" as detected_class."""
+    VLM_UNKNOWN_CLASS = "vlm_unknown_class"
+    """VLM named a class that doesn't resolve through the alias map."""
+    VLM_BBOX_UNUSABLE = "vlm_bbox_unusable"
+    """Class trusted (≥accept_above) but bbox_score below
+    ``evaluate.bbox_reject_below`` — bbox on wrong region or object missing."""
+    VLM_MALFORMED = "vlm_malformed"
+    """Could not parse VLM JSON into a VLMVerdict (telemetry for prompt /
+    model drift)."""
 
 
 # ---------------------------------------------------------------------------
