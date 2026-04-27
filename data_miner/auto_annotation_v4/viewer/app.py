@@ -12,6 +12,8 @@ Endpoints:
   GET /api/data/{image_id}    — Full per-image data: stages, proposals, meta.
   GET /api/job                — Job-level info (config, classes, summary).
   GET /api/image/{image_id}   — Serve the source image file.
+  GET /api/search/schema      — Available classes/statuses/reasons per stage.
+  GET /api/search             — Stage-aware class/status search → image list.
 """
 
 from __future__ import annotations
@@ -27,6 +29,15 @@ from fastapi.staticfiles import StaticFiles
 
 # Canonical pipeline stage order; used for the sidebar "stage completed" filter.
 PIPELINE_STAGES = ("detect", "filter", "evaluate", "refine", "finalize")
+
+# Static schema for /api/search/schema. Class lists are populated from each
+# stage's lazy-built index when present, falling back to classes.txt.
+_FILTER_DROP_REASONS = (
+    "source_model", "dedup", "geometric_filter", "head_without_person",
+    "per_class_cap", "cross_class", "class_agnostic_nms", "score_floor",
+    "rejected_upstream",
+)
+_DETECT_SOURCE_MODELS = ("sam3_dart", "grounding_dino", "sam3", "falcon", "owlv2")
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 
@@ -226,10 +237,383 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
         job_row = _query_one("SELECT * FROM job_info LIMIT 1") if db_path.exists() else None
         return {
             "job_dir": str(job_dir),
+            "job_id": job_dir.name,
             "job_info": job_row,
             "classes": _load_classes(),
             "class_id_map": _load_class_id_map(),
             "summary": _load_summary(),
+        }
+
+    # ------------------------------------------------------------------
+    # Stage-aware class search
+    # ------------------------------------------------------------------
+    # Lazy in-memory inverted indices, keyed by stage name. First request
+    # for a stage scans all rows in `stages` for that stage and parses
+    # the JSON; subsequent queries hit the cache.
+    _class_index_cache: dict[str, dict] = {}
+
+    def _orig_class_from_cid(cid: str) -> str | None:
+        """Parse '<source_model>:<class>:<idx>' candidate ID → original class."""
+        if not cid:
+            return None
+        parts = cid.split(":", 2)
+        return parts[1] if len(parts) >= 2 else None
+
+    def _build_index_detect() -> dict[str, Any]:
+        rows = _query("SELECT image_id, data FROM stages WHERE stage='detect'")
+        by_class: dict[str, set[str]] = {}
+        by_class_model: dict[tuple[str, str], set[str]] = {}
+        classes: set[str] = set()
+        models: set[str] = set()
+        for r in rows:
+            try:
+                d = json.loads(r["data"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            img = r["image_id"]
+            for c in d.get("candidates") or []:
+                cn = c.get("class_name")
+                sm = c.get("source_model")
+                if cn:
+                    classes.add(cn)
+                    by_class.setdefault(cn, set()).add(img)
+                if cn and sm:
+                    models.add(sm)
+                    by_class_model.setdefault((cn, sm), set()).add(img)
+        return {
+            "by_class": by_class,
+            "by_class_model": by_class_model,
+            "classes": sorted(classes),
+            "source_models": sorted(models),
+        }
+
+    def _build_index_filter() -> dict[str, Any]:
+        rows = _query("SELECT image_id, data FROM stages WHERE stage='filter'")
+        auto_acc: dict[str, set[str]] = {}
+        needs_eval: dict[str, set[str]] = {}
+        dropped: dict[tuple[str, str], set[str]] = {}  # (reason, class) → ids
+        classes: set[str] = set()
+        reasons: set[str] = set()
+        for r in rows:
+            try:
+                d = json.loads(r["data"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            img = r["image_id"]
+            cands_by_id = {
+                c.get("candidate_id"): c.get("class_name")
+                for c in d.get("candidates") or []
+                if c.get("candidate_id")
+            }
+            routing = d.get("routing") or {}
+            for cid in routing.get("auto_accepted") or []:
+                cn = cands_by_id.get(cid) or _orig_class_from_cid(cid)
+                if cn:
+                    classes.add(cn)
+                    auto_acc.setdefault(cn, set()).add(img)
+            for cid in routing.get("needs_evaluation") or []:
+                cn = cands_by_id.get(cid) or _orig_class_from_cid(cid)
+                if cn:
+                    classes.add(cn)
+                    needs_eval.setdefault(cn, set()).add(img)
+            for dr in d.get("drops") or []:
+                reason = dr.get("reason") or "?"
+                cid = dr.get("candidate_id") or ""
+                cn = _orig_class_from_cid(cid)
+                if cn:
+                    classes.add(cn)
+                    reasons.add(reason)
+                    dropped.setdefault((reason, cn), set()).add(img)
+        return {
+            "auto_accepted": auto_acc,
+            "needs_evaluation": needs_eval,
+            "dropped": dropped,
+            "classes": sorted(classes),
+            "reasons": sorted(reasons),
+        }
+
+    def _build_index_evaluate() -> dict[str, Any]:
+        rows = _query("SELECT image_id, data FROM stages WHERE stage='evaluate'")
+        by_status_orig: dict[tuple[str, str], set[str]] = {}
+        by_status_verdict: dict[tuple[str, str], set[str]] = {}
+        relabel_pairs: dict[tuple[str, str], set[str]] = {}
+        classes_orig: set[str] = set()
+        classes_verdict: set[str] = set()
+        for r in rows:
+            try:
+                d = json.loads(r["data"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            img = r["image_id"]
+            relabels_dict = d.get("relabels") or {}
+            cid_status: dict[str, str] = {}
+            for status_name in ("accepted", "review", "rejected", "drops"):
+                for entry in d.get(status_name) or []:
+                    # accepted/review/rejected are lists of cid strings;
+                    # drops is a list of {candidate_id, reason, ...} dicts.
+                    cid = entry.get("candidate_id") if isinstance(entry, dict) else entry
+                    if isinstance(cid, str):
+                        cid_status[cid] = status_name
+            for v in d.get("verdicts") or []:
+                cid = v.get("candidate_id") or ""
+                orig = _orig_class_from_cid(cid)
+                verdict = (
+                    v.get("correct_class")
+                    or relabels_dict.get(cid)
+                    or v.get("detected_class")
+                    or orig
+                )
+                status = cid_status.get(cid, "drops")
+                if orig:
+                    classes_orig.add(orig)
+                    by_status_orig.setdefault((status, orig), set()).add(img)
+                if verdict:
+                    classes_verdict.add(verdict)
+                    by_status_verdict.setdefault((status, verdict), set()).add(img)
+                if orig and verdict and orig != verdict:
+                    by_status_orig.setdefault(("relabeled", orig), set()).add(img)
+                    by_status_verdict.setdefault(("relabeled", verdict), set()).add(img)
+                    relabel_pairs.setdefault((orig, verdict), set()).add(img)
+        return {
+            "by_status_original": by_status_orig,
+            "by_status_verdict": by_status_verdict,
+            "relabel_pairs": relabel_pairs,
+            "classes_original": sorted(classes_orig),
+            "classes_verdict": sorted(classes_verdict),
+            "statuses": ["accepted", "review", "rejected", "drops", "relabeled"],
+        }
+
+    def _build_index_finalize() -> dict[str, Any]:
+        rows = _query("SELECT image_id, data FROM stages WHERE stage='finalize'")
+        accepted: dict[str, set[str]] = {}
+        review: dict[str, set[str]] = {}
+        dropped: dict[str, set[str]] = {}
+        classes: set[str] = set()
+        for r in rows:
+            try:
+                d = json.loads(r["data"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            img = r["image_id"]
+            for a in d.get("final_annotations") or []:
+                cn = a.get("class_name")
+                if cn:
+                    classes.add(cn)
+                    accepted.setdefault(cn, set()).add(img)
+            for a in d.get("review_items") or []:
+                cn = a.get("class_name")
+                if cn:
+                    classes.add(cn)
+                    review.setdefault(cn, set()).add(img)
+            for a in d.get("dropped") or []:
+                cn = a.get("class_name") or _orig_class_from_cid(a.get("candidate_id") or "")
+                if cn:
+                    classes.add(cn)
+                    dropped.setdefault(cn, set()).add(img)
+        return {
+            "accepted": accepted,
+            "review": review,
+            "dropped": dropped,
+            "classes": sorted(classes),
+        }
+
+    def _build_index_refine() -> dict[str, Any]:
+        # Refine isn't run on current jobs — return empty scaffold so the UI
+        # can still show the option for future jobs that do run refine.
+        return {"classes": [], "statuses": []}
+
+    _BUILDERS = {
+        "detect": _build_index_detect,
+        "filter": _build_index_filter,
+        "evaluate": _build_index_evaluate,
+        "refine": _build_index_refine,
+        "finalize": _build_index_finalize,
+    }
+
+    def _get_index(stage: str) -> dict:
+        if stage not in _class_index_cache:
+            _class_index_cache[stage] = _BUILDERS[stage]()
+        return _class_index_cache[stage]
+
+    def _csv(s: str) -> list[str]:
+        return [p.strip() for p in (s or "").split(",") if p.strip()]
+
+    def _resolve_search(
+        stage: str, classes: list[str], statuses: list[str], reasons: list[str],
+        class_role: str, relabel_from: str, relabel_to: str, source_models: list[str],
+    ) -> set[str]:
+        """Return the set of image_ids matching the given query."""
+        idx = _get_index(stage)
+        result: set[str] = set()
+
+        if stage == "detect":
+            cls_universe = idx["classes"] if not classes else classes
+            sm_list = source_models or ["__any__"]
+            for cn in cls_universe:
+                if source_models:
+                    for sm in source_models:
+                        result |= idx["by_class_model"].get((cn, sm), set())
+                else:
+                    result |= idx["by_class"].get(cn, set())
+            return result
+
+        if stage == "filter":
+            cls_universe = idx["classes"] if not classes else classes
+            sts = statuses or ["auto_accepted", "needs_evaluation", "dropped"]
+            for st in sts:
+                if st == "auto_accepted":
+                    for cn in cls_universe:
+                        result |= idx["auto_accepted"].get(cn, set())
+                elif st == "needs_evaluation":
+                    for cn in cls_universe:
+                        result |= idx["needs_evaluation"].get(cn, set())
+                elif st == "dropped":
+                    rsn_iter = reasons or _FILTER_DROP_REASONS
+                    for cn in cls_universe:
+                        for rsn in rsn_iter:
+                            result |= idx["dropped"].get((rsn, cn), set())
+            return result
+
+        if stage == "evaluate":
+            # Pair-query short-circuit
+            if relabel_from and relabel_to:
+                return set(idx["relabel_pairs"].get((relabel_from, relabel_to), set()))
+            sts = statuses or ["accepted", "review", "rejected", "drops", "relabeled"]
+            roles = [class_role] if class_role in ("original", "verdict") else ["original", "verdict"]
+            for role in roles:
+                book = idx["by_status_original"] if role == "original" else idx["by_status_verdict"]
+                cls_universe = (
+                    idx["classes_original"] if role == "original" else idx["classes_verdict"]
+                )
+                cls_iter = classes or cls_universe
+                for st in sts:
+                    for cn in cls_iter:
+                        result |= book.get((st, cn), set())
+            return result
+
+        if stage == "finalize":
+            cls_universe = idx["classes"] if not classes else classes
+            sts = statuses or ["accepted", "review", "dropped"]
+            for st in sts:
+                book = idx.get(st) or {}
+                for cn in cls_universe:
+                    result |= book.get(cn, set())
+            return result
+
+        # refine — empty scaffold
+        return set()
+
+    @app.get("/api/search/schema")
+    async def search_schema() -> dict[str, Any]:
+        """Return the option universes per stage for the sidebar UI.
+
+        Class lists come from the cached index when warm; otherwise fall
+        back to ``classes.txt``. Statuses/reasons/source_models are
+        static defaults plus anything seen in the index.
+        """
+        all_classes = _load_classes()
+
+        def _classes_for(stage: str) -> list[str]:
+            if stage in _class_index_cache:
+                idx = _class_index_cache[stage]
+                if stage == "evaluate":
+                    return sorted(set(idx.get("classes_original", [])) | set(idx.get("classes_verdict", [])))
+                return idx.get("classes") or all_classes
+            return all_classes
+
+        return {
+            "stages": [
+                {"id": "detect",   "label": "1. Proposals (detect)"},
+                {"id": "filter",   "label": "2. Filter"},
+                {"id": "evaluate", "label": "3. Evaluate"},
+                {"id": "refine",   "label": "4. Refine"},
+                {"id": "finalize", "label": "5. Finalize"},
+            ],
+            "detect": {
+                "classes": _classes_for("detect"),
+                "statuses": [],  # detect has no status; source_model is the dimension
+                "source_models": list(_DETECT_SOURCE_MODELS),
+            },
+            "filter": {
+                "classes": _classes_for("filter"),
+                "statuses": ["auto_accepted", "needs_evaluation", "dropped"],
+                "reasons": list(_FILTER_DROP_REASONS),
+            },
+            "evaluate": {
+                "classes": _classes_for("evaluate"),
+                "statuses": ["accepted", "review", "rejected", "drops", "relabeled"],
+                "class_roles": ["original", "verdict", "either"],
+            },
+            "refine": {
+                "classes": _classes_for("refine"),
+                "statuses": [],
+            },
+            "finalize": {
+                "classes": _classes_for("finalize"),
+                "statuses": ["accepted", "review", "dropped"],
+            },
+        }
+
+    @app.get("/api/search")
+    async def search(
+        stage: str = Query(..., pattern=r"^(detect|filter|evaluate|refine|finalize)$"),
+        classes: str = Query("", description="Comma-separated class names; empty = any"),
+        statuses: str = Query("", description="Comma-separated stage-specific statuses"),
+        reasons: str = Query("", description="Filter drop reasons (filter+dropped only)"),
+        class_role: str = Query("either", pattern=r"^(original|verdict|either)$"),
+        relabel_from: str = Query("", description="Evaluate pair-query: original class"),
+        relabel_to: str = Query("", description="Evaluate pair-query: verdict class"),
+        source_models: str = Query("", description="Detect source models filter"),
+        offset: int = Query(0, ge=0),
+        limit: int = Query(500, ge=1, le=5000),
+    ) -> dict[str, Any]:
+        """Stage-aware class/status search → paginated image list.
+
+        Response shape mirrors ``/api/stems`` so the frontend can swap the
+        URL without changing item-rendering code.
+        """
+        if not db_path.exists():
+            return {
+                "items": [], "total": 0, "offset": offset, "limit": limit,
+                "filters": {"statuses": [], "stages": list(PIPELINE_STAGES)},
+            }
+
+        ids = _resolve_search(
+            stage,
+            _csv(classes), _csv(statuses), _csv(reasons),
+            class_role, relabel_from.strip(), relabel_to.strip(),
+            _csv(source_models),
+        )
+        sorted_ids = sorted(ids)
+        total = len(sorted_ids)
+        page_ids = sorted_ids[offset : offset + limit]
+
+        items: list[dict[str, Any]] = []
+        if page_ids:
+            ph = ",".join("?" * len(page_ids))
+            rows = _query(
+                f"SELECT image_id, status, stages_completed FROM image_meta "
+                f"WHERE image_id IN ({ph})",
+                tuple(page_ids),
+            )
+            by_id = {r["image_id"]: r for r in rows}
+            for img in page_ids:
+                r = by_id.get(img) or {}
+                raw = r.get("stages_completed") or "[]"
+                try:
+                    stages = json.loads(raw) if isinstance(raw, str) else raw
+                    if not isinstance(stages, list):
+                        stages = []
+                except (json.JSONDecodeError, TypeError):
+                    stages = []
+                items.append({
+                    "image_id": img,
+                    "status": r.get("status") or "",
+                    "stages_completed": stages,
+                })
+        return {
+            "items": items, "total": total, "offset": offset, "limit": limit,
+            "filters": {"statuses": [], "stages": list(PIPELINE_STAGES)},
         }
 
     @app.get("/api/stems")
