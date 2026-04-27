@@ -20,6 +20,30 @@ from ..logging import get_logger
 logger = get_logger(__name__)
 
 
+def _as_feature_tensor(x) -> torch.Tensor:
+    """Normalize get_{image,text}_features output across transformers versions.
+
+    transformers <5 returned a tensor. transformers >=5 wraps it in
+    BaseModelOutputWithPooling. For SigLIP2 specifically the
+    feature tensor lives in ``pooler_output`` (SigLIP2 has no projection
+    head; feature dim == vision_config.hidden_size). Preferring
+    ``pooler_output`` first avoids silently picking a differently-shaped
+    ``image_embeds`` / ``text_embeds`` field if a future transformers
+    version adds those for a projected variant.
+    """
+    if isinstance(x, torch.Tensor):
+        return x
+    v = getattr(x, "pooler_output", None)
+    if isinstance(v, torch.Tensor):
+        return v
+    # Fallback for CLIP-style outputs if this helper is ever reused there
+    for attr in ("image_embeds", "text_embeds"):
+        v = getattr(x, attr, None)
+        if isinstance(v, torch.Tensor):
+            return v
+    raise TypeError(f"can't extract feature tensor from {type(x).__name__}")
+
+
 class SigLIPModel(BaseModel):
     """
     SigLIP model wrapper for image-text similarity.
@@ -90,6 +114,7 @@ class SigLIPModel(BaseModel):
         )
         text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
         text_features = self.model.get_text_features(**text_inputs)
+        text_features = _as_feature_tensor(text_features)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
 
         return text_features.cpu().to(torch.float16).numpy()
@@ -128,6 +153,7 @@ class SigLIPModel(BaseModel):
             image_inputs = {k: v.to(device) for k, v in image_inputs.items() if k != "input_ids"}
 
             image_features = self.model.get_image_features(**image_inputs)
+            image_features = _as_feature_tensor(image_features)
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
 
             all_embeddings.append(image_features.cpu().to(torch.float16).numpy())
