@@ -28,7 +28,10 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 # Canonical pipeline stage order; used for the sidebar "stage completed" filter.
-PIPELINE_STAGES = ("detect", "filter", "evaluate", "refine", "finalize")
+# ``human_review`` is event-driven (written by manual_reviewer/scripts/export_to_aa_v4.py)
+# rather than worker-driven, but it shows up in image_meta.stages_completed so the
+# viewer's filter UI must offer it as a selectable stage.
+PIPELINE_STAGES = ("detect", "filter", "evaluate", "refine", "finalize", "human_review")
 
 # Static schema for /api/search/schema. Class lists are populated from each
 # stage's lazy-built index when present, falling back to classes.txt.
@@ -819,6 +822,7 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
             "evaluate": stages_data.get("evaluate"),
             "refine": stages_data.get("refine"),
             "finalize": stages_data.get("finalize"),
+            "human_review": stages_data.get("human_review"),
             "proposals": proposals,
             "trace": trace,
             "review": review,
