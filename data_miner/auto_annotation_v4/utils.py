@@ -279,11 +279,14 @@ def cluster_and_collapse(candidates: list, iou_dedup_cfg: Any) -> list:
       list of survivors; each has ``agreement`` and ``agreeing_models`` set.
     """
     threshold = iou_dedup_cfg.threshold
+    contain_min = float(
+        getattr(iou_dedup_cfg, "same_class_containment_min", 0.0) or 0.0
+    )
     tiebreak_by = list(iou_dedup_cfg.tiebreak_by)
     priority_index = {m: i for i, m in enumerate(iou_dedup_cfg.model_priority)}
     fallback_priority = len(iou_dedup_cfg.model_priority)  # unknown models last
 
-    if threshold <= 0 or not candidates:
+    if (threshold <= 0 and contain_min <= 0) or not candidates:
         # Still attach singleton agreement metadata so downstream is consistent.
         for c in candidates:
             c.agreement = 1
@@ -317,8 +320,23 @@ def cluster_and_collapse(candidates: list, iou_dedup_cfg: Any) -> list:
 
         for i in range(n):
             for j in range(i + 1, n):
-                if bbox_iou(group[i].bbox, group[j].bbox) >= threshold:
+                bi, bj = group[i].bbox, group[j].bbox
+                if threshold > 0 and bbox_iou(bi, bj) >= threshold:
                     _union(i, j)
+                    continue
+                # Containment fallback: catches nested pairs that IoU misses
+                # (small-in-large can have IoU ~0.4 while containment ~1.0).
+                if contain_min > 0:
+                    ai = max(0.0, bi.x2 - bi.x1) * max(0.0, bi.y2 - bi.y1)
+                    aj = max(0.0, bj.x2 - bj.x1) * max(0.0, bj.y2 - bj.y1)
+                    if ai <= 0 or aj <= 0:
+                        continue
+                    ix1, iy1 = max(bi.x1, bj.x1), max(bi.y1, bj.y1)
+                    ix2, iy2 = min(bi.x2, bj.x2), min(bi.y2, bj.y2)
+                    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+                    inter = iw * ih
+                    if inter > 0 and inter / min(ai, aj) >= contain_min:
+                        _union(i, j)
 
         # Bucket members by cluster root.
         clusters: dict[int, list[int]] = {}

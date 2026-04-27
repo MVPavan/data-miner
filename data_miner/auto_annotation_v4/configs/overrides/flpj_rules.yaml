@@ -40,6 +40,16 @@ filtering:
     respect_overlap_exempt: true
     suppress_confusion_pairs: true
 
+  # Containment-based within-class dedup addition. Fixes the "two heads
+  # nested in each other" problem visible on fl_pj video frames (SAM3-DART
+  # fires both a wide head incl. hair and a narrow face head; IoU ~0.45
+  # so IoU-0.7 dedup kept both). On fl_pj this alone removed ~22k
+  # duplicate boxes (~16% of output) post-hoc; enabling here prevents the
+  # duplication at filter time for future runs.
+  iou_dedup:
+    threshold: 0.7
+    same_class_containment_min: 0.8
+
   # Per-class min_area overrides. Same structure as LOCO — global 0.0005
   # culls too many legitimate small objects from video frames.
   per_class_min_area:

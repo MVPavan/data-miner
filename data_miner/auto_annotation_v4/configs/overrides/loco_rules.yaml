@@ -53,6 +53,15 @@ filtering:
     respect_overlap_exempt: true
     suppress_confusion_pairs: true
 
+  # Containment-based within-class dedup addition. IoU >= 0.7 misses nested
+  # same-class pairs (small bbox fully inside larger one: IoU ~0.45,
+  # containment ~0.99). SAM3-DART in particular fires both a "wide head"
+  # (hair + face) and a "narrow head" (face only) per person on some frames;
+  # at 0.8 containment the smaller one is folded into the larger cluster.
+  iou_dedup:
+    threshold: 0.7
+    same_class_containment_min: 0.8
+
   # Per-class min_area overrides. The global 0.0005 (≈32x32 px on 1920x1080)
   # culls 27% of heads, 11% of cellphones, 8% of handbags in LOCO pre-filter.
   # Lower the floor for naturally-small classes; everything else keeps the
@@ -90,3 +99,5 @@ evaluate:
 # work no worker is running to claim, deadlocking the pipeline.
 refine_rules:
   classes: {}
+
+

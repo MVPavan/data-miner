@@ -357,6 +357,17 @@ class IouDedupConfig(BaseModel):
     )
     """Model order from most-trusted (lowest index) to least."""
 
+    same_class_containment_min: float = 0.0
+    """Containment threshold (intersection / min(area_a, area_b)) above which
+    two same-class bboxes are also merged into one cluster — in addition to
+    IoU >= ``threshold``. IoU misses nested pairs (a small bbox fully inside
+    a larger one can have IoU ~0.4-0.5 while containment ~1.0), so detectors
+    that fire both a wide and a narrow box for the same object (e.g. SAM3-
+    DART often emits both a hair-and-face head and a face-only head) leave
+    duplicates. 0.0 disables the containment rule. 0.8 is recommended for
+    jobs with heavy same-class duplication (video-frame heads in particular).
+    """
+
 
 class ClassAgnosticNmsConfig(BaseModel):
     """Post-dedup NMS across *all* classes at a configurable IoU threshold.
