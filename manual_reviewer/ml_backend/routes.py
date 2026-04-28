@@ -105,11 +105,15 @@ def _picked_label_from_context(context: dict[str, Any] | None) -> str | None:
     """
     if not isinstance(context, dict):
         return None
+    # ``keypointlabels`` carries the keypoint tool's "positive"/"negative"
+    # control labels, not real class names — never use those for the output
+    # region's class. ``rectanglelabels``/``labels`` come from the user's
+    # actual class dropdown selection.
     for region in context.get("result") or []:
         if not isinstance(region, dict):
             continue
         value = region.get("value") or {}
-        for key in ("rectanglelabels", "keypointlabels", "labels"):
+        for key in ("rectanglelabels", "labels"):
             arr = value.get(key)
             if isinstance(arr, list) and arr:
                 first = arr[0]
@@ -128,13 +132,17 @@ def smart_click(
     context: dict[str, Any] | None,
     sam3_client: Sam3LikeClient,
     *,
-    threshold: float = 0.5,
+    threshold: float = 0.0,
     model_version: str = "sam3_1_click",
 ) -> list[dict[str, Any]]:
     """KeyPoint → mask. Returns at most one RectangleLabels region.
 
     The reviewer's pre-selected class (if any) is preserved on the response;
     otherwise it falls back to ``other`` so LS still accepts the region.
+
+    Threshold defaults to 0.0: a click is an explicit ask for a region, so
+    we always return the highest-scoring mask SAM 3.1 produces. The score
+    rides along on the LS region for downstream review.
     """
     image_path = _get_image_path(task)
     if not image_path:
@@ -159,8 +167,16 @@ def smart_click(
                     point_label = 0
             break
     if point is None:
+        logger.info("smart_click: no keypoint found in context")
         return []
 
+    logger.info(
+        "smart_click: image=%s point=%s label=%d threshold=%.2f",
+        image_path,
+        point,
+        point_label,
+        threshold,
+    )
     try:
         resp = sam3_client.click_mask(
             image_path=image_path,
@@ -173,10 +189,17 @@ def smart_click(
         return []
 
     bbox = getattr(resp, "bbox", None)
-    if bbox is None:
-        return []
     score = float(getattr(resp, "score", 0.0) or 0.0)
+    if bbox is None:
+        logger.info("smart_click: SAM 3.1 returned no bbox (score=%.3f)", score)
+        return []
     label = _picked_label_from_context(context) or DEFAULT_LABEL
+    logger.info(
+        "smart_click: bbox=%s score=%.3f label=%s",
+        [round(b, 4) for b in bbox],
+        score,
+        label,
+    )
     region = norm_box_to_ls_region(
         list(bbox),
         label,

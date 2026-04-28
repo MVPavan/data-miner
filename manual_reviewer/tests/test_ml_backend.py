@@ -193,7 +193,7 @@ def test_smart_click_returns_box_when_sam_returns_bbox() -> None:
         "image_path": "/tmp/img.jpg",
         "point": [0.5, 0.6],
         "point_label": 1,
-        "threshold": 0.5,
+        "threshold": 0.0,
     }) in client.calls
 
 

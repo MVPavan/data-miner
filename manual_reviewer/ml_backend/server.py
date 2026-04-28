@@ -114,16 +114,40 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         task: dict[str, Any],
         context: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
+        ctx_summary = self._summarize_context(context)
+        logger.info(
+            "predict task=%s context=%s sam3=%s db=%s",
+            task.get("id"),
+            ctx_summary,
+            "yes" if self._sam3_client else "no",
+            "yes" if self._db_path else "no",
+        )
         if isinstance(context, dict) and context.get("result"):
             for region in context["result"]:
                 if not isinstance(region, dict):
                     continue
                 rtype = (region.get("type") or "").lower()
                 if rtype in {"keypointlabels", "keypoint"} and self._sam3_client:
-                    return smart_click(task, context, self._sam3_client)
+                    out = smart_click(task, context, self._sam3_client)
+                    logger.info("→ smart_click returned %d region(s)", len(out))
+                    return out
                 if rtype == "textarea" and self._sam3_client:
-                    return smart_text(task, context, self._sam3_client)
-        return batch_proposals(task, self._db_path)
+                    out = smart_text(task, context, self._sam3_client)
+                    logger.info("→ smart_text returned %d region(s)", len(out))
+                    return out
+        out = batch_proposals(task, self._db_path)
+        logger.info("→ batch_proposals returned %d region(s)", len(out))
+        return out
+
+    @staticmethod
+    def _summarize_context(context: Any) -> str:
+        if not isinstance(context, dict):
+            return f"<{type(context).__name__}>"
+        result = context.get("result")
+        if not isinstance(result, list):
+            return f"keys={sorted(context.keys())}"
+        types = [(r or {}).get("type") for r in result if isinstance(r, dict)]
+        return f"result_types={types}"
 
     # Public envelope helper for callers that bypass LS but want the same
     # ``predictions`` shape (used by the test suite).
