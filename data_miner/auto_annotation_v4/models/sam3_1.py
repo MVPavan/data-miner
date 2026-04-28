@@ -156,6 +156,11 @@ class SAM3OneModel(BaseDetectorModel):
 
     def __init__(self) -> None:
         self._predictor: Any = None
+        # Standalone image-mode SAM 3 model with the SAM-1-style interactive
+        # head; used for click→mask. Distinct from ``self._predictor``
+        # (video tracker) because the video session API can't issue a
+        # single-image click prompt without prior cached propagation.
+        self._image_model: Any = None
         self._device: str = "cpu"
         self._lock = threading.Lock()
 
@@ -164,11 +169,22 @@ class SAM3OneModel(BaseDetectorModel):
     # ------------------------------------------------------------------
 
     def load(self, device: str, model_id: str, **options: Any) -> None:
-        """Construct the SAM 3.1 video predictor.
+        """Construct the SAM 3.1 video predictor + the image-mode model.
 
         Lazy import keeps the file importable without ``sam3`` on the path.
         ``checkpoint_path`` and ``bpe_path`` can be passed via *options*; both
         default to SAM 3.1's HuggingFace download.
+
+        Two model objects are loaded from the same checkpoint:
+
+        * ``self._predictor`` — ``Sam3VideoPredictor`` for refine / text /
+          tracker, where the session API is the right shape.
+        * ``self._image_model`` — ``Sam3Image(enable_inst_interactivity=True)``
+          for click → mask. The video-predictor session API can't issue a
+          point prompt on a fresh single-image session; this model has the
+          SAM-1-style interactive head bolted onto the SAM 3 image branch.
+
+        Disable the second model by passing ``enable_image_predictor=False``.
         """
         from sam3.model.sam3_video_predictor import Sam3VideoPredictor
 
@@ -180,6 +196,16 @@ class SAM3OneModel(BaseDetectorModel):
         logger.info("Loading SAM 3.1 (model_id=%s, device=%s, options=%s)", model_id, device, kwargs)
         self._predictor = Sam3VideoPredictor(**kwargs)
         self._device = device
+
+        if options.get("enable_image_predictor", True):
+            from sam3.model_builder import build_sam3_image_model
+
+            img_kwargs: dict[str, Any] = {"enable_inst_interactivity": True}
+            for key in ("checkpoint_path", "bpe_path"):
+                if key in options:
+                    img_kwargs[key] = options[key]
+            logger.info("Loading SAM 3.1 image model for click→mask (options=%s)", img_kwargs)
+            self._image_model = build_sam3_image_model(**img_kwargs)
 
     def prepare(
         self,
@@ -296,59 +322,63 @@ class SAM3OneModel(BaseDetectorModel):
         """
         if len(point_norm) != 2:
             raise ValueError("point_norm must be [x, y]")
-        # SAM 3.1's video-predictor session API requires
-        # ``cached_frame_outputs`` populated before ``add_prompt(points=...)``
-        # — true mid-video, false on a fresh single-image session — and
-        # rejects mixing bbox + point prompts in one call. The properly
-        # supported single-image click path is ``SAM3InteractiveImagePredictor``
-        # (see ``scratchpad/DART/sam3/model/sam1_task_predictor.py``); pending
-        # that wiring (it needs a separate predictor instance loaded from the
-        # same checkpoint), we approximate the click as a small bbox prompt
-        # centered on the click point. The mask head treats bbox and point
-        # prompts symmetrically, so the resulting tight bbox is close to what
-        # a true click→mask would produce.
-        seed_norm = max(0.05, 0.0)  # 10% half-width seed bbox
-        x, y = point_norm[0], point_norm[1]
-        seed_bbox_xyxy = [
-            max(0.0, x - seed_norm),
-            max(0.0, y - seed_norm),
-            min(1.0, x + seed_norm),
-            min(1.0, y + seed_norm),
-        ]
-        with self._lock:
-            session_id = self._start(image_path)
-            try:
-                w, h = self._image_size(image_path)
-                bbox_xywh_norm = np.asarray(
-                    [_xyxy_norm_to_xywh_norm(seed_bbox_xyxy)], dtype=np.float32
-                )
-                self._predictor.handle_request(
-                    request=dict(
-                        type="add_prompt",
-                        session_id=session_id,
-                        frame_index=0,
-                        bounding_boxes=bbox_xywh_norm,
-                        bounding_box_labels=np.asarray(
-                            [int(point_label) if point_label != 0 else 0], dtype=np.int32
-                        ),
-                        obj_id=1,
-                    )
-                )
-                outputs = self._collect_propagation(session_id)
-            finally:
-                self._close(session_id)
+        if self._image_model is None:
+            raise RuntimeError(
+                "click_mask requires the SAM 3 image model. Reload SAM3OneModel "
+                "without ``enable_image_predictor=False``."
+            )
 
-        frame0 = outputs.get(0) or {}
-        obj = self._first_object(frame0)
-        if obj is None:
+        # Lazy import — keeps the module importable on machines without sam3.
+        from sam3.model.sam3_image_processor import Sam3Processor
+        import torch
+
+        with Image.open(image_path) as im:
+            image = im.convert("RGB")
+            w, h = image.size
+
+        point_px = np.asarray(
+            [[point_norm[0] * w, point_norm[1] * h]], dtype=np.float32
+        )
+        labels = np.asarray([int(point_label)], dtype=np.int32)
+
+        with self._lock:
+            processor = Sam3Processor(self._image_model, device=self._device)
+            with torch.inference_mode():
+                inference_state = processor.set_image(image)
+                masks, scores, _ = self._image_model.predict_inst(
+                    inference_state,
+                    point_coords=point_px,
+                    point_labels=labels,
+                    box=None,
+                    multimask_output=True,
+                )
+
+        if isinstance(masks, torch.Tensor):
+            masks_np = masks.float().detach().cpu().numpy()
+        else:
+            masks_np = np.asarray(masks)
+        if isinstance(scores, torch.Tensor):
+            scores_np = scores.float().detach().cpu().numpy()
+        else:
+            scores_np = np.asarray(scores)
+
+        if masks_np.size == 0:
             return SAM3ClickMaskResponse(bbox=None, mask_rle=None, score=0.0)
-        score = float(obj.get("score") or 0.0)
-        if score < threshold:
-            return SAM3ClickMaskResponse(bbox=None, mask_rle=None, score=score)
-        bbox_px = self._object_bbox_px(obj, w, h)
-        bbox_norm = _norm_xyxy(bbox_px, w, h) if bbox_px else None
-        mask_rle = obj.get("mask_rle") if return_mask_rle else None
-        return SAM3ClickMaskResponse(bbox=bbox_norm, mask_rle=mask_rle, score=score)
+        # ``predict_inst`` returns CxHxW with C=3 when multimask_output=True.
+        # Pick the highest-score mask.
+        best_idx = int(np.argmax(scores_np))
+        best_mask = masks_np[best_idx] > 0.0
+        best_score = float(scores_np[best_idx])
+        if best_score < threshold:
+            return SAM3ClickMaskResponse(bbox=None, mask_rle=None, score=best_score)
+        bbox_px = _mask_to_bbox(best_mask)
+        if bbox_px is None:
+            return SAM3ClickMaskResponse(bbox=None, mask_rle=None, score=best_score)
+        return SAM3ClickMaskResponse(
+            bbox=_norm_xyxy(bbox_px, w, h),
+            mask_rle=None,
+            score=best_score,
+        )
 
     def text_detect(
         self,
