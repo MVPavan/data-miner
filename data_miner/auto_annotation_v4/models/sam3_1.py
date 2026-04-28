@@ -113,6 +113,26 @@ def _denorm_xyxy(box_norm: list[float], w: int, h: int) -> list[float]:
     return [box_norm[0] * w, box_norm[1] * h, box_norm[2] * w, box_norm[3] * h]
 
 
+def _xyxy_norm_to_xywh_norm(box_norm: list[float]) -> list[float]:
+    """Convert ``[x1, y1, x2, y2]`` in [0,1] to ``[x, y, w, h]`` in [0,1].
+
+    SAM 3.1's ``Sam3VideoPredictor.add_prompt(bounding_boxes=...)`` requires
+    normalized xywh — see ``sam3_video_inference.py:891``
+    ``assert (boxes_xywh <= 1).all()``. We keep aav4's external contract on
+    xyxy (which `BoundingBox` uses) and convert at the seam.
+    """
+    x1, y1, x2, y2 = box_norm
+    x1 = max(0.0, min(1.0, x1))
+    y1 = max(0.0, min(1.0, y1))
+    x2 = max(0.0, min(1.0, x2))
+    y2 = max(0.0, min(1.0, y2))
+    if x2 < x1:
+        x1, x2 = x2, x1
+    if y2 < y1:
+        y1, y2 = y2, y1
+    return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]
+
+
 def _denorm_points(points: list[list[float]], w: int, h: int) -> np.ndarray:
     return np.asarray(
         [[p[0] * w, p[1] * h] for p in points],
@@ -226,13 +246,16 @@ class SAM3OneModel(BaseDetectorModel):
             session_id = self._start(image_path)
             try:
                 w, h = self._image_size(image_path)
-                bbox_px = np.asarray([_denorm_xyxy(bbox_norm, w, h)], dtype=np.float32)
+                # SAM 3.1 wants normalized xywh, not pixel xyxy.
+                bbox_xywh_norm = np.asarray(
+                    [_xyxy_norm_to_xywh_norm(bbox_norm)], dtype=np.float32
+                )
                 self._predictor.handle_request(
                     request=dict(
                         type="add_prompt",
                         session_id=session_id,
                         frame_index=0,
-                        bounding_boxes=bbox_px,
+                        bounding_boxes=bbox_xywh_norm,
                         bounding_box_labels=np.asarray([1], dtype=np.int32),
                         obj_id=1,
                     )
@@ -273,18 +296,41 @@ class SAM3OneModel(BaseDetectorModel):
         """
         if len(point_norm) != 2:
             raise ValueError("point_norm must be [x, y]")
+        # SAM 3.1's video-predictor session API requires
+        # ``cached_frame_outputs`` populated before ``add_prompt(points=...)``
+        # — true mid-video, false on a fresh single-image session — and
+        # rejects mixing bbox + point prompts in one call. The properly
+        # supported single-image click path is ``SAM3InteractiveImagePredictor``
+        # (see ``scratchpad/DART/sam3/model/sam1_task_predictor.py``); pending
+        # that wiring (it needs a separate predictor instance loaded from the
+        # same checkpoint), we approximate the click as a small bbox prompt
+        # centered on the click point. The mask head treats bbox and point
+        # prompts symmetrically, so the resulting tight bbox is close to what
+        # a true click→mask would produce.
+        seed_norm = max(0.05, 0.0)  # 10% half-width seed bbox
+        x, y = point_norm[0], point_norm[1]
+        seed_bbox_xyxy = [
+            max(0.0, x - seed_norm),
+            max(0.0, y - seed_norm),
+            min(1.0, x + seed_norm),
+            min(1.0, y + seed_norm),
+        ]
         with self._lock:
             session_id = self._start(image_path)
             try:
                 w, h = self._image_size(image_path)
-                point_px = _denorm_points([point_norm], w, h)
+                bbox_xywh_norm = np.asarray(
+                    [_xyxy_norm_to_xywh_norm(seed_bbox_xyxy)], dtype=np.float32
+                )
                 self._predictor.handle_request(
                     request=dict(
                         type="add_prompt",
                         session_id=session_id,
                         frame_index=0,
-                        points=point_px,
-                        point_labels=np.asarray([int(point_label)], dtype=np.int32),
+                        bounding_boxes=bbox_xywh_norm,
+                        bounding_box_labels=np.asarray(
+                            [int(point_label) if point_label != 0 else 0], dtype=np.int32
+                        ),
                         obj_id=1,
                     )
                 )
@@ -299,7 +345,7 @@ class SAM3OneModel(BaseDetectorModel):
         score = float(obj.get("score") or 0.0)
         if score < threshold:
             return SAM3ClickMaskResponse(bbox=None, mask_rle=None, score=score)
-        bbox_px = self._object_bbox_px(obj)
+        bbox_px = self._object_bbox_px(obj, w, h)
         bbox_norm = _norm_xyxy(bbox_px, w, h) if bbox_px else None
         mask_rle = obj.get("mask_rle") if return_mask_rle else None
         return SAM3ClickMaskResponse(bbox=bbox_norm, mask_rle=mask_rle, score=score)
@@ -339,11 +385,11 @@ class SAM3OneModel(BaseDetectorModel):
                 finally:
                     self._close(session_id)
 
-                for obj in (outputs.get(0) or {}).get("objects", []):
+                for obj in self._frame_objects(outputs.get(0) or {}):
                     score = float(obj.get("score") or 0.0)
                     if threshold is not None and score < threshold:
                         continue
-                    bbox_px = self._object_bbox_px(obj)
+                    bbox_px = self._object_bbox_px(obj, w, h)
                     if bbox_px is None:
                         continue
                     boxes.append(_norm_xyxy(bbox_px, w, h))
@@ -390,8 +436,8 @@ class SAM3OneModel(BaseDetectorModel):
         for frame_idx in sorted(outputs):
             frame_data = outputs[frame_idx] or {}
             objs: list[SAM3VideoTrackObjectOutput] = []
-            for obj in frame_data.get("objects", []):
-                bbox_px = self._object_bbox_px(obj)
+            for obj in self._frame_objects(frame_data):
+                bbox_px = self._object_bbox_px(obj, w, h)
                 bbox_norm = _norm_xyxy(bbox_px, w, h) if bbox_px else None
                 mask_rle = obj.get("mask_rle") if return_masks else None
                 objs.append(
@@ -483,19 +529,59 @@ class SAM3OneModel(BaseDetectorModel):
         return request
 
     @staticmethod
-    def _first_object(frame_output: dict[str, Any]) -> dict[str, Any] | None:
-        objs = frame_output.get("objects")
-        if not objs:
-            return None
-        return objs[0]
+    def _frame_objects(frame_output: dict[str, Any]) -> list[dict[str, Any]]:
+        """Normalize SAM 3.1's parallel-array frame output to objects.
+
+        Upstream returns ``out_obj_ids`` / ``out_probs`` / ``out_boxes_xywh``
+        / ``out_binary_masks`` as parallel arrays of length N. ``out_boxes_xywh``
+        is in normalized [0,1] xywh; ``out_binary_masks`` is ``(N, H, W)``
+        pixel-space binary masks.
+        """
+        # Upstream emits these as numpy arrays; ``or []`` would raise on
+        # ndarray ambiguity. Probe for None / empty explicitly.
+        raw_ids = frame_output.get("out_obj_ids")
+        obj_ids = list(raw_ids) if raw_ids is not None else []
+        raw_probs = frame_output.get("out_probs")
+        probs = np.asarray(raw_probs) if raw_probs is not None else np.asarray([])
+        raw_boxes = frame_output.get("out_boxes_xywh")
+        boxes = np.asarray(raw_boxes) if raw_boxes is not None else np.zeros((0, 4))
+        masks = frame_output.get("out_binary_masks")
+        out: list[dict[str, Any]] = []
+        for i, oid in enumerate(obj_ids):
+            entry: dict[str, Any] = {
+                "obj_id": int(oid),
+                "score": float(probs[i]) if i < len(probs) else 0.0,
+            }
+            if i < len(boxes):
+                entry["bbox_xywh_norm"] = boxes[i].tolist()
+            if masks is not None and i < len(masks):
+                entry["mask"] = masks[i]
+            out.append(entry)
+        return out
 
     @staticmethod
-    def _object_bbox_px(obj: dict[str, Any]) -> tuple[float, float, float, float] | None:
-        # Predictor outputs vary by build: sometimes ``bbox_px``, sometimes
-        # ``mask`` only. Try the bbox first, fall back to mask.
-        if "bbox_px" in obj and obj["bbox_px"] is not None:
-            x1, y1, x2, y2 = obj["bbox_px"]
-            return float(x1), float(y1), float(x2), float(y2)
+    def _first_object(frame_output: dict[str, Any]) -> dict[str, Any] | None:
+        objs = SAM3OneModel._frame_objects(frame_output)
+        return objs[0] if objs else None
+
+    @staticmethod
+    def _object_bbox_px(obj: dict[str, Any], w: int, h: int) -> tuple[float, float, float, float] | None:
+        """Return tight pixel bbox for the predictor object.
+
+        Prefers the upstream-emitted ``bbox_xywh_norm`` (cheap, exact); falls
+        back to recomputing from the mask when the bbox is absent (older builds
+        or empty boxes).
+        """
+        xywh = obj.get("bbox_xywh_norm")
+        if xywh is not None and len(xywh) == 4:
+            x, y, bw, bh = xywh
+            if bw > 0 and bh > 0:
+                return (
+                    float(x) * w,
+                    float(y) * h,
+                    float(x + bw) * w,
+                    float(y + bh) * h,
+                )
         mask = obj.get("mask")
         if mask is not None:
             return _mask_to_bbox(np.asarray(mask))

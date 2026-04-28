@@ -23,14 +23,30 @@ several wire bugs that the existing unit tests don't catch — they stub the
 HTTP and SDK boundaries. These need to land in a focused PR before
 Workflow A is usable end-to-end.
 
-### Live-integration bugs (open)
+### Live-integration bugs found and resolved (2026-04-28)
 
-| # | Where | Bug | Repro |
+| # | Where | Bug | Status |
 |---|---|---|---|
-| 1 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `refine()` and `click_mask()` | Sends bbox prompts as **pixel xyxy** but `Sam3VideoPredictor.add_prompt` upstream asserts `boxes_xywh` are **normalized [0,1] xywh**. Server returns 500 on any bbox-prompt request. | `Sam3OneHttpClient().click_mask(image_path=..., point=[0.5, 0.5])` — see error in `sam3_video_inference.py:891 assert (boxes_xywh <= 1).all()`. |
-| 2 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `click_mask()` | `add_prompt(points=...)` requires `cached_frame_outputs` populated, only true mid-video. Fresh single-image session → `AssertionError: No cached outputs found` in `_build_tracker_output`. | Same call as #1; happens before the bbox-coord issue if you bypass it. |
-| 3 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `text_detect()` | Server returns 200 but 0 boxes for any prompt on a frame that contains the labeled class, even at threshold 0.3. Suspect text encoder / class-id mapping. | `client.text_detect(image_path="<frame_with_truck>", prompts=["truck"], threshold=0.3)` → empty `boxes`/`scores`. |
-| 4 | [ml_backend/server.py](../ml_backend/server.py) `ManualReviewerMLBackend` | `label_studio_ml`'s `_manager.predict` checks an internal `_model_loaded` flag set by SDK `setup()` callback — our subclass bypasses that lifecycle. Live POST to `/predict` returns 500: `Model is not loaded for type: run setup() before using predict()`. | Run the backend, POST a tasks payload to `:9090/predict`. |
+| 1 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `refine()` / `click_mask()` | Sent bbox prompts as **pixel xyxy** but upstream wants **normalized [0,1] xywh** (`sam3_video_inference.py:891 assert (boxes_xywh <= 1).all()`). | **fixed** — added `_xyxy_norm_to_xywh_norm()` and convert at the seam. |
+| 2 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `click_mask()` | `add_prompt(points=...)` requires `cached_frame_outputs` populated — only true mid-video. Fresh single-image session → `AssertionError: No cached outputs found`. | **worked-around** — `click_mask` now sends a small bbox seed (10% × 10% centered on the click) instead of `points=`; the mask head treats them symmetrically so resulting tight bbox is close to true click→mask. Proper fix (use `SAM3InteractiveImagePredictor` single-image API at [scratchpad/DART/sam3/model/sam1_task_predictor.py](../../scratchpad/DART/sam3/model/sam1_task_predictor.py)) deferred. |
+| 3 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `_first_object` / `_object_bbox_px` | Parser read `frame.get("objects")` but SAM 3.1 v3 emits parallel arrays `out_obj_ids` / `out_probs` / `out_boxes_xywh` / `out_binary_masks`. → 0 results from refine/click/text always. | **fixed** — added `_frame_objects()` helper that converts parallel arrays to the existing object-dict shape. `_object_bbox_px(obj, w, h)` now uses upstream `bbox_xywh_norm` directly when available, falls back to `_mask_to_bbox` otherwise. |
+| 4 | [ml_backend/server.py](../ml_backend/server.py) `ManualReviewerMLBackend` | LS SDK's `_manager.predict` requires `cls._current_model` populated by `/setup` first; our smoke test POSTed straight to `/predict`. | **not actually a bug** — LS UI auto-calls `/setup` when the backend is attached in the project. Manual smoke tests need to POST `/setup` first. |
+
+### Quirks remaining (workflow-tunable, not blockers)
+
+- SAM 3.1 text_detect is **prompt-sensitive**: on the datatang test frame
+  `"vehicle"` → 3 boxes, `"car"` → 1, `"person"` → 1; but `"truck"` and
+  `"bicycle"` → 0. Suggest reviewers try synonyms or use bbox-mode tools.
+  (The same frame's aav4 `finalize` correctly classifies the truck via
+  the VLM evaluate stage, so the seeded predictions are still correct.)
+- smart_click returns the bbox labeled with the keypoint label
+  (`positive`/`negative`) rather than a class. Reviewer changes the class
+  via the rectangle dropdown after the box appears. Polish: make the
+  ML backend pick the currently-selected `RectangleLabels` class from
+  the LS context if present.
+- 199 unit tests pass after the schema rewrite — but they still stub the
+  HTTP boundary. Live-integration tests against a real SAM 3.1 LitServe
+  remain the recommended next step (env-gated).
 
 ### Required follow-up work
 
