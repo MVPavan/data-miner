@@ -1,0 +1,218 @@
+# Label validation config for the Good3 auto-annotated dataset.
+#
+# Pipeline: for each image that has a YOLO label, for each unique class_id
+# present, score the whole image against that class's positive / negative /
+# junk prompts using SigLIP2. Reject (image, class) pairs where the image
+# does not visually match the claimed class.
+#
+# Must match the text encoder of the model used at embedding time:
+#   /mnt/data/data_miner_lance/laion_good3/embeddings (siglip2-giant, 1536-d).
+model: siglip2-giant
+
+# Only these classes are validated this run. Class names must be valid
+# entries in output/auto_annotation_v4/laion_good3/classes.txt.
+# Add or remove names here to expand / shrink the scope without touching
+# anything else.
+classes_to_check:
+  - forklift
+  - palletjack
+
+# Default thresholds.
+#
+# NOTE: these are tuned for siglip2-giant-opt-patch16-384, whose sigmoid
+# scores are far lower than the original SigLIP1 / so400m defaults in
+# data_miner.config.FilterConfig (0.25 / 0.30). Empirically, a true-positive
+# pair on this model produces sigmoid scores around 1e-3 to 1e-2; well-mixed
+# negatives and junk sit at 1e-6 to 1e-4.
+#
+# Recommended workflow for a new class:
+#   1. First pass with --score-only: writes every (image, class) score into
+#      the verdict table without filtering. Inspect the pos_score distribution
+#      per class (the runner logs percentiles and the report JSONL collects
+#      top-K positives).
+#   2. Pick thresholds from that distribution (e.g. positive_thr at the 20th
+#      percentile of true-positive scores) and override per-class below.
+defaults:
+  # Pulled from data_miner/config/default.yaml (project-wide FilterConfig).
+  # These are calibrated for siglip2-so400m; siglip2-giant-opt sigmoid
+  # scores run ~100x smaller, so expect near-zero pass rate. Override
+  # per-class below or swap the embedding model if needed.
+  positive_thr: 0.3
+  negative_thr: 0.3
+  pos_neg_margin_thr: 0.1
+  junk_thr: 0.3
+  pos_junk_margin_thr: 0.1
+
+# Appended to every class's junk list. Use for styles/media that are never
+# a valid real-world detection regardless of class.
+common_junk:
+  - "cartoon drawing"
+  - "toy miniature model"
+  - "cgi 3d render"
+  - "logo or icon"
+  - "text screenshot"
+  - "advertisement poster"
+
+# Per-class prompts. Fill these in based on what false positives you're
+# seeing in the dataset. Leave a list empty ([]) to skip that category.
+classes:
+    forklift:
+      positive:
+        - "a forklift truck in a warehouse"
+        - "an industrial forklift lifting a pallet"
+        - "a yellow forklift with mast and forks"
+      negative:
+        - "a car on the road"
+        - "a truck on the highway"
+        - "a pallet jack without a mast"
+        - "a tractor in a field"
+        - "Gym equipment"
+        - "Lathe machine"
+        - "Toys"
+        - "Measuring tools"
+        - "Cleaning machines"
+        - "Lathe machine"
+        - "Pull rivet gun"
+        - "Tread mill"
+        - "Small machineries"
+        - "Electric battery"
+        - "Stability chair"
+        - "Gauge machines"
+        - "Vacuum cleaners"
+        - "Suction holders"
+        - "Gym machineries"
+        - "Weighing tools"
+        - "Small jacks"
+        - "Cutting tools"
+        - "Hanging weight machines"
+        - "Unicycle"
+        - "Lawn movers"
+        - "bike rack"
+        - "bicycle carrier"
+        - "Engines on trolley"
+        - "Road roller"
+
+
+      junk:
+        - "gym squat rack"
+        - "hardware store shelving"
+        - "toy forklift"
+
+    palletjack:
+      positive:
+        - "a pallet jack hand pump truck moving a pallet"
+        - "a manual pallet jack with tiller handle"
+      negative:
+        - "a forklift with mast and overhead guard"
+        - "a hand truck dolly for boxes"
+        - "a car on the road"
+        - "a truck on the highway"
+        - "a pallet jack without a mast"
+        - "a tractor in a field"
+        - "Gym equipment"
+        - "Lathe machine"
+        - "Toys"
+        - "Measuring tools"
+        - "Cleaning machines"
+        - "Lathe machine"
+        - "Pull rivet gun"
+        - "Tread mill"
+        - "Small machineries"
+        - "Electric battery"
+        - "Stability chair"
+        - "Gauge machines"
+        - "Vacuum cleaners"
+        - "Suction holders"
+        - "Gym machineries"
+        - "Weighing tools"
+        - "Small jacks"
+        - "Cutting tools"
+        - "Hanging weight machines"
+        - "Unicycle"
+        - "Lawn movers"
+        - "bike rack"
+        - "bicycle carrier"
+        - "Engines on trolley"
+        - "Road roller"
+      junk:
+        - "wheeled office chair"
+        - "shopping cart"
+
+
+
+    person:
+      positive:
+        - "person"
+
+      negative:
+        - "a mannequin in a store window"
+        - "a statue of a human figure"
+        - "Toy"
+        - "a cardboard cutout of a person"
+        - "a doll on a shelf"
+        - "a reflection of a person in a mirror"
+        - "a shadow of a person on the ground"
+      junk:
+        - "shop mannequin"
+        - "wax figure"
+        - "human silhouette decal"
+
+    Head:
+      positive:
+        - "Human head"
+      negative:
+        - "a mannequin head"
+        - "a wig stand"
+        - "a helmet on a shelf with no person"
+        - "a mask"
+        - "a statue"
+        - "a doll head"
+        - "toy"
+        - "shadow"
+      junk:
+        - "mannequin head"
+        - "wig display"
+        - "bust sculpture"
+
+    bicycle:
+      positive:
+        - "bicycle"
+      negative:
+        - "a motorcycle"
+        - "a scooter"
+        - "a bike rack without bicycles"
+        - "a bicycle carrier on a car"
+        - "an exercise bike in a gym"
+        - "gym equipment"
+      junk:
+        - "stationary exercise bike"
+        - "spin class bike"
+        - "toy bicycle"
+        - "bike rack"
+
+
+    suitcase:
+      positive:
+        - "suitcase"
+        - "a rolling suitcase in an airport"
+        - "a suitcase on a luggage belt"
+      negative:
+        - "A square shape box"
+        - "square shape"
+
+
+    dog:
+      positive:
+        - "Dog"
+
+      negative:
+        - "Fur"
+
+
+    Shopping cart:
+      positive:
+        - "trolley"
+        - "Shopping cart"
+
+      negative:
+        - "carts people sell fruits"
