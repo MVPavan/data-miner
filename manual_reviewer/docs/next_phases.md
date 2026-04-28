@@ -17,7 +17,65 @@ Self-contained handoff. Read this cold; the code referenced is enough to start.
 
 ## What's left
 
-Phase 2 and Phase 6 landed in this session (see status table above). Only one optional follow-up remains.
+Phase 2 and Phase 6 landed in code, but a live integration test against
+real Label Studio + a real SAM 3.1 LitServe (run on 2026-04-28) surfaced
+several wire bugs that the existing unit tests don't catch — they stub the
+HTTP and SDK boundaries. These need to land in a focused PR before
+Workflow A is usable end-to-end.
+
+### Live-integration bugs (open)
+
+| # | Where | Bug | Repro |
+|---|---|---|---|
+| 1 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `refine()` and `click_mask()` | Sends bbox prompts as **pixel xyxy** but `Sam3VideoPredictor.add_prompt` upstream asserts `boxes_xywh` are **normalized [0,1] xywh**. Server returns 500 on any bbox-prompt request. | `Sam3OneHttpClient().click_mask(image_path=..., point=[0.5, 0.5])` — see error in `sam3_video_inference.py:891 assert (boxes_xywh <= 1).all()`. |
+| 2 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `click_mask()` | `add_prompt(points=...)` requires `cached_frame_outputs` populated, only true mid-video. Fresh single-image session → `AssertionError: No cached outputs found` in `_build_tracker_output`. | Same call as #1; happens before the bbox-coord issue if you bypass it. |
+| 3 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `text_detect()` | Server returns 200 but 0 boxes for any prompt on a frame that contains the labeled class, even at threshold 0.3. Suspect text encoder / class-id mapping. | `client.text_detect(image_path="<frame_with_truck>", prompts=["truck"], threshold=0.3)` → empty `boxes`/`scores`. |
+| 4 | [ml_backend/server.py](../ml_backend/server.py) `ManualReviewerMLBackend` | `label_studio_ml`'s `_manager.predict` checks an internal `_model_loaded` flag set by SDK `setup()` callback — our subclass bypasses that lifecycle. Live POST to `/predict` returns 500: `Model is not loaded for type: run setup() before using predict()`. | Run the backend, POST a tasks payload to `:9090/predict`. |
+
+### Required follow-up work
+
+Pick a focused PR that addresses #1-#4 with **live integration tests** (not
+just stubbed unit tests). Suggested approach:
+
+- **#1 bbox coord convention**: change `_denorm_xyxy` callsites in
+  `refine()` / `click_mask()` to send normalized xywh
+  `[x_norm, y_norm, w_norm, h_norm]`. Decode the response (which comes
+  back in pixel coords from `_mask_to_bbox`) → normalize → return.
+- **#2 click cache prereq**: the right fix is to route click→mask through
+  `SAM3InteractiveImagePredictor` (single-image API at
+  [scratchpad/DART/sam3/model/sam1_task_predictor.py](../../scratchpad/DART/sam3/model/sam1_task_predictor.py)),
+  not the video predictor. Add a separate predictor instance to
+  `SAM3OneModel.load()`, call `set_image()` + `predict(point_coords=...)`
+  for click_mask. Leave the video predictor for refine/text/track.
+- **#3 text_detect**: needs investigation — possibly the SAM 3 (not 3.1)
+  checkpoint at HF `facebook/sam3` lacks the open-vocab text prompting
+  the v3.1 video predictor expects, or our prompt-text → SAM 3.1 text-id
+  bridging is misset in `add_prompt(text=...)`. Try via
+  `Sam3MultiClassPredictorFast` directly (the same path `sam3_dart`
+  uses, which works in production).
+- **#4 LS SDK lifecycle**: align `ManualReviewerMLBackend.__init__` with
+  the LS SDK contract — override `setup()`/`fit()` so `_manager` marks
+  the model loaded. May need to delegate construction inside `setup()`
+  rather than `__init__`. Add a live test that POSTs to a real backend
+  process (`subprocess.Popen` of `python -m manual_reviewer.ml_backend.server`).
+
+### Live-integration test gap
+
+The 174 manual_reviewer tests all stub the SAM 3.1 HTTP client and the LS
+ML SDK. They prove the protocol shapes parse, not that the wire works
+end-to-end. The follow-up PR should add at least:
+
+- `tests/integration/test_sam3_1_live.py` — only runs when
+  `SAM3_1_URL` is reachable; smoke-tests refine + click_mask + text_detect
+  against the real server with assertions on returned bbox ranges.
+- `tests/integration/test_ml_backend_live.py` — boots the backend in a
+  subprocess, POSTs a real LS-shaped payload, asserts `result[].value`
+  shape.
+
+These can be marked `@pytest.mark.integration` and excluded from the
+default suite.
+
+### Optional follow-up (already noted)
 
 ---
 
