@@ -35,7 +35,10 @@ __all__ = [
     "MetaCheckpoint",
     "PromptRef",
     "PromptStepResult",
+    "PropagationVote",
     "ProposalResult",
+    "ReconciledDetection",
+    "ReconcileResult",
     "RefineResult",
     "RefinementInstruction",
     "RefinementNeeded",
@@ -502,6 +505,74 @@ class HumanReviewResult(BaseModel):
     notes: str = ""
     ml_modes_used: list[str] = Field(default_factory=list)
     ls_completion_id: int = 0
+    stage_timing_ms: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Stage RECONCILE (event-driven, written by manual_reviewer/scripts/run_reconcile.py)
+# ---------------------------------------------------------------------------
+
+
+class PropagationVote(BaseModel):
+    """Per-image evidence that contributed to a propagated cluster detection.
+
+    A vote is a single (image_id, candidate_id, score) tuple from a finalize
+    annotation that anchored or witnessed the cluster. The reconciler keeps
+    these so reviewers can see *why* a box was propagated to a frame that the
+    pipeline didn't itself detect.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_id: str
+    candidate_id: str
+    score: float = 0.0
+    source_model: str = ""
+
+
+class ReconciledDetection(BaseModel):
+    """One propagated detection added to a frame that pipeline finalize missed.
+
+    ``seed_bbox`` is the cross-frame canonical box used to query SAM3-DART on
+    the missing frame. ``bbox`` is what SAM3-DART returned (refined).
+    ``mask_score`` is SAM3-DART's confidence; ``seed_iou`` is IoU between
+    seed and refined — both have to clear thresholds for the propagation to
+    be accepted. ``votes`` records which positive frames seeded this cluster.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str
+    class_name: str
+    class_id: int = 0
+    bbox: BoundingBox
+    seed_bbox: BoundingBox
+    mask_score: float = Field(ge=0.0, le=1.0)
+    seed_iou: float = Field(ge=0.0, le=1.0)
+    cluster_id: str
+    votes: list[PropagationVote] = Field(default_factory=list)
+
+
+class ReconcileResult(BaseModel):
+    """Stage RECONCILE output: cross-frame propagated detections for one image.
+
+    Written by ``manual_reviewer/scripts/run_reconcile.py`` after pipeline
+    finalize. Lives in the ``stages`` table under ``stage='reconcile'``;
+    not part of ``STAGE_ORDER`` so the auto pipeline treats it as opt-in
+    audit data, never as a gate.
+
+    ``group_id`` is the frame-grouping key (clip-id by default) that this
+    image belonged to during reconciliation. ``rejected`` lists candidate
+    propagations that failed the SAM3-DART evidence check, kept for audit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_id: str
+    group_id: str = ""
+    propagated: list[ReconciledDetection] = Field(default_factory=list)
+    rejected: list[ReconciledDetection] = Field(default_factory=list)
+    propagation_strategy: str = "image_mode_sam3_dart"
     stage_timing_ms: float = 0.0
 
 

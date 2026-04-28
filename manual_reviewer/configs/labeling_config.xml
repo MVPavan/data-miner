@@ -1,18 +1,10 @@
 <!--
   Label Studio labeling interface for the aa_v4 manual review system.
 
-  Mirrors the spec in docs/review_system.md §7 with two adjustments:
-
-  1. Exemplar mode (Rectangle smart="true" → similar-instances) is omitted
-     for v1 because the current SAM3-DART server does not implement it. The
-     rectangle here is plain (no smart) — reviewers draw new boxes the way
-     they would in any annotation tool. Will be re-enabled in Phase 7 once
-     SAM 3.1 lands with exemplar support.
-
-  2. KeyPointLabels (positive/negative) is gated by the optional ML backend.
-     Phase 1 ships without an ML backend, so leaving the keypoint UI visible
-     would frustrate reviewers; gate by setting `smart="true"` on the
-     rectangle/keypoint groups in Phase 2 when the backend is wired.
+  Phase 2 wiring: KeyPoint and TextArea are gated by `smart="true"` so the
+  ML backend (manual_reviewer.ml_backend.server) handles those interactions.
+  When the ML backend is offline, LS still renders RectangleLabels — only
+  the smart tools become inert.
 
   Class list is the 24-class default; project owners override per-project
   via Label Studio's "Settings → Labeling Interface" UI without editing this
@@ -53,6 +45,21 @@
         <Label value="barrier"    background="#74b9ff"/>
         <Label value="other"      background="#dfe6e9"/>
       </RectangleLabels>
+
+      <!-- smart_click: a KeyPoint draw fires the ML backend, which calls
+           SAM 3.1 click_mask and returns a RectangleLabels region. The
+           reviewer's pre-selected class (if any) carries through. -->
+      <KeyPointLabels name="click" toName="image" smart="true" strokeWidth="3">
+        <Label value="positive" background="#2ecc71"/>
+        <Label value="negative" background="#e74c3c"/>
+      </KeyPointLabels>
+
+      <!-- smart_text: typing into the TextArea fires the ML backend's
+           smart_text route (SAM 3.1 text_detect). Submit returns one
+           RectangleLabels region per match. -->
+      <TextArea name="text_query" toName="image" smart="true"
+                editable="true" maxSubmissions="1"
+                placeholder="text prompt — e.g. 'forklift'"/>
 
       <TextArea name="track_id" toName="image" perRegion="true"
                 placeholder="track_id" editable="true"/>

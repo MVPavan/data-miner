@@ -34,15 +34,19 @@ def _get_registry() -> dict[DetectorName, type]:
         from .grounding_dino import GDINOApi
         from .falcon import FalconApi
         from .sam3_dart import SAM3DartApi
+        from .sam3_1 import SAM3OneApi
         from .owlvit2 import OWLv2Api
         from .omdet_turbo import OmDetTurboApi
+        from .rex_omni import RexOmniApi
 
         _SERVER_REGISTRY.update({
             DetectorName.GROUNDING_DINO: GDINOApi,
             DetectorName.FALCON: FalconApi,
             DetectorName.SAM3_DART: SAM3DartApi,
+            DetectorName.SAM3_1: SAM3OneApi,
             DetectorName.OWLVIT2: OWLv2Api,
             DetectorName.OMDET_TURBO: OmDetTurboApi,
+            DetectorName.REX_OMNI: RexOmniApi,
         })
     return _SERVER_REGISTRY
 

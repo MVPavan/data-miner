@@ -5,7 +5,11 @@ from .db_reader import (
     read_image_payload,
     read_job_info,
 )
-from .db_writer import write_dedup_assignments, write_human_review
+from .db_writer import (
+    write_dedup_assignments,
+    write_human_review,
+    write_reconcile_results,
+)
 from .ls_export_parser import parse_ls_completion
 from .task_builder import build_task
 
@@ -17,4 +21,5 @@ __all__ = [
     "read_job_info",
     "write_dedup_assignments",
     "write_human_review",
+    "write_reconcile_results",
 ]

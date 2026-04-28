@@ -41,6 +41,9 @@ class Stage(StrEnum):
     EVALUATE = "evaluate"
     REFINE = "refine"
     FINALIZE = "finalize"
+    # Event-driven, written by manual_reviewer/scripts/run_reconcile.py.
+    # Cross-frame static-object propagation; NOT in STAGE_ORDER (post-pipeline batch).
+    RECONCILE = "reconcile"
     # Event-driven, written by manual_reviewer/scripts/export_to_aa_v4.py.
     # Deliberately NOT in STAGE_ORDER — the auto pipeline must complete without it.
     HUMAN_REVIEW = "human_review"
@@ -99,13 +102,15 @@ class DetectorName(StrEnum):
     FALCON = "falcon"
     SAM3 = "sam3"
     SAM3_DART = "sam3_dart"
+    SAM3_1 = "sam3_1"
     OWLVIT2 = "owlvit2"
     OMDET_TURBO = "omdet_turbo"
+    REX_OMNI = "rex_omni"
 
     @property
     def is_sam3_family(self) -> bool:
-        """True for SAM3 and SAM3_DART which share the same wire contract."""
-        return self in (DetectorName.SAM3, DetectorName.SAM3_DART)
+        """True for SAM3 / SAM3_DART / SAM3_1 — all share the SAM3RefineRequest wire."""
+        return self in (DetectorName.SAM3, DetectorName.SAM3_DART, DetectorName.SAM3_1)
 
 
 # ---------------------------------------------------------------------------

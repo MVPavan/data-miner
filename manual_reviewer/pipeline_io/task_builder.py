@@ -47,6 +47,11 @@ def build_task(
     evaluate = stages.get("evaluate") or {}
     vlm_summary = _summarize_vlm(evaluate.get("verdicts") or [])
 
+    reconcile = stages.get("reconcile") or {}
+    reconcile_propagated: list[dict[str, Any]] = list(
+        reconcile.get("propagated") or []
+    )
+
     image_size = _resolve_image_size(stages)
 
     image_path = meta.get("image_path", "")
@@ -61,6 +66,7 @@ def build_task(
         "cluster_id": meta.get("dedup_cluster_id"),
         "pre_annotations_finalize": final_annotations,
         "review_items": review_items,
+        "cross_frame_suggestions": reconcile_propagated,
         "vlm_summary": vlm_summary,
         "proposal_summary": _summarize_proposals(proposals),
         "trace_excerpt": image_payload.get("trace_excerpt") or [],
@@ -75,6 +81,7 @@ def build_task(
         width=width,
         height=height,
         model_version=model_version,
+        cross_frame_suggestions=reconcile_propagated,
     )
 
     return {
@@ -173,6 +180,7 @@ def _build_predictions(
     width: int | None,
     height: int | None,
     model_version: str,
+    cross_frame_suggestions: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert finalize annotations into LS RectangleLabels predictions.
 
@@ -183,6 +191,12 @@ def _build_predictions(
 
     Each region's id is the aav4 ``candidate_id`` so the export parser can
     distinguish reviewer-edited ids from new draws.
+
+    ``cross_frame_suggestions`` (Stage RECONCILE output) are added as a
+    secondary prediction group tagged ``meta.source="cross_frame"``, so the
+    LS XML can render them in a distinct color and the export parser can
+    classify their fate (accepted → ``edited``/``finalize``, ignored →
+    deletion).
     """
     review_ids = {
         item.get("candidate_id")
@@ -228,6 +242,48 @@ def _build_predictions(
                     "source_model": ann.get("source_model"),
                     "was_refined": ann.get("was_refined", False),
                     "confidence": ann.get("confidence"),
+                },
+            }
+        )
+
+    for sug in cross_frame_suggestions or []:
+        if not isinstance(sug, dict):
+            continue
+        bbox = sug.get("bbox") or {}
+        candidate_id = sug.get("candidate_id") or ""
+        class_name = sug.get("class_name") or ""
+        if not candidate_id or not class_name:
+            continue
+        try:
+            x1 = float(bbox.get("x1", 0.0))
+            y1 = float(bbox.get("y1", 0.0))
+            x2 = float(bbox.get("x2", 0.0))
+            y2 = float(bbox.get("y2", 0.0))
+        except (TypeError, ValueError):
+            continue
+        results.append(
+            {
+                "id": candidate_id,
+                "type": "rectanglelabels",
+                "from_name": "bbox",
+                "to_name": "image",
+                "original_width": width,
+                "original_height": height,
+                "image_rotation": 0,
+                "value": {
+                    "x": x1 * 100.0,
+                    "y": y1 * 100.0,
+                    "width": (x2 - x1) * 100.0,
+                    "height": (y2 - y1) * 100.0,
+                    "rotation": 0,
+                    "rectanglelabels": [class_name],
+                },
+                "meta": {
+                    "source": "cross_frame",
+                    "cluster_id": sug.get("cluster_id"),
+                    "mask_score": sug.get("mask_score"),
+                    "seed_iou": sug.get("seed_iou"),
+                    "vote_count": len(sug.get("votes") or []),
                 },
             }
         )

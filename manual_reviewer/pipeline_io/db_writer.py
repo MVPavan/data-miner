@@ -12,10 +12,17 @@ import time
 from pathlib import Path
 from typing import Iterable
 
-from data_miner.auto_annotation_v4.configs.contracts import HumanReviewResult
+from data_miner.auto_annotation_v4.configs.contracts import (
+    HumanReviewResult,
+    ReconcileResult,
+)
 from data_miner.auto_annotation_v4.configs.enums import Stage
 
-__all__ = ["write_human_review", "write_dedup_assignments"]
+__all__ = [
+    "write_human_review",
+    "write_dedup_assignments",
+    "write_reconcile_results",
+]
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -70,6 +77,64 @@ def write_human_review(
                 (json.dumps(completed), now, result.image_id),
             )
         conn.commit()
+
+
+def write_reconcile_results(
+    db_path: Path,
+    results: Iterable[ReconcileResult],
+    *,
+    config_hash: str = "",
+    skip_empty: bool = True,
+) -> int:
+    """Persist ``ReconcileResult`` rows under ``stage='reconcile'``.
+
+    Idempotent on re-run (INSERT OR REPLACE keyed on (image_id, stage)) so the
+    reconciler can be invoked multiple times. Also appends "reconcile" to
+    ``image_meta.stages_completed`` for each touched image so the viewer's
+    stage filter discovers the new audit row.
+
+    ``skip_empty=True`` (default) drops rows with no propagated and no rejected
+    detections — those add no information. Set False to write a row for every
+    image (useful when callers want to know "reconcile ran on this image").
+    Returns the number of rows actually written.
+    """
+    now = time.time()
+    written = 0
+    with _connect(db_path) as conn:
+        cur = conn.cursor()
+        for result in results:
+            if skip_empty and not result.propagated and not result.rejected:
+                continue
+            cur.execute(
+                "INSERT OR REPLACE INTO stages (image_id, stage, data, config_hash, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    result.image_id,
+                    Stage.RECONCILE.value,
+                    result.model_dump_json(),
+                    config_hash,
+                    now,
+                ),
+            )
+            meta_row = cur.execute(
+                "SELECT stages_completed FROM image_meta WHERE image_id = ?",
+                (result.image_id,),
+            ).fetchone()
+            if meta_row is not None:
+                try:
+                    completed = json.loads(meta_row["stages_completed"] or "[]")
+                except (TypeError, ValueError):
+                    completed = []
+                if Stage.RECONCILE.value not in completed:
+                    completed.append(Stage.RECONCILE.value)
+                cur.execute(
+                    "UPDATE image_meta SET stages_completed = ?, updated_at = ?"
+                    " WHERE image_id = ?",
+                    (json.dumps(completed), now, result.image_id),
+                )
+            written += 1
+        conn.commit()
+    return written
 
 
 def write_dedup_assignments(

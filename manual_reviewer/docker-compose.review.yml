@@ -1,8 +1,8 @@
-# Phase 1 docker-compose: Label Studio + Postgres only.
+# docker-compose for the manual review system: LS + Postgres + ML backend.
 #
-# The ML backend is added in Phase 2 once SAM 3.1 / Rex-Omni servers exist.
-# Until then, build_tasks.py seeds boxes from the finalize stage (no
-# inference required at task-open time).
+# The ML backend is a pure protocol adapter: it talks HTTP to the SAM 3.1
+# LitServe server (port 3014, started separately on the GPU host) and reads
+# pipeline.db directly. No model weights live in the ml_backend container.
 #
 # LOCAL_FILES_SERVING_ENABLED + LOCAL_FILES_DOCUMENT_ROOT lets the build_tasks
 # default URL template (`/data/local-files/?d={path}`) serve image bytes
@@ -56,6 +56,32 @@ services:
       # the form `/data/local-files/?d=<absolute_path>` resolve. Override
       # IMAGE_HOST_DIR to point at your job's image_dir.
       - ${IMAGE_HOST_DIR:-./images}:/label-studio/data/images:ro
+
+  ml_backend:
+    build:
+      context: ..
+      dockerfile: manual_reviewer/ml_backend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${ML_BACKEND_PORT:-9090}:9090"
+    environment:
+      AAV4_PIPELINE_DB: /data/pipeline.db
+      # SAM 3.1 LitServe server — by default points at the host so the GPU
+      # container (started separately) is reachable. Override to a docker
+      # network address if SAM 3.1 also runs in compose.
+      SAM3_1_URL: ${SAM3_1_URL:-http://host.docker.internal:3014/predict}
+      SAM3_1_TIMEOUT: ${SAM3_1_TIMEOUT:-60}
+      ML_MODEL_VERSION: ${ML_MODEL_VERSION:-manual_reviewer_v1}
+      LABEL_STUDIO_ML_PORT: "9090"
+      LOGLEVEL: ${ML_BACKEND_LOGLEVEL:-INFO}
+    volumes:
+      # Read-only bind mount of the host pipeline.db. The ML backend opens
+      # a query-only sqlite connection so concurrent aav4 writers are safe.
+      - ${AAV4_PIPELINE_DB_HOST:-./pipeline.db}:/data/pipeline.db:ro
+    extra_hosts:
+      # Make host.docker.internal resolve on Linux too — needed because the
+      # SAM 3.1 GPU server lives on the host network, not in compose.
+      - "host.docker.internal:host-gateway"
 
 volumes:
   ls_data:
