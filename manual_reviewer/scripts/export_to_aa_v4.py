@@ -132,6 +132,13 @@ def _walk_export_file(raw: Any) -> list[tuple[dict[str, Any], dict[str, Any], li
 
 
 def _fetch_from_ls(args: argparse.Namespace) -> list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]]:
+    """Page through ``/api/projects/{id}/tasks`` for tasks with annotations.
+
+    The ``/api/projects/{id}/export`` endpoint returns predictions truncated to
+    integer IDs, which strips the seeded prediction objects we need to classify
+    edits as ``relabeled`` / ``edited`` rather than ``added``. The tasks
+    endpoint returns predictions inline.
+    """
     try:
         import httpx
     except ImportError as exc:
@@ -140,14 +147,26 @@ def _fetch_from_ls(args: argparse.Namespace) -> list[tuple[dict[str, Any], dict[
         raise SystemExit("--ls-url requires --ls-token and --ls-project")
 
     base = args.ls_url.rstrip("/")
-    url = f"{base}/api/projects/{args.ls_project}/export"
-    params: dict[str, Any] = {"exportType": "JSON"}
     headers = {"Authorization": f"Token {args.ls_token}"}
+    url = f"{base}/api/projects/{args.ls_project}/tasks"
+
+    raw: list[dict[str, Any]] = []
+    page = 1
+    page_size = 100
     with httpx.Client(timeout=args.ls_timeout, headers=headers) as client:
-        resp = client.get(url, params=params)
-        if resp.status_code >= 300:
-            raise RuntimeError(f"LS export failed {resp.status_code}: {resp.text[:500]}")
-        raw = resp.json()
+        while True:
+            resp = client.get(url, params={"page": page, "page_size": page_size})
+            if resp.status_code >= 300:
+                raise RuntimeError(f"LS tasks fetch failed {resp.status_code}: {resp.text[:500]}")
+            payload = resp.json()
+            tasks = payload if isinstance(payload, list) else payload.get("tasks") or []
+            if not tasks:
+                break
+            raw.extend(t for t in tasks if isinstance(t, dict) and (t.get("annotations") or []))
+            if len(tasks) < page_size:
+                break
+            page += 1
+
     if args.since is not None:
         cutoff = float(args.since)
         raw = [t for t in raw if _task_after(t, cutoff)]
