@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -30,6 +30,8 @@ __all__ = [
     "FinalAnnotation",
     "FinalizeDrop",
     "FinalizeResult",
+    "HumanCorrection",
+    "HumanReviewResult",
     "MetaCheckpoint",
     "PromptRef",
     "PromptStepResult",
@@ -447,6 +449,59 @@ class FinalizeResult(BaseModel):
     review_items: list[dict[str, Any]] = Field(default_factory=list)
     dropped: list[FinalizeDrop] = Field(default_factory=list)
     filter_stats: dict[str, int] = Field(default_factory=dict)
+    stage_timing_ms: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Stage 5: HUMAN_REVIEW (event-driven, written by manual_reviewer)
+# ---------------------------------------------------------------------------
+
+
+class HumanCorrection(BaseModel):
+    """One reviewer-authored annotation in the human review stage.
+
+    ``source`` distinguishes how this correction relates to the upstream
+    finalize output: a ``finalize`` correction is unchanged, ``edited`` is a
+    geometry tweak, ``relabeled`` is a class change, ``added`` is a new draw,
+    and ``kept_dropped`` is a candidate the pipeline filtered out that the
+    reviewer chose to restore. ``original_class`` and ``original_bbox`` are
+    populated only when the corresponding field changed, so audit diffs are
+    cheap to read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str | None = None
+    class_name: str
+    bbox: BoundingBox
+    mask_rle: dict[str, Any] | None = None
+    track_id: str | None = None
+    source: Literal["finalize", "added", "edited", "relabeled", "kept_dropped"]
+    original_class: str | None = None
+    original_bbox: BoundingBox | None = None
+
+
+class HumanReviewResult(BaseModel):
+    """Stage HUMAN_REVIEW output: reviewer corrections and metadata.
+
+    Written by ``manual_reviewer/scripts/export_to_aa_v4.py`` after a Label
+    Studio reviewer submits a completion. Lives in the ``stages`` table under
+    ``stage='human_review'``; not part of ``STAGE_ORDER`` so the auto pipeline
+    treats it as opt-in audit data, never as a gate.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_id: str
+    reviewer_id: str
+    reviewed_at: float
+    duration_seconds: float = 0.0
+    frame_state: Literal["clean", "needs_more_review", "ambiguous_skip"] = "clean"
+    corrections: list[HumanCorrection] = Field(default_factory=list)
+    deletions: list[str] = Field(default_factory=list)
+    notes: str = ""
+    ml_modes_used: list[str] = Field(default_factory=list)
+    ls_completion_id: int = 0
     stage_timing_ms: float = 0.0
 
 

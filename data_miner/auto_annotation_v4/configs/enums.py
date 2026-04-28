@@ -41,6 +41,9 @@ class Stage(StrEnum):
     EVALUATE = "evaluate"
     REFINE = "refine"
     FINALIZE = "finalize"
+    # Event-driven, written by manual_reviewer/scripts/export_to_aa_v4.py.
+    # Deliberately NOT in STAGE_ORDER — the auto pipeline must complete without it.
+    HUMAN_REVIEW = "human_review"
     DONE = "done"
 
 

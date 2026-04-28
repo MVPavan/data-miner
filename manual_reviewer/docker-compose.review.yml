@@ -1,0 +1,62 @@
+# Phase 1 docker-compose: Label Studio + Postgres only.
+#
+# The ML backend is added in Phase 2 once SAM 3.1 / Rex-Omni servers exist.
+# Until then, build_tasks.py seeds boxes from the finalize stage (no
+# inference required at task-open time).
+#
+# LOCAL_FILES_SERVING_ENABLED + LOCAL_FILES_DOCUMENT_ROOT lets the build_tasks
+# default URL template (`/data/local-files/?d={path}`) serve image bytes
+# straight from the host filesystem mounted into the container. Override by
+# pointing image_url_template at S3/HTTPS instead and removing the volume.
+#
+# Bring up:
+#   docker compose -f manual_reviewer/docker-compose.review.yml up -d
+#
+# Stop:
+#   docker compose -f manual_reviewer/docker-compose.review.yml down
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${LS_PG_DB:-labelstudio}
+      POSTGRES_USER: ${LS_PG_USER:-labelstudio}
+      POSTGRES_PASSWORD: ${LS_PG_PASSWORD:-labelstudio}
+    volumes:
+      - ls_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LS_PG_USER:-labelstudio} -d ${LS_PG_DB:-labelstudio}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${LS_PORT:-8080}:8080"
+    environment:
+      DJANGO_DB: default
+      POSTGRE_NAME: ${LS_PG_DB:-labelstudio}
+      POSTGRE_USER: ${LS_PG_USER:-labelstudio}
+      POSTGRE_PASSWORD: ${LS_PG_PASSWORD:-labelstudio}
+      POSTGRE_HOST: postgres
+      POSTGRE_PORT: 5432
+      LABEL_STUDIO_USERNAME: ${LS_USERNAME:-admin@example.com}
+      LABEL_STUDIO_PASSWORD: ${LS_PASSWORD:-changeme}
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /label-studio/data/images
+    volumes:
+      - ls_data:/label-studio/data
+      # Mount your aa_v4 image_dir at /label-studio/data/images so URLs of
+      # the form `/data/local-files/?d=<absolute_path>` resolve. Override
+      # IMAGE_HOST_DIR to point at your job's image_dir.
+      - ${IMAGE_HOST_DIR:-./images}:/label-studio/data/images:ro
+
+volumes:
+  ls_data:
+  ls_pgdata:

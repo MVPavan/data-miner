@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS image_meta (
     config_hash      TEXT NOT NULL DEFAULT '',
     prompt_version   TEXT NOT NULL DEFAULT '',
     total_timing_ms  REAL NOT NULL DEFAULT 0.0,
+    dedup_status     TEXT NOT NULL DEFAULT 'survivor',
+    dedup_cluster_id TEXT,
     created_at       REAL NOT NULL,
     updated_at       REAL NOT NULL
 );
@@ -209,7 +211,33 @@ class CheckpointDB:
         # executescript commits any open transaction then runs in autocommit,
         # so we use executescript for the DDL block.
         await self._db.executescript(_SCHEMA)
+        await self._apply_migrations()
         logger.info("CheckpointDB connected: %s", self.db_path)
+
+    async def _apply_migrations(self) -> None:
+        """Apply additive migrations to DBs created before a column existed.
+
+        Each ALTER is wrapped in try/except so re-running on an already-migrated
+        DB is a no-op. SQLite raises OperationalError "duplicate column name"
+        when a column already exists. Indices that reference newly-added
+        columns must be created here (after the ALTER) rather than in _SCHEMA,
+        because legacy DBs reach _SCHEMA before the column exists.
+        """
+        db = self._require_db()
+        column_migrations = (
+            "ALTER TABLE image_meta ADD COLUMN dedup_status TEXT NOT NULL DEFAULT 'survivor'",
+            "ALTER TABLE image_meta ADD COLUMN dedup_cluster_id TEXT",
+        )
+        for sql in column_migrations:
+            try:
+                await db.execute(sql)
+            except aiosqlite.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_image_meta_dedup ON image_meta(dedup_status)"
+        )
+        await db.commit()
 
     async def close(self) -> None:
         """Close the database connection gracefully.

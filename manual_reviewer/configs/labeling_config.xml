@@ -1,0 +1,76 @@
+<!--
+  Label Studio labeling interface for the aa_v4 manual review system.
+
+  Mirrors the spec in docs/review_system.md §7 with two adjustments:
+
+  1. Exemplar mode (Rectangle smart="true" → similar-instances) is omitted
+     for v1 because the current SAM3-DART server does not implement it. The
+     rectangle here is plain (no smart) — reviewers draw new boxes the way
+     they would in any annotation tool. Will be re-enabled in Phase 7 once
+     SAM 3.1 lands with exemplar support.
+
+  2. KeyPointLabels (positive/negative) is gated by the optional ML backend.
+     Phase 1 ships without an ML backend, so leaving the keypoint UI visible
+     would frustrate reviewers; gate by setting `smart="true"` on the
+     rectangle/keypoint groups in Phase 2 when the backend is wired.
+
+  Class list is the 24-class default; project owners override per-project
+  via Label Studio's "Settings → Labeling Interface" UI without editing this
+  file. The class names must match aa_v4's class registry exactly so that
+  exported relabels round-trip back into pipeline.db without remapping.
+-->
+<View>
+  <Header value="aa_v4 Manual Review"/>
+
+  <View style="display: flex;">
+    <View style="flex: 0 0 70%;">
+      <Image name="image" value="$image" zoom="true" zoomControl="true"
+             rotateControl="false" brightnessControl="false"/>
+
+      <RectangleLabels name="bbox" toName="image">
+        <Label value="forklift"   background="#e74c3c"/>
+        <Label value="palletjack" background="#3498db"/>
+        <Label value="person"     background="#2ecc71"/>
+        <Label value="head"       background="#9b59b6"/>
+        <Label value="cellphone"  background="#e67e22"/>
+        <Label value="wallet"     background="#f1c40f"/>
+        <Label value="bag"        background="#1abc9c"/>
+        <Label value="bicycle"    background="#34495e"/>
+        <Label value="motorcycle" background="#7f8c8d"/>
+        <Label value="car"        background="#c0392b"/>
+        <Label value="truck"      background="#2980b9"/>
+        <Label value="bus"        background="#27ae60"/>
+        <Label value="van"        background="#8e44ad"/>
+        <Label value="cart"       background="#d35400"/>
+        <Label value="trolley"    background="#f39c12"/>
+        <Label value="pallet"     background="#16a085"/>
+        <Label value="box"        background="#2c3e50"/>
+        <Label value="container"  background="#95a5a6"/>
+        <Label value="dog"        background="#e84393"/>
+        <Label value="cat"        background="#fd79a8"/>
+        <Label value="sign"       background="#a29bfe"/>
+        <Label value="cone"       background="#fdcb6e"/>
+        <Label value="barrier"    background="#74b9ff"/>
+        <Label value="other"      background="#dfe6e9"/>
+      </RectangleLabels>
+
+      <TextArea name="track_id" toName="image" perRegion="true"
+                placeholder="track_id" editable="true"/>
+    </View>
+
+    <View style="flex: 0 0 30%; padding-left: 10px;">
+      <View visibleWhen="region-selected">
+        <Header value="Selected region"/>
+      </View>
+
+      <Choices name="frame_state" toName="image" choice="single" required="true">
+        <Choice value="clean" selected="true"/>
+        <Choice value="needs_more_review"/>
+        <Choice value="ambiguous_skip"/>
+      </Choices>
+
+      <TextArea name="notes" toName="image" rows="3" maxSubmissions="1"
+                placeholder="Notes for this image (optional)"/>
+    </View>
+  </View>
+</View>

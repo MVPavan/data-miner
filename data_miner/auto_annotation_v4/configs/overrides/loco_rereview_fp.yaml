@@ -1,0 +1,74 @@
+# Targeted forklift/palletjack re-review override.
+#
+# Merged on top of default.yaml + class_config.yaml. Used by
+# scripts/rereview_classes.py — NOT by the main pipeline entrypoint.
+#
+# Intent: fix the pallet-jack-tiller-read-as-forklift-mast failure mode
+# from the first evaluate pass (palletjack->forklift relabeled 2,772
+# times on LOCO). Keep prompt text concise — long descriptions dilute
+# VLM attention in the already-structured classify_one.yaml template.
+
+class_registry:
+  forklift:
+    description: >
+      Powered truck with a VERTICAL LIFTING MAST and forks.
+      Mast = structural frame at the FRONT with visible lift CHAINS and
+      a fork CARRIAGE that travels up-down. Sub-types all count as
+      forklift: counterbalance (IC or electric, sit-down or stand-up),
+      reach truck (mast + outrigger legs, no counterweight), walkie
+      stacker (walk-behind with a small mast), order picker, telehandler.
+      Any pallet-handling device that can LIFT a pallet higher than
+      knee height -> forklift.
+
+  palletjack:
+    description: >
+      Low-lift pallet mover. Forks raise only a few inches of hydraulic
+      stroke — never stacks pallets. NO mast, NO chains, NO fork
+      carriage, NO overhead guard. Sub-types all count as palletjack:
+      manual (pump-handle tiller), walkie electric (motor housing at
+      handle end), rider (center- or end-control — operator stands on a
+      rear platform with a taller CONTROL COLUMN that has only
+      steering/throttle/display at the top; this column is NOT a mast).
+
+evaluation_groups:
+  industrial:
+    # Group-level disambiguation block. Injected into classify_one.yaml
+    # as {class_descriptions}. Keep short — the per-class details above
+    # carry the nuance; this block is the decision procedure.
+    disambiguation: >
+      Decide in this order:
+        1. Mast test: if a structural frame with lift CHAINS / hydraulic
+           cylinders and a fork CARRIAGE is visible above the forks ->
+           forklift. Forks may be at ground level; the mast is the signal.
+        2. Lift test: can the device stack a pallet above knee height
+           (~30 cm)? Yes -> forklift. Floor-only lift -> palletjack.
+        3. Only if 1 and 2 are inconclusive, use body cues (counterweight
+           or outrigger legs, overhead guard -> forklift; no body, just
+           forks + tiller/column at rear -> palletjack).
+      Common trap: a pallet-jack tiller or rider control column is a
+      single bar/column at the REAR with only steering + throttle. It
+      has no chains, no cylinders, no carriage — it is NOT a mast.
+      Any pallet-handling device with forks must classify as forklift
+      or palletjack — never "other".
+      Platform + handle with no forks at all -> shopping cart.
+    annotation_rules:
+      forklift: >
+        Include the mast and any load (pallets/boxes) resting on the forks
+        in the bbox. If load extends outside the bbox, bbox is LOOSE
+        (lower bbox_score).
+      palletjack: >
+        Include the tiller/control column AND any load on the forks in
+        the bbox. Load outside the bbox -> LOOSE (lower bbox_score).
+
+evaluate:
+  reject_below: 0.4
+  accept_above: 0.7
+  bbox_reject_below: 0.4
+  bbox_accept_above: 0.7
+  vlm_image:
+    format: JPEG
+    max_size: 1280
+    quality: 90
+
+refine_rules:
+  classes: {}

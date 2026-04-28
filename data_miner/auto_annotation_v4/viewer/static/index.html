@@ -24,6 +24,32 @@
   #filters select { flex: 1; min-width: 0; padding: 4px 6px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; font-size: 12px; outline: none; }
   #filters select:focus { border-color: var(--accent); }
   #count { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  #job-label { font-size: 11px; color: var(--muted); margin-top: 2px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #job-label b { color: #93c5fd; font-weight: 500; }
+
+  /* Class search panel (sidebar) */
+  #class-search { margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; }
+  #class-search > summary { cursor: pointer; font-size: 12px; color: var(--text); list-style: none; padding: 2px 0; user-select: none; display: flex; align-items: center; gap: 6px; }
+  #class-search > summary::-webkit-details-marker { display: none; }
+  #class-search > summary::before { content: "▸"; transition: transform 0.1s; font-size: 10px; }
+  #class-search[open] > summary::before { transform: rotate(90deg); display: inline-block; }
+  #class-search .cs-active-badge { background: var(--accent); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 8px; display: none; }
+  #class-search.active .cs-active-badge { display: inline-block; }
+  .cs-row { margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+  .cs-row label { font-size: 11px; color: var(--muted); }
+  .cs-row select, .cs-row input[type=text] {
+    flex: 1; min-width: 0; padding: 3px 6px; background: var(--bg3);
+    border: 1px solid var(--border); color: var(--text); border-radius: 4px;
+    font-size: 12px; outline: none;
+  }
+  .cs-row select[multiple] { height: 96px; padding: 2px; }
+  .cs-row select:focus, .cs-row input:focus { border-color: var(--accent); }
+  .cs-actions { margin-top: 8px; display: flex; gap: 6px; }
+  .cs-actions button { flex: 1; padding: 4px 6px; background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .cs-actions button:hover { border-color: var(--accent); }
+  .cs-actions button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .cs-actions button.primary:hover { background: #2563eb; }
+  .cs-row.hidden { display: none; }
   #image-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
   #image-list .loading-row { text-align: center; color: var(--muted); font-size: 12px; padding: 10px 0; }
   .stem-btn { display: flex; justify-content: space-between; align-items: center; gap: 6px; width: 100%; text-align: left; padding: 6px 10px; margin-bottom: 2px; background: none; border: none; color: var(--text); cursor: pointer; border-radius: 4px; font-size: 13px; }
@@ -104,6 +130,7 @@
 <div id="sidebar">
   <div id="sidebar-header">
     <h2>Images <button id="refresh-btn" title="Re-scan job directory">↻</button></h2>
+    <div id="job-label">Job: <b id="job-name">…</b></div>
     <input id="search" type="text" placeholder="Search image ids…">
     <div id="filters">
       <select id="status-filter" title="Filter by image_meta.status">
@@ -113,6 +140,43 @@
         <option value="">Any stage</option>
       </select>
     </div>
+    <details id="class-search">
+      <summary>Filter by class at stage <span class="cs-active-badge">active</span></summary>
+      <div class="cs-row">
+        <select id="cs-stage" title="Pipeline stage at which the class is matched">
+          <option value="">– pick a stage –</option>
+        </select>
+      </div>
+      <div class="cs-row hidden" id="cs-class-row">
+        <select id="cs-class" multiple title="Class names — Ctrl/⌘-click for multi-select"></select>
+      </div>
+      <div class="cs-row hidden" id="cs-status-row">
+        <select id="cs-status" multiple title="Stage-specific status"></select>
+      </div>
+      <div class="cs-row hidden" id="cs-reason-row">
+        <select id="cs-reason" multiple title="Filter drop reasons (only when 'dropped' is in status)"></select>
+      </div>
+      <div class="cs-row hidden" id="cs-role-row">
+        <label>role:</label>
+        <select id="cs-role" title="At evaluate: match original class, VLM verdict, or either">
+          <option value="either">either</option>
+          <option value="original">original</option>
+          <option value="verdict">verdict</option>
+        </select>
+      </div>
+      <div class="cs-row hidden" id="cs-relabel-row">
+        <input type="text" id="cs-relabel-from" placeholder="from class">
+        <span style="color:var(--muted)">→</span>
+        <input type="text" id="cs-relabel-to" placeholder="to class">
+      </div>
+      <div class="cs-row hidden" id="cs-model-row">
+        <select id="cs-model" multiple title="Detect source models"></select>
+      </div>
+      <div class="cs-actions">
+        <button class="primary" id="cs-apply" title="Apply class search">Apply</button>
+        <button id="cs-clear" title="Clear class search; revert to image-id list">Clear</button>
+      </div>
+    </details>
     <div id="count"></div>
   </div>
   <div id="image-list"></div>
@@ -164,6 +228,8 @@ const S = {
   stemStage: '',
   stemLoading: false,
   stemHasMore: true,
+  classSearch: null,    // {stage, classes:[], statuses:[], reasons:[], role, relabel_from, relabel_to, source_models:[]}
+  searchSchema: null,   // /api/search/schema response, lazy-loaded on first apply
   currentStem: null,
   currentStage: 'proposals',
   data: null,
@@ -292,11 +358,25 @@ async function fetchJSON(url) {
 // Sidebar (server-side pagination + filters)
 // ---------------------------------------------------------------------------
 
-// Build the URL for /api/stems with the current filter state.
+// Build the URL for the current sidebar query.  When the class-search panel
+// is active we hit /api/search instead of /api/stems; both endpoints return
+// the same response shape so the rest of the rendering pipeline is unchanged.
 function stemsURL(offset) {
   const params = new URLSearchParams();
   params.set('offset', String(offset));
   params.set('limit', String(S.stemLimit));
+  if (S.classSearch && S.classSearch.stage) {
+    const cs = S.classSearch;
+    params.set('stage', cs.stage);
+    if (cs.classes  && cs.classes.length)  params.set('classes',  cs.classes.join(','));
+    if (cs.statuses && cs.statuses.length) params.set('statuses', cs.statuses.join(','));
+    if (cs.reasons  && cs.reasons.length)  params.set('reasons',  cs.reasons.join(','));
+    if (cs.role && cs.role !== 'either')   params.set('class_role', cs.role);
+    if (cs.relabel_from)                   params.set('relabel_from', cs.relabel_from);
+    if (cs.relabel_to)                     params.set('relabel_to',   cs.relabel_to);
+    if (cs.source_models && cs.source_models.length) params.set('source_models', cs.source_models.join(','));
+    return '/api/search?' + params.toString();
+  }
   if (S.stemQuery)  params.set('q',      S.stemQuery);
   if (S.stemStatus) params.set('status', S.stemStatus);
   if (S.stemStage)  params.set('stage',  S.stemStage);
@@ -404,6 +484,126 @@ async function refreshStems() {
   showToast(delta > 0 ? `${delta} new image(s)` : 'No new images');
 }
 document.getElementById('refresh-btn').onclick = refreshStems;
+
+// ---------------------------------------------------------------------------
+// Class-search panel (sidebar) — stage-aware class/status filter on top of
+// /api/search. Each stage exposes a different option universe (classes,
+// statuses, drop reasons, source models, relabel pairs); the panel hides
+// rows that don't apply to the current stage.
+// ---------------------------------------------------------------------------
+const CS = {
+  panel:    document.getElementById('class-search'),
+  stage:    document.getElementById('cs-stage'),
+  classRow: document.getElementById('cs-class-row'),
+  classSel: document.getElementById('cs-class'),
+  statusRow:document.getElementById('cs-status-row'),
+  statusSel:document.getElementById('cs-status'),
+  reasonRow:document.getElementById('cs-reason-row'),
+  reasonSel:document.getElementById('cs-reason'),
+  roleRow:  document.getElementById('cs-role-row'),
+  roleSel:  document.getElementById('cs-role'),
+  relabRow: document.getElementById('cs-relabel-row'),
+  relabFrom:document.getElementById('cs-relabel-from'),
+  relabTo:  document.getElementById('cs-relabel-to'),
+  modelRow: document.getElementById('cs-model-row'),
+  modelSel: document.getElementById('cs-model'),
+  apply:    document.getElementById('cs-apply'),
+  clear:    document.getElementById('cs-clear'),
+};
+
+function _fillSelect(sel, opts) {
+  const prev = new Set([...sel.selectedOptions].map(o => o.value));
+  sel.innerHTML = '';
+  for (const v of opts) {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v;
+    if (prev.has(v)) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+async function _ensureSchema() {
+  if (S.searchSchema) return S.searchSchema;
+  S.searchSchema = await fetchJSON('/api/search/schema');
+  // Populate the stage dropdown once.
+  CS.stage.innerHTML = '<option value="">– pick a stage –</option>';
+  for (const s of (S.searchSchema.stages || [])) {
+    const o = document.createElement('option');
+    o.value = s.id; o.textContent = s.label;
+    CS.stage.appendChild(o);
+  }
+  return S.searchSchema;
+}
+
+function _renderCSStageRows() {
+  const stage = CS.stage.value;
+  const sch = (S.searchSchema || {})[stage] || {};
+  // class row visible whenever a stage is picked
+  CS.classRow.classList.toggle('hidden', !stage);
+  // status row hidden when stage has no statuses (detect)
+  const hasStatuses = (sch.statuses || []).length > 0;
+  CS.statusRow.classList.toggle('hidden', !stage || !hasStatuses);
+  // reason row only on filter, when 'dropped' is selected
+  const dropSelected = stage === 'filter' && [...CS.statusSel.selectedOptions].some(o => o.value === 'dropped');
+  CS.reasonRow.classList.toggle('hidden', stage !== 'filter' || !dropSelected);
+  // role + relabel rows only on evaluate
+  CS.roleRow.classList.toggle('hidden', stage !== 'evaluate');
+  CS.relabRow.classList.toggle('hidden', stage !== 'evaluate');
+  // source-model row only on detect
+  CS.modelRow.classList.toggle('hidden', stage !== 'detect');
+
+  if (!stage) return;
+  _fillSelect(CS.classSel,  sch.classes  || []);
+  _fillSelect(CS.statusSel, sch.statuses || []);
+  _fillSelect(CS.reasonSel, sch.reasons  || []);
+  _fillSelect(CS.modelSel,  sch.source_models || []);
+}
+
+CS.stage.addEventListener('change', () => { _renderCSStageRows(); });
+CS.statusSel.addEventListener('change', _renderCSStageRows);
+
+CS.apply.onclick = async () => {
+  const stage = CS.stage.value;
+  if (!stage) { showToast('Pick a stage first'); return; }
+  const cs = {
+    stage,
+    classes:  [...CS.classSel.selectedOptions].map(o => o.value),
+    statuses: [...CS.statusSel.selectedOptions].map(o => o.value),
+    reasons:  [...CS.reasonSel.selectedOptions].map(o => o.value),
+    role:     CS.roleSel.value,
+    relabel_from: CS.relabFrom.value.trim(),
+    relabel_to:   CS.relabTo.value.trim(),
+    source_models: [...CS.modelSel.selectedOptions].map(o => o.value),
+  };
+  S.classSearch = cs;
+  CS.panel.classList.add('active');
+  await loadStemsPage({ reset: true });
+  // Re-fetch schema so class lists from the now-warmed index back-populate.
+  S.searchSchema = null;
+  _ensureSchema().then(() => { _renderCSStageRows(); });
+};
+
+CS.clear.onclick = async () => {
+  S.classSearch = null;
+  CS.panel.classList.remove('active');
+  // Keep the panel selections intact so re-applying is one click away.
+  await loadStemsPage({ reset: true });
+};
+
+// Lazy-init the schema when the panel is first opened.
+CS.panel.addEventListener('toggle', () => {
+  if (CS.panel.open && !S.searchSchema) {
+    _ensureSchema().then(() => { _renderCSStageRows(); });
+  }
+});
+
+// Load /api/job once at startup → display the job_id in the sidebar.
+fetchJSON('/api/job').then(d => {
+  const name = (d && d.job_id) || (d && d.job_info && d.job_info.job_id) || '—';
+  const el = document.getElementById('job-name');
+  if (el) { el.textContent = name; el.title = name; }
+  document.title = `AA v4 — ${name}`;
+}).catch(() => {});
 
 // ---------------------------------------------------------------------------
 // Image selection
