@@ -6,11 +6,20 @@ that don't have ``label_studio_ml`` installed (the tests stub it).
 
 Configuration via env vars:
 
-  AAV4_PIPELINE_DB  required for batch route (cached proposals lookup)
-  SAM3_1_URL        SAM 3.1 LitServe endpoint (default: localhost:3014)
-  SAM3_1_TIMEOUT    HTTP timeout in seconds (default: 60)
-  ML_MODEL_VERSION  passed back to LS as predictions[].model_version
-                    (default: ``manual_reviewer_v1``)
+  AAV4_PIPELINE_DB         required for batch route (cached proposals lookup)
+  SAM3_1_URL               SAM 3.1 LitServe endpoint (default: localhost:3014)
+  SAM3_1_TIMEOUT           HTTP timeout in seconds (default: 60)
+  ML_MODEL_VERSION         passed back to LS as predictions[].model_version
+                           (default: ``manual_reviewer_v1``)
+
+Per-route gates (Phase D-toggles). Default all enabled. Restart-to-toggle
+is fine for v1; we don't need a runtime endpoint with one reviewer.
+
+  ENABLE_BATCH_PROPOSALS   task-open cached-proposals seed
+  ENABLE_SMART_CLICK       KeyPoint draft → SAM 3.1 click_mask
+  ENABLE_SMART_TEXT        TextArea submit → SAM 3.1 text_detect
+  ENABLE_VISUAL_PROMPT     V-tool draft → SAM 3.1 visual_prompt
+  ENABLE_PROPAGATE_STATIC  Phase C cross-frame static propagation
 """
 
 from __future__ import annotations
@@ -27,9 +36,36 @@ from manual_reviewer.ml_backend.routes import (
     batch_proposals,
     smart_click,
     smart_text,
+    visual_prompt,
 )
 
 logger = logging.getLogger(__name__)
+
+
+_ROUTE_ENV_VARS = {
+    "batch_proposals": "ENABLE_BATCH_PROPOSALS",
+    "smart_click": "ENABLE_SMART_CLICK",
+    "smart_text": "ENABLE_SMART_TEXT",
+    "visual_prompt": "ENABLE_VISUAL_PROMPT",
+    "propagate_static": "ENABLE_PROPAGATE_STATIC",
+}
+
+
+def _route_enabled(name: str) -> bool:
+    """True unless the route's gate env var is set to a falsy value.
+
+    Falsy spellings (case-insensitive): ``0``, ``false``, ``no``, ``off``,
+    ``disabled``, ``""``. Anything else (including unset) keeps the route
+    enabled — defaults are open so the reviewer doesn't have to set five
+    env vars to get the working set back.
+    """
+    env_name = _ROUTE_ENV_VARS.get(name)
+    if env_name is None:
+        return True
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off", "disabled", ""}
 
 
 def _load_ls_base() -> type:
@@ -122,19 +158,60 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
             "yes" if self._sam3_client else "no",
             "yes" if self._db_path else "no",
         )
-        if isinstance(context, dict) and context.get("result"):
+        has_draft = isinstance(context, dict) and bool(context.get("result"))
+        if has_draft:
+            # Visual prompt is discriminated by the V-tool's from_name, not
+            # by region type — a regular bbox draw also produces type
+            # "rectanglelabels" and we don't want THAT to fire ML.
+            has_v_tool = self._sam3_client and any(
+                isinstance(r, dict) and r.get("from_name") == "visual_prompt"
+                for r in context["result"]
+            )
+            if has_v_tool and _route_enabled("visual_prompt"):
+                out = visual_prompt(task, context, self._sam3_client)
+                logger.info("→ visual_prompt returned %d region(s)", len(out))
+                return out
+            if has_v_tool:
+                logger.info("→ visual_prompt disabled by env, falling through")
+            # `continue` (not `return []`) on a gated-off branch so a mixed
+            # context (e.g. textarea + keypoint) with one disabled route +
+            # one enabled route still reaches the enabled route below.
+            # Same applies when V-tool is gated off but a keypoint/textarea
+            # also rides on the same draft.
             for region in context["result"]:
                 if not isinstance(region, dict):
                     continue
+                if region.get("from_name") == "visual_prompt":
+                    # V-tool draft regions are handled by the visual_prompt
+                    # branch above; never let them fall through into the
+                    # smart_click / smart_text dispatchers (a V-tool
+                    # rectangle would otherwise type-match `rectanglelabels`
+                    # and trigger nothing useful here either way).
+                    continue
                 rtype = (region.get("type") or "").lower()
                 if rtype in {"keypointlabels", "keypoint"} and self._sam3_client:
+                    if not _route_enabled("smart_click"):
+                        logger.info("→ smart_click disabled by env, skipping draft")
+                        continue
                     out = smart_click(task, context, self._sam3_client)
                     logger.info("→ smart_click returned %d region(s)", len(out))
                     return out
                 if rtype == "textarea" and self._sam3_client:
+                    if not _route_enabled("smart_text"):
+                        logger.info("→ smart_text disabled by env, skipping draft")
+                        continue
                     out = smart_text(task, context, self._sam3_client)
                     logger.info("→ smart_text returned %d region(s)", len(out))
                     return out
+            # We had a draft but no enabled smart route handled it. Don't
+            # fall through to batch_proposals — that would seed the canvas
+            # with cached proposals after a click/textarea, which the
+            # reviewer didn't ask for.
+            logger.info("→ no enabled smart route matched draft, returning empty")
+            return []
+        if not _route_enabled("batch_proposals"):
+            logger.info("→ batch_proposals disabled by env, skipping")
+            return []
         out = batch_proposals(task, self._db_path)
         logger.info("→ batch_proposals returned %d region(s)", len(out))
         return out

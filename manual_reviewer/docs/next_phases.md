@@ -32,6 +32,14 @@ Workflow A is usable end-to-end.
 | 3 | [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) `_first_object` / `_object_bbox_px` | Parser read `frame.get("objects")` but SAM 3.1 v3 emits parallel arrays `out_obj_ids` / `out_probs` / `out_boxes_xywh` / `out_binary_masks`. → 0 results from refine/click/text always. | **fixed** — added `_frame_objects()` helper that converts parallel arrays to the existing object-dict shape. `_object_bbox_px(obj, w, h)` now uses upstream `bbox_xywh_norm` directly when available, falls back to `_mask_to_bbox` otherwise. |
 | 4 | [ml_backend/server.py](../ml_backend/server.py) `ManualReviewerMLBackend` | LS SDK's `_manager.predict` requires `cls._current_model` populated by `/setup` first; our smoke test POSTed straight to `/predict`. | **not actually a bug** — LS UI auto-calls `/setup` when the backend is attached in the project. Manual smoke tests need to POST `/setup` first. |
 
+### Auto-label feature extensions (planning, 2026-04-28)
+
+Discussion-first plan for the next round of auto-label features (smart_click
+class fix, within-image visual prompting, cross-frame same-object
+propagation, master toggles, UI layout) lives at
+[auto_label_extensions.md](auto_label_extensions.md). Work through it with
+the user one phase at a time before writing code.
+
 ### Quirks remaining (workflow-tunable, not blockers)
 
 - SAM 3.1 text_detect is **prompt-sensitive**: on the datatang test frame

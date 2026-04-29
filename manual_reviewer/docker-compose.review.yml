@@ -32,7 +32,13 @@ services:
       retries: 5
 
   label-studio:
-    image: heartexlabs/label-studio:latest
+    # Pinned: the wire shape (smart-tool draft from_name discriminator,
+    # task list pagination, predictions[0] ordering) is sensitive to LS
+    # internals. Override LS_VERSION at compose-time after re-running the
+    # smoke test. Do not switch to ``latest`` without verifying that
+    # task_builder predictions still seed correctly and the export parser
+    # still classifies edits.
+    image: heartexlabs/label-studio:${LS_VERSION:-1.13.1}
     restart: unless-stopped
     depends_on:
       postgres:

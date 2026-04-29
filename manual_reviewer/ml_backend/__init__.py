@@ -15,6 +15,7 @@ from manual_reviewer.ml_backend.routes import (
     dispatch,
     smart_click,
     smart_text,
+    visual_prompt,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "dispatch",
     "smart_click",
     "smart_text",
+    "visual_prompt",
 ]

@@ -29,6 +29,8 @@ __all__ = [
     "SAM3VideoTrackSeed",
     "SAM3VideoTrackFrameOutput",
     "SAM3VideoTrackObjectOutput",
+    "SAM3VisualPromptRequest",
+    "SAM3VisualPromptResponse",
     "PreparedInput",
     "RawPrediction",
 ]
@@ -210,6 +212,58 @@ class SAM3VideoTrackResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     frames: list[SAM3VideoTrackFrameOutput] = []
+
+
+# ---------------------------------------------------------------------------
+# SAM 3.1 visual-prompt wire models
+# ---------------------------------------------------------------------------
+#
+# Used by the manual_reviewer LS ML backend's "find similar in image" flow:
+# reviewer selects one or more exemplar boxes on the canvas, the backend
+# routes them through SAM 3.1's geometric-prompt grounding head, and
+# returns every matching instance in the same image as new boxes.
+#
+# Backed by ``Sam3Processor.add_geometric_prompt`` (see SAM 3.1
+# sam3_image_processor.py) which feeds the exemplar bbox into the same
+# grounding head that text prompts use, so output is whole-image inference,
+# not just within the prompt box.
+
+
+class SAM3VisualPromptRequest(BaseModel):
+    """Wire request for SAM 3.1 box-prompt grounding.
+
+    ``exemplar_boxes_norm`` are normalized [x1, y1, x2, y2] in [0, 1] —
+    aav4's standard external bbox format. The server converts to SAM 3.1's
+    internal normalized cxcywh at the seam.
+
+    ``exemplar_labels`` is parallel to ``exemplar_boxes_norm`` and follows
+    SAM convention (1 = positive exemplar, 0 = negative). Defaults to all
+    positives when omitted. v1 of the manual_reviewer flow only uses a
+    single positive exemplar; multi-exemplar + negatives ride along here
+    so v2 doesn't need a wire change.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    image_path: str
+    exemplar_boxes_norm: list[list[float]]
+    exemplar_labels: list[int] = []
+    threshold: float = 0.4
+    max_results: int = 50
+
+
+class SAM3VisualPromptResponse(BaseModel):
+    """Wire response for SAM 3.1 box-prompt grounding.
+
+    Boxes are normalized [x1, y1, x2, y2] in [0, 1]. Mask RLEs are returned
+    only when the request asks for them (large payloads); v1 always omits.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    boxes_norm: list[list[float]] = []
+    scores: list[float] = []
+    mask_rles: list[dict[str, Any]] | None = None
 
 
 # ---------------------------------------------------------------------------

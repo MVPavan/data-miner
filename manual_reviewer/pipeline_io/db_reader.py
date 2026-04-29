@@ -8,27 +8,34 @@ pipeline writer because WAL allows concurrent reads.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Iterator
+
+logger = logging.getLogger(__name__)
+_FALLBACK_WARNED: set[str] = set()
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), timeout=5)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA query_only = TRUE")
     return conn
 
 
 def _has_dedup_columns(db_path: Path) -> bool:
-    with _connect(db_path) as conn:
+    with closing(_connect(db_path)) as conn:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(image_meta)").fetchall()}
     return "dedup_status" in cols and "dedup_cluster_id" in cols
 
 
 def read_job_info(db_path: Path) -> dict[str, Any] | None:
     """Return the singleton job_info row as a dict, or None if absent."""
-    with _connect(db_path) as conn:
+    with closing(_connect(db_path)) as conn:
         row = conn.execute("SELECT * FROM job_info LIMIT 1").fetchone()
     return dict(row) if row else None
 
@@ -50,6 +57,17 @@ def iter_survivor_images(
     stays usable without a forced migration roundtrip.
     """
     if not _has_dedup_columns(db_path):
+        # Once-per-DB warning so operators see the fallback signal without
+        # log spam from repeated calls in the same process.
+        key = str(db_path.resolve())
+        if key not in _FALLBACK_WARNED:
+            logger.warning(
+                "DB %s lacks dedup columns; treating all images as survivors. "
+                "Run scripts/mark_dedup.py or re-open with CheckpointDB.connect "
+                "to apply the idempotent ALTER and clear this fallback.",
+                db_path,
+            )
+            _FALLBACK_WARNED.add(key)
         sql = (
             "SELECT image_id, image_path, status, stages_completed, "
             "NULL AS dedup_status, NULL AS dedup_cluster_id, total_timing_ms "
@@ -65,7 +83,7 @@ def iter_survivor_images(
     if limit is not None:
         sql += " LIMIT ?"
         params = (limit,)
-    with _connect(db_path) as conn:
+    with closing(_connect(db_path)) as conn:
         rows = conn.execute(sql, params).fetchall()
     for row in rows:
         record = dict(row)

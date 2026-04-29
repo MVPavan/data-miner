@@ -13,6 +13,7 @@ default canvas. VLM verdicts and per-model proposal summaries are folded into
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 
 def build_task(
@@ -55,7 +56,14 @@ def build_task(
     image_size = _resolve_image_size(stages)
 
     image_path = meta.get("image_path", "")
-    image_url = image_url_template.format(path=image_path) if image_path else ""
+    # LS local-files-serving expects the path as a URL query value. ``?``,
+    # ``&``, ``#``, ``%`` and spaces in the original path would otherwise
+    # break the URL silently and the reviewer sees a blank canvas.
+    image_url = (
+        image_url_template.format(path=quote(image_path, safe="/"))
+        if image_path
+        else ""
+    )
 
     data: dict[str, Any] = {
         "image": image_url,

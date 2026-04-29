@@ -1,83 +1,155 @@
 <!--
   Label Studio labeling interface for the aa_v4 manual review system.
 
-  Phase 2 wiring: KeyPoint and TextArea are gated by `smart="true"` so the
-  ML backend (manual_reviewer.ml_backend.server) handles those interactions.
-  When the ML backend is offline, LS still renders RectangleLabels — only
-  the smart tools become inert.
+  Phase A: <RectangleLabels name="bbox"> drives the rectangle tool and
+  carries the 24-class palette. <KeyPointLabels name="click"> mirrors the
+  same palette for the smart_click tool so the reviewer's hotkey class
+  rides every keypoint draft as value.keypointlabels. Class names match
+  aa_v4's class registry exactly so that exported relabels round-trip
+  back into pipeline.db without remapping.
 
-  Class list is the 24-class default; project owners override per-project
-  via Label Studio's "Settings → Labeling Interface" UI without editing this
-  file. The class names must match aa_v4's class registry exactly so that
-  exported relabels round-trip back into pipeline.db without remapping.
+  Wire alignment (codebase_review_2026-04-29 #1): the predictions seeded
+  by task_builder use type="rectanglelabels" / from_name="bbox", and the
+  export parser reads the same shape. Using <RectangleLabels> here means
+  LS doesn't need to auto-split predictions on display, and reviewer
+  commits round-trip in the same shape — no parentID linking required.
+
+  KeyPoint, TextArea and the V-tool Rectangle are gated by `smart="true"`
+  so the ML backend handles those interactions. When the ML backend is
+  offline, LS still renders the rectangle tool — only the smart tools
+  become inert.
 -->
 <View>
   <Header value="aa_v4 Manual Review"/>
 
-  <View style="display: flex;">
-    <View style="flex: 0 0 70%;">
-      <Image name="image" value="$image" zoom="true" zoomControl="true"
-             rotateControl="false" brightnessControl="false"/>
+  <Image name="image" value="$image" zoom="true" zoomControl="true"
+         rotateControl="false" brightnessControl="false"
+         maxHeight="78vh"/>
 
-      <RectangleLabels name="bbox" toName="image">
-        <Label value="forklift"   background="#e74c3c"/>
-        <Label value="palletjack" background="#3498db"/>
-        <Label value="person"     background="#2ecc71"/>
-        <Label value="head"       background="#9b59b6"/>
-        <Label value="cellphone"  background="#e67e22"/>
-        <Label value="wallet"     background="#f1c40f"/>
-        <Label value="bag"        background="#1abc9c"/>
-        <Label value="bicycle"    background="#34495e"/>
-        <Label value="motorcycle" background="#7f8c8d"/>
-        <Label value="car"        background="#c0392b"/>
-        <Label value="truck"      background="#2980b9"/>
-        <Label value="bus"        background="#27ae60"/>
-        <Label value="van"        background="#8e44ad"/>
-        <Label value="cart"       background="#d35400"/>
-        <Label value="trolley"    background="#f39c12"/>
-        <Label value="pallet"     background="#16a085"/>
-        <Label value="box"        background="#2c3e50"/>
-        <Label value="container"  background="#95a5a6"/>
-        <Label value="dog"        background="#e84393"/>
-        <Label value="cat"        background="#fd79a8"/>
-        <Label value="sign"       background="#a29bfe"/>
-        <Label value="cone"       background="#fdcb6e"/>
-        <Label value="barrier"    background="#74b9ff"/>
-        <Label value="other"      background="#dfe6e9"/>
-      </RectangleLabels>
+  <RectangleLabels name="bbox" toName="image">
+    <Label value="forklift"   background="#e74c3c"/>
+    <Label value="palletjack" background="#3498db"/>
+    <Label value="person"     background="#2ecc71"/>
+    <Label value="head"       background="#9b59b6"/>
+    <Label value="cellphone"  background="#e67e22"/>
+    <Label value="wallet"     background="#f1c40f"/>
+    <Label value="bag"        background="#1abc9c"/>
+    <Label value="bicycle"    background="#34495e"/>
+    <Label value="motorcycle" background="#7f8c8d"/>
+    <Label value="car"        background="#c0392b"/>
+    <Label value="truck"      background="#2980b9"/>
+    <Label value="bus"        background="#27ae60"/>
+    <Label value="van"        background="#8e44ad"/>
+    <Label value="cart"       background="#d35400"/>
+    <Label value="trolley"    background="#f39c12"/>
+    <Label value="pallet"     background="#16a085"/>
+    <Label value="box"        background="#2c3e50"/>
+    <Label value="container"  background="#95a5a6"/>
+    <Label value="dog"        background="#e84393"/>
+    <Label value="cat"        background="#fd79a8"/>
+    <Label value="sign"       background="#a29bfe"/>
+    <Label value="cone"       background="#fdcb6e"/>
+    <Label value="barrier"    background="#74b9ff"/>
+    <Label value="other"      background="#dfe6e9"/>
+  </RectangleLabels>
 
-      <!-- smart_click: a KeyPoint draw fires the ML backend, which calls
-           SAM 3.1 click_mask and returns a RectangleLabels region. The
-           reviewer's pre-selected class (if any) carries through. -->
-      <KeyPointLabels name="click" toName="image" smart="true" strokeWidth="3">
-        <Label value="positive" background="#2ecc71"/>
-        <Label value="negative" background="#e74c3c"/>
-      </KeyPointLabels>
+  <!-- smart_click: KeyPointLabels with the same 24-class palette so the
+       reviewer's hotkey class rides every keypoint draft as
+       value.keypointlabels (routes accept that key alongside `labels`
+       and `rectanglelabels`). The ML backend calls SAM 3.1 click_mask
+       and returns a RectangleLabels region carrying the same class.
+       Negative clicks deferred. -->
+  <KeyPointLabels name="click" toName="image" smart="true" strokeWidth="3">
+    <Label value="forklift"   background="#e74c3c"/>
+    <Label value="palletjack" background="#3498db"/>
+    <Label value="person"     background="#2ecc71"/>
+    <Label value="head"       background="#9b59b6"/>
+    <Label value="cellphone"  background="#e67e22"/>
+    <Label value="wallet"     background="#f1c40f"/>
+    <Label value="bag"        background="#1abc9c"/>
+    <Label value="bicycle"    background="#34495e"/>
+    <Label value="motorcycle" background="#7f8c8d"/>
+    <Label value="car"        background="#c0392b"/>
+    <Label value="truck"      background="#2980b9"/>
+    <Label value="bus"        background="#27ae60"/>
+    <Label value="van"        background="#8e44ad"/>
+    <Label value="cart"       background="#d35400"/>
+    <Label value="trolley"    background="#f39c12"/>
+    <Label value="pallet"     background="#16a085"/>
+    <Label value="box"        background="#2c3e50"/>
+    <Label value="container"  background="#95a5a6"/>
+    <Label value="dog"        background="#e84393"/>
+    <Label value="cat"        background="#fd79a8"/>
+    <Label value="sign"       background="#a29bfe"/>
+    <Label value="cone"       background="#fdcb6e"/>
+    <Label value="barrier"    background="#74b9ff"/>
+    <Label value="other"      background="#dfe6e9"/>
+  </KeyPointLabels>
 
+  <!-- visual_prompt: the V-tool. Reviewer presses V (or picks the orange
+       rectangle in the toolbar), drags a box around an exemplar object,
+       and the ML backend's visual_prompt route runs SAM 3.1 box-prompt
+       grounding to find every matching instance in the same image. The
+       exemplar persists on the canvas; ML-returned matches that overlap
+       any existing rectangle (IoU > 0.7) are dropped server-side, so
+       the SAM-returned duplicate at the exemplar location goes away
+       automatically. The reviewer's active class rides through. -->
+  <RectangleLabels name="visual_prompt" toName="image"
+                   smart="true" smartOnly="true"
+                   hotkey="v" strokeColor="#ff7700">
+    <Label value="forklift"   background="#e74c3c"/>
+    <Label value="palletjack" background="#3498db"/>
+    <Label value="person"     background="#2ecc71"/>
+    <Label value="head"       background="#9b59b6"/>
+    <Label value="cellphone"  background="#e67e22"/>
+    <Label value="wallet"     background="#f1c40f"/>
+    <Label value="bag"        background="#1abc9c"/>
+    <Label value="bicycle"    background="#34495e"/>
+    <Label value="motorcycle" background="#7f8c8d"/>
+    <Label value="car"        background="#c0392b"/>
+    <Label value="truck"      background="#2980b9"/>
+    <Label value="bus"        background="#27ae60"/>
+    <Label value="van"        background="#8e44ad"/>
+    <Label value="cart"       background="#d35400"/>
+    <Label value="trolley"    background="#f39c12"/>
+    <Label value="pallet"     background="#16a085"/>
+    <Label value="box"        background="#2c3e50"/>
+    <Label value="container"  background="#95a5a6"/>
+    <Label value="dog"        background="#e84393"/>
+    <Label value="cat"        background="#fd79a8"/>
+    <Label value="sign"       background="#a29bfe"/>
+    <Label value="cone"       background="#fdcb6e"/>
+    <Label value="barrier"    background="#74b9ff"/>
+    <Label value="other"      background="#dfe6e9"/>
+  </RectangleLabels>
+
+  <!-- Footer row: per-image metadata sits below the canvas so the image
+       gets the full viewport width. Phase D-layout. -->
+  <View style="display: flex; gap: 16px; margin-top: 8px;">
+    <View style="flex: 0 0 50%;">
       <!-- smart_text: typing into the TextArea fires the ML backend's
            smart_text route (SAM 3.1 text_detect). Submit returns one
-           RectangleLabels region per match. -->
+           RectangleLabels region per match. No maxSubmissions — the
+           reviewer can iterate prompts (e.g. 'forklift', then 'pallet')
+           without first deleting the previous one. -->
       <TextArea name="text_query" toName="image" smart="true"
-                editable="true" maxSubmissions="1"
+                editable="true"
                 placeholder="text prompt — e.g. 'forklift'"/>
 
-      <TextArea name="track_id" toName="image" perRegion="true"
-                placeholder="track_id" editable="true"/>
+      <TextArea name="notes" toName="image" rows="2" maxSubmissions="1"
+                placeholder="Notes for this image (optional)"/>
     </View>
 
-    <View style="flex: 0 0 30%; padding-left: 10px;">
-      <View visibleWhen="region-selected">
-        <Header value="Selected region"/>
-      </View>
-
-      <Choices name="frame_state" toName="image" choice="single" required="true">
+    <View style="flex: 0 0 50%;">
+      <Choices name="frame_state" toName="image" choice="single" required="true"
+               showInline="true">
         <Choice value="clean" selected="true"/>
         <Choice value="needs_more_review"/>
         <Choice value="ambiguous_skip"/>
       </Choices>
 
-      <TextArea name="notes" toName="image" rows="3" maxSubmissions="1"
-                placeholder="Notes for this image (optional)"/>
+      <TextArea name="track_id" toName="image" perRegion="true"
+                placeholder="track_id" editable="true"/>
     </View>
   </View>
 </View>

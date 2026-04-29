@@ -516,6 +516,51 @@ def test_parse_ghost_drop_promoted_yields_kept_dropped() -> None:
     assert by_id["c1"].source == "finalize"
 
 
+def test_parse_picks_up_per_region_track_id_textarea() -> None:
+    """The XML defines <TextArea name="track_id" perRegion="true">. LS emits
+    one entry per rectangle the reviewer typed into, with parentID linking
+    to the rectangle id. The parser walks results once collecting the
+    parentID->text map and attaches it to each HumanCorrection.
+    """
+    completion = {
+        "id": 1,
+        "result": [
+            _ls_rect("rect_1", label="forklift"),
+            {
+                "type": "textarea",
+                "from_name": "track_id",
+                "to_name": "image",
+                "parentID": "rect_1",
+                "value": {"text": ["TRK-007"]},
+            },
+        ],
+    }
+    result = parse_ls_completion(completion, image_id="img_a")
+    assert len(result.corrections) == 1
+    assert result.corrections[0].track_id == "TRK-007"
+
+
+def test_parse_global_notes_textarea_does_not_become_track_id() -> None:
+    """The global notes textarea has no parentID; per-region track_id has
+    parentID. They live in the same result list — the parser must not mix
+    them up."""
+    completion = {
+        "id": 1,
+        "result": [
+            _ls_rect("rect_1", label="forklift"),
+            {
+                "type": "textarea",
+                "from_name": "notes",
+                "to_name": "image",
+                "value": {"text": ["seed frame for cluster A"]},
+            },
+        ],
+    }
+    result = parse_ls_completion(completion, image_id="img_a")
+    assert result.notes == "seed frame for cluster A"
+    assert result.corrections[0].track_id is None
+
+
 def test_parse_with_no_seeded_predictions_marks_everything_added() -> None:
     completion = {
         "id": 1,

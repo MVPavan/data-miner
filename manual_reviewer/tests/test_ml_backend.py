@@ -35,6 +35,7 @@ from manual_reviewer.ml_backend.routes import (
     batch_proposals,
     smart_click,
     smart_text,
+    visual_prompt,
 )
 from manual_reviewer.ml_backend.server import ManualReviewerMLBackend
 
@@ -59,8 +60,10 @@ class _StubSam3Client:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self._click_resp: Any = _StubResp(bbox=None, score=0.0, mask_rle=None)
         self._text_resp: Any = _StubResp(boxes=[], scores=[], labels=[])
+        self._visual_resp: Any = _StubResp(boxes_norm=[], scores=[])
         self._click_raises: BaseException | None = None
         self._text_raises: BaseException | None = None
+        self._visual_raises: BaseException | None = None
 
     def click_mask(self, **kwargs: Any) -> Any:
         self.calls.append(("click_mask", kwargs))
@@ -73,6 +76,12 @@ class _StubSam3Client:
         if self._text_raises is not None:
             raise self._text_raises
         return self._text_resp
+
+    def visual_prompt(self, **kwargs: Any) -> Any:
+        self.calls.append(("visual_prompt", kwargs))
+        if self._visual_raises is not None:
+            raise self._visual_raises
+        return self._visual_resp
 
 
 # ---------------------------------------------------------------------------
@@ -143,15 +152,18 @@ def test_predictions_envelope_wraps_one_envelope_per_call() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _click_context(x: float, y: float, label: str | None = None) -> dict[str, Any]:
-    value: dict[str, Any] = {"x": x, "y": y}
-    if label is not None:
-        value["keypointlabels"] = [label]
+def _click_context(x: float, y: float) -> dict[str, Any]:
+    """Phase A: keypoint draft no longer carries positive/negative labels.
+
+    The shared ``<Labels>`` palette puts the active class on
+    ``value.labels``; tests that need a class hint pass it explicitly via a
+    paired labels region (see ``test_smart_click_uses_picked_label_from_context``).
+    """
     return {
         "result": [
             {
-                "type": "keypointlabels",
-                "value": value,
+                "type": "keypoint",
+                "value": {"x": x, "y": y},
                 "from_name": "click",
                 "to_name": "image",
             }
@@ -198,7 +210,28 @@ def test_smart_click_returns_box_when_sam_returns_bbox() -> None:
 
 
 def test_smart_click_uses_picked_label_from_context() -> None:
-    """When the LS draft carries a class hint, the seeded box honors it."""
+    """Phase A: shared ``<Labels>`` palette puts the active class on
+    ``value.labels`` — smart_click must honor it on the seeded box."""
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.1, 0.2, 0.3, 0.4], score=0.7)
+    ctx = {
+        "result": [
+            {
+                "type": "labels",
+                "value": {"labels": ["forklift"]},
+            },
+            {
+                "type": "keypoint",
+                "value": {"x": 50, "y": 60},
+            },
+        ]
+    }
+    out = smart_click(_task(), ctx, client)
+    assert out[0]["value"]["rectanglelabels"] == ["forklift"]
+
+
+def test_smart_click_accepts_legacy_rectanglelabels_hint() -> None:
+    """Backward compat: drafts that carry ``value.rectanglelabels`` still work."""
     client = _StubSam3Client()
     client._click_resp = _StubResp(bbox=[0.1, 0.2, 0.3, 0.4], score=0.7)
     ctx = {
@@ -208,7 +241,7 @@ def test_smart_click_uses_picked_label_from_context() -> None:
                 "value": {"rectanglelabels": ["forklift"]},
             },
             {
-                "type": "keypointlabels",
+                "type": "keypoint",
                 "value": {"x": 50, "y": 60},
             },
         ]
@@ -217,11 +250,24 @@ def test_smart_click_uses_picked_label_from_context() -> None:
     assert out[0]["value"]["rectanglelabels"] == ["forklift"]
 
 
-def test_smart_click_negative_label_propagates() -> None:
+def test_smart_click_accepts_keypointlabels_hint() -> None:
+    """Phase A wire alignment: <KeyPointLabels> draft carries the class in
+    ``value.keypointlabels``. The route must honor it so the reviewer's
+    hotkey selection rides through to the seeded bbox."""
     client = _StubSam3Client()
     client._click_resp = _StubResp(bbox=[0.1, 0.2, 0.3, 0.4], score=0.7)
-    smart_click(_task(), _click_context(50, 60, label="negative"), client)
-    assert client.calls[0][1]["point_label"] == 0
+    ctx = {
+        "result": [
+            {
+                "type": "keypointlabels",
+                "from_name": "click",
+                "value": {"x": 50, "y": 60, "keypointlabels": ["bicycle"]},
+            },
+        ]
+    }
+    out = smart_click(_task(), ctx, client)
+    assert len(out) == 1
+    assert out[0]["value"]["rectanglelabels"] == ["bicycle"]
 
 
 def test_smart_click_returns_empty_when_no_bbox() -> None:
@@ -305,6 +351,304 @@ def test_smart_text_swallows_client_exceptions() -> None:
     client = _StubSam3Client()
     client._text_raises = RuntimeError("boom")
     assert smart_text(_task(), _text_context(["forklift"]), client) == []
+
+
+# ---------------------------------------------------------------------------
+# 3b. routes — visual_prompt
+# ---------------------------------------------------------------------------
+
+
+def _visual_context(
+    *boxes: tuple[float, float, float, float],
+    label: str | None = None,
+    rtype: str = "rectanglelabels",
+) -> dict[str, Any]:
+    """Build an LS context with one or more rectangle exemplar regions."""
+    result: list[dict[str, Any]] = []
+    for x, y, w, h in boxes:
+        value: dict[str, Any] = {"x": x, "y": y, "width": w, "height": h}
+        if label is not None:
+            # Phase A shape: label rides on value.labels.
+            value["labels"] = [label]
+        result.append(
+            {
+                "type": rtype,
+                "value": value,
+                "from_name": "bbox",
+                "to_name": "image",
+            }
+        )
+    return {"result": result}
+
+
+def test_visual_prompt_returns_one_region_per_match() -> None:
+    client = _StubSam3Client()
+    # Returned boxes are placed away from the exemplar so the IoU dedup
+    # doesn't drop them. The exemplar-overlap case has its own test below.
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0.5, 0.5, 0.7, 0.7], [0.8, 0.1, 0.95, 0.25]],
+        scores=[0.9, 0.6],
+    )
+    out = visual_prompt(
+        _task(),
+        _visual_context((10, 10, 20, 20), label="forklift"),
+        client,
+    )
+    assert len(out) == 2
+    assert all(r["value"]["rectanglelabels"] == ["forklift"] for r in out)
+    assert client.calls[0][0] == "visual_prompt"
+    kwargs = client.calls[0][1]
+    assert kwargs["image_path"] == "/tmp/img.jpg"
+    assert kwargs["exemplar_boxes_norm"][0] == pytest.approx([0.10, 0.10, 0.30, 0.30])
+    assert kwargs["threshold"] == pytest.approx(0.4)
+
+
+def test_visual_prompt_falls_back_to_default_label() -> None:
+    """Exemplar without a class hint → propagated boxes use DEFAULT_LABEL."""
+    client = _StubSam3Client()
+    # Match sits away from the exemplar so it isn't deduped.
+    client._visual_resp = _StubResp(boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.8])
+    out = visual_prompt(
+        _task(),
+        _visual_context((10, 10, 20, 20), label=None),
+        client,
+    )
+    assert out[0]["value"]["rectanglelabels"] == [DEFAULT_LABEL]
+
+
+def test_visual_prompt_accepts_multiple_exemplars() -> None:
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(boxes_norm=[[0.1, 0.1, 0.2, 0.2]], scores=[0.7])
+    visual_prompt(
+        _task(),
+        _visual_context(
+            (10, 10, 20, 20),
+            (40, 40, 10, 10),
+            label="forklift",
+        ),
+        client,
+    )
+    kwargs = client.calls[0][1]
+    assert len(kwargs["exemplar_boxes_norm"]) == 2
+
+
+def test_visual_prompt_caps_max_results() -> None:
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0, 0, 0.05 + 0.01 * i, 0.05] for i in range(10)],
+        scores=[0.5] * 10,
+    )
+    out = visual_prompt(
+        _task(),
+        _visual_context((10, 10, 20, 20), label="x"),
+        client,
+        max_results=3,
+    )
+    assert len(out) == 3
+
+
+def test_visual_prompt_no_exemplar_returns_empty_no_call() -> None:
+    client = _StubSam3Client()
+    out = visual_prompt(_task(), {"result": []}, client)
+    assert out == []
+    assert client.calls == []
+
+
+def test_visual_prompt_swallows_client_exceptions() -> None:
+    client = _StubSam3Client()
+    client._visual_raises = RuntimeError("boom")
+    out = visual_prompt(
+        _task(),
+        _visual_context((10, 10, 20, 20), label="forklift"),
+        client,
+    )
+    assert out == []
+
+
+def test_visual_prompt_no_image_path_returns_empty() -> None:
+    client = _StubSam3Client()
+    out = visual_prompt(
+        {"data": {}},
+        _visual_context((10, 10, 20, 20), label="forklift"),
+        client,
+    )
+    assert out == []
+    assert client.calls == []
+
+
+def test_visual_prompt_meta_carries_source() -> None:
+    client = _StubSam3Client()
+    # Match away from the exemplar so it survives IoU dedup.
+    client._visual_resp = _StubResp(boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.9])
+    out = visual_prompt(
+        _task(),
+        _visual_context((10, 10, 20, 20), label="forklift"),
+        client,
+    )
+    assert out[0]["meta"]["source"] == "visual_prompt"
+
+
+def test_visual_prompt_drops_match_overlapping_exemplar() -> None:
+    """SAM almost always returns the exemplar position as a top match — that
+    duplicate must be dropped via the IoU dedup."""
+    client = _StubSam3Client()
+    # First match overlaps the exemplar at IoU=1; second is a real new match.
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0.10, 0.10, 0.30, 0.30], [0.50, 0.50, 0.70, 0.70]],
+        scores=[0.95, 0.7],
+    )
+    out = visual_prompt(
+        _task(),
+        _visual_context((10, 10, 20, 20), label="forklift"),
+        client,
+    )
+    # Exemplar duplicate dropped, only the [0.5, 0.5, 0.7, 0.7] match kept.
+    assert len(out) == 1
+    val = out[0]["value"]
+    assert val["x"] == pytest.approx(50.0)
+    assert val["y"] == pytest.approx(50.0)
+
+
+def test_visual_prompt_drops_match_overlapping_existing_annotation() -> None:
+    """Match that lands on an already-accepted annotation is dropped.
+
+    LS smart-tool predict only sends the freshly-drawn region in
+    ``context.result``; existing accepted regions live on
+    ``task["annotations"][*].result``. The route must read both.
+    """
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0.50, 0.50, 0.70, 0.70], [0.80, 0.80, 0.95, 0.95]],
+        scores=[0.8, 0.6],
+    )
+    # Context has only the V-tool draft (the production LS shape).
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "labels": ["forklift"]},
+            },
+        ]
+    }
+    # Existing accepted region rides on task["annotations"].
+    task = {
+        "id": 1,
+        "data": {
+            "image_path": "/tmp/img.jpg",
+            "image_id": "img_a",
+            "image_size": [1920, 1080],
+        },
+        "annotations": [
+            {
+                "id": 99,
+                "result": [
+                    {
+                        "type": "rectanglelabels",
+                        "from_name": "bbox",
+                        "value": {
+                            "x": 50, "y": 50, "width": 20, "height": 20,
+                            "rectanglelabels": ["forklift"],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    out = visual_prompt(task, ctx, client)
+    # First match overlaps the existing annotation → dropped. Only [.8, .8, .95, .95] kept.
+    assert len(out) == 1
+    val = out[0]["value"]
+    assert val["x"] == pytest.approx(80.0)
+
+
+def test_visual_prompt_skips_cancelled_annotations() -> None:
+    """A reviewer-cancelled annotation is not part of the dedup pool."""
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0.50, 0.50, 0.70, 0.70]], scores=[0.8]
+    )
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "labels": ["forklift"]},
+            },
+        ]
+    }
+    task = {
+        "id": 1,
+        "data": {"image_path": "/tmp/img.jpg", "image_id": "img_a"},
+        "annotations": [
+            {
+                "id": 99,
+                "was_cancelled": True,
+                "result": [
+                    {
+                        "type": "rectanglelabels",
+                        "from_name": "bbox",
+                        "value": {
+                            "x": 50, "y": 50, "width": 20, "height": 20,
+                            "rectanglelabels": ["forklift"],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    out = visual_prompt(task, ctx, client)
+    # Cancelled annotation is ignored → match at (50,50) survives.
+    assert len(out) == 1
+
+
+def test_visual_prompt_drops_zero_area_exemplar() -> None:
+    """Reviewer dragging exemplar to a zero-area drag → SAM gets nothing."""
+    client = _StubSam3Client()
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 0, "height": 0,
+                          "labels": ["forklift"]},
+            },
+        ]
+    }
+    out = visual_prompt(_task(), ctx, client)
+    assert out == []
+    assert client.calls == []
+
+
+def test_visual_prompt_uses_only_visual_prompt_region_as_exemplar() -> None:
+    """Phase B-frontend dispatch: when a region with from_name=visual_prompt
+    is present, ONLY that region is sent to SAM. Other rectangles in the
+    context (existing accepted boxes) must not be passed as exemplars."""
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(boxes_norm=[], scores=[])
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "bbox",
+                "value": {"x": 50, "y": 50, "width": 20, "height": 20,
+                          "rectanglelabels": ["forklift"]},
+            },
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "labels": ["forklift"]},
+            },
+        ]
+    }
+    visual_prompt(_task(), ctx, client)
+    kwargs = client.calls[0][1]
+    # Only the visual_prompt region is the exemplar, not the bbox region.
+    assert len(kwargs["exemplar_boxes_norm"]) == 1
+    assert kwargs["exemplar_boxes_norm"][0] == pytest.approx([0.10, 0.10, 0.30, 0.30])
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +767,54 @@ def test_dispatch_no_context_no_db_returns_empty() -> None:
     assert dispatch(_task(), None, sam3_client=None, db_path=None) == []
 
 
+def test_dispatch_routes_v_tool_to_visual_prompt() -> None:
+    """A draft with from_name='visual_prompt' must route to visual_prompt,
+    not fall through to batch_proposals. Mirrors server._predict_one
+    behaviour so callers using the pure dispatch() get the same result.
+    """
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0.4, 0.4, 0.6, 0.6]], scores=[0.9]
+    )
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "rectanglelabels": ["forklift"]},
+            },
+        ]
+    }
+    out = dispatch(_task(), ctx, sam3_client=client, db_path=None)
+    assert len(out) == 1
+    assert client.calls and client.calls[0][0] == "visual_prompt"
+
+
+def test_dispatch_v_tool_does_not_fall_to_batch(seeded_pipeline_db: Path) -> None:
+    """Even with a viable db_path, a V-tool draft must NEVER fall through
+    to batch_proposals. The reviewer drew an exemplar, not asked for the
+    cached audit layer.
+    """
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(boxes_norm=[], scores=[])
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "rectanglelabels": ["forklift"]},
+            },
+        ]
+    }
+    out = dispatch(
+        _task(image_id="img_a"), ctx, sam3_client=client, db_path=seeded_pipeline_db
+    )
+    assert out == []
+    assert client.calls and client.calls[0][0] == "visual_prompt"
+
+
 # ---------------------------------------------------------------------------
 # 6. server (ManualReviewerMLBackend)
 # ---------------------------------------------------------------------------
@@ -456,6 +848,50 @@ def test_server_predict_smart_click_path() -> None:
     assert client.calls[0][0] == "click_mask"
 
 
+def test_server_predict_visual_prompt_path() -> None:
+    """V-tool draws fire visual_prompt, not smart_click or smart_text."""
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.9]
+    )
+    backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "labels": ["forklift"]},
+            }
+        ]
+    }
+    out = backend.predict([_task()], context=ctx)
+    assert len(out) == 1
+    assert out[0]["result"]
+    assert client.calls[0][0] == "visual_prompt"
+
+
+def test_server_predict_regular_bbox_does_not_fire_ml() -> None:
+    """A regular Rectangle (from_name=bbox) draw must NOT trigger ML —
+    only V-tool (from_name=visual_prompt) drafts route to visual_prompt."""
+    client = _StubSam3Client()
+    backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "bbox",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "rectanglelabels": ["forklift"]},
+            }
+        ]
+    }
+    out = backend.predict([_task()], context=ctx)
+    # Falls through to batch_proposals (db_path=None → empty result).
+    assert out[0]["result"] == []
+    assert client.calls == []
+
+
 def test_server_predict_swallows_per_task_exceptions() -> None:
     """One task throwing must not block the rest."""
     bad_client = _StubSam3Client()
@@ -484,6 +920,207 @@ def test_server_envelope_helper_wraps_regions() -> None:
     env = backend.envelope([region])
     assert len(env) == 1
     assert env[0]["result"] == [region]
+
+
+# ---------------------------------------------------------------------------
+# 6b. Phase D-toggles: per-route env-var gates
+# ---------------------------------------------------------------------------
+
+
+def test_route_enabled_default_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    from manual_reviewer.ml_backend.server import _route_enabled
+
+    for var in (
+        "ENABLE_BATCH_PROPOSALS",
+        "ENABLE_SMART_CLICK",
+        "ENABLE_SMART_TEXT",
+        "ENABLE_VISUAL_PROMPT",
+        "ENABLE_PROPAGATE_STATIC",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    assert _route_enabled("smart_click") is True
+    assert _route_enabled("smart_text") is True
+    assert _route_enabled("visual_prompt") is True
+    assert _route_enabled("batch_proposals") is True
+    assert _route_enabled("propagate_static") is True
+
+
+@pytest.mark.parametrize("falsy", ["0", "false", "FALSE", "no", "off", "disabled", ""])
+def test_route_enabled_falsy_disables(
+    monkeypatch: pytest.MonkeyPatch, falsy: str
+) -> None:
+    from manual_reviewer.ml_backend.server import _route_enabled
+
+    monkeypatch.setenv("ENABLE_SMART_CLICK", falsy)
+    assert _route_enabled("smart_click") is False
+
+
+@pytest.mark.parametrize("truthy", ["1", "true", "yes", "on", "enabled"])
+def test_route_enabled_truthy_keeps_on(
+    monkeypatch: pytest.MonkeyPatch, truthy: str
+) -> None:
+    from manual_reviewer.ml_backend.server import _route_enabled
+
+    monkeypatch.setenv("ENABLE_SMART_CLICK", truthy)
+    assert _route_enabled("smart_click") is True
+
+
+def test_route_enabled_unknown_name_is_open() -> None:
+    """Unrecognized route names default to enabled — never silently drop."""
+    from manual_reviewer.ml_backend.server import _route_enabled
+
+    assert _route_enabled("not_a_real_route") is True
+
+
+def test_server_smart_click_gate_off_skips_sam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_SMART_CLICK", "0")
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.1, 0.1, 0.5, 0.5], score=0.8)
+    backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
+    out = backend.predict([_task()], context=_click_context(50, 60))
+    assert out[0]["result"] == []
+    assert client.calls == []
+
+
+def test_server_smart_text_gate_off_skips_sam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_SMART_TEXT", "false")
+    client = _StubSam3Client()
+    client._text_resp = _StubResp(
+        boxes=[[0.1, 0.1, 0.4, 0.4]], scores=[0.9], labels=["forklift"]
+    )
+    backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
+    out = backend.predict([_task()], context=_text_context(["forklift"]))
+    assert out[0]["result"] == []
+    assert client.calls == []
+
+
+def test_server_visual_prompt_gate_off_skips_sam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ENABLE_VISUAL_PROMPT", "off")
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.9])
+    backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "labels": ["forklift"]},
+            }
+        ]
+    }
+    out = backend.predict([_task()], context=ctx)
+    assert out[0]["result"] == []
+    assert client.calls == []
+
+
+def test_server_v_tool_gate_off_falls_through_to_keypoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mixed-context: a V-tool draft + a keypoint draft on the same predict
+    call. With ENABLE_VISUAL_PROMPT off, the keypoint must still reach
+    smart_click — gating one route off shouldn't suppress every other
+    route on the same draft."""
+    monkeypatch.setenv("ENABLE_VISUAL_PROMPT", "off")
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.1, 0.2, 0.3, 0.4], score=0.7)
+    client._visual_resp = _StubResp(boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.9])
+    backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "rectanglelabels": ["forklift"]},
+            },
+            {
+                "type": "keypoint",
+                "from_name": "click",
+                "value": {"x": 50, "y": 60},
+            },
+        ]
+    }
+    out = backend.predict([_task()], context=ctx)
+    assert len(out[0]["result"]) == 1
+    # smart_click ran; visual_prompt did not.
+    methods = [name for name, _ in client.calls]
+    assert "click_mask" in methods
+    assert "visual_prompt" not in methods
+
+
+def test_server_batch_proposals_gate_off_skips_db(
+    monkeypatch: pytest.MonkeyPatch, seeded_pipeline_db: Path
+) -> None:
+    monkeypatch.setenv("ENABLE_BATCH_PROPOSALS", "0")
+    backend = ManualReviewerMLBackend(
+        sam3_client=_StubSam3Client(), db_path=seeded_pipeline_db
+    )
+    out = backend.predict([_task(image_id="img_a")], context=None)
+    assert out[0]["result"] == []
+
+
+def test_server_disabled_smart_route_does_not_fall_through_to_batch(
+    monkeypatch: pytest.MonkeyPatch, seeded_pipeline_db: Path
+) -> None:
+    """A click with smart_click disabled must NOT seed cached proposals.
+
+    Previously a gated-off smart route fell through to batch_proposals,
+    flooding the canvas with cached boxes after a click/textarea — not
+    what the reviewer asked for. We now return empty for "had a draft
+    but no enabled smart route handled it".
+    """
+    monkeypatch.setenv("ENABLE_SMART_CLICK", "0")
+    monkeypatch.delenv("ENABLE_BATCH_PROPOSALS", raising=False)
+    client = _StubSam3Client()
+    backend = ManualReviewerMLBackend(
+        sam3_client=client, db_path=seeded_pipeline_db
+    )
+    # img_a HAS cached proposals — confirm fallthrough would have produced them.
+    out = backend.predict(
+        [_task(image_id="img_a")], context=_click_context(50, 60)
+    )
+    assert out[0]["result"] == []
+    assert client.calls == []
+
+
+def test_server_mixed_draft_disabled_route_still_runs_enabled_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mixed context with disabled smart_text + enabled smart_click must
+    run smart_click — the disabled draft is `continue`d past, not a
+    short-circuit return."""
+    monkeypatch.setenv("ENABLE_SMART_TEXT", "0")
+    monkeypatch.delenv("ENABLE_SMART_CLICK", raising=False)
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.1, 0.1, 0.5, 0.5], score=0.8)
+    backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
+    # textarea draft listed FIRST (would short-circuit under the old bug),
+    # keypoint draft listed second.
+    ctx = {
+        "result": [
+            {
+                "type": "textarea",
+                "from_name": "text_query",
+                "value": {"text": ["forklift"]},
+            },
+            {
+                "type": "keypoint",
+                "from_name": "click",
+                "value": {"x": 50, "y": 60, "labels": ["forklift"]},
+            },
+        ]
+    }
+    out = backend.predict([_task()], context=ctx)
+    assert out[0]["result"], "smart_click should have fired despite disabled smart_text"
+    assert any(c[0] == "click_mask" for c in client.calls)
+    assert not any(c[0] == "text_detect" for c in client.calls)
 
 
 # ---------------------------------------------------------------------------
@@ -520,6 +1157,244 @@ def test_build_sam3_client_default_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SAM3_1_URL", raising=False)
     client = build_sam3_client()
     assert client._url == "http://localhost:3014/predict"
+
+
+# ---------------------------------------------------------------------------
+# 7b. Route-level dedup behaviour — uniform policy across smart routes.
+# Per the dedup design (manual_reviewer/ml_backend/dedup.py): each route
+# runs internal NMS (0.85, class-aware) then external dedup (0.7,
+# class-aware) against task.annotations + task.predictions + context.result.
+# batch_proposals is intentionally exempt — that route is the raw
+# per-detector evidence layer.
+# ---------------------------------------------------------------------------
+
+
+def _accepted_box(
+    bbox: list[float], label: str = "forklift"
+) -> dict[str, Any]:
+    """An LS task["annotations"][i] entry holding one accepted bbox."""
+    return {
+        "id": 1,
+        "result": [
+            norm_box_to_ls_region(bbox, label, score=1.0, region_id="acc")
+        ],
+        "result_count": 1,
+    }
+
+
+def _seeded_prediction(
+    bbox: list[float], label: str = "forklift"
+) -> dict[str, Any]:
+    """An LS task["predictions"][i] entry holding one seeded bbox."""
+    return {
+        "id": 99,
+        "model_version": "finalize",
+        "result": [
+            norm_box_to_ls_region(bbox, label, score=0.9, region_id="seed")
+        ],
+    }
+
+
+def test_smart_click_drops_duplicate_of_accepted_box() -> None:
+    """Click on an already-accepted same-class box → silently dropped.
+
+    Returning the duplicate would force the reviewer to delete it by
+    hand, inverting the auto-annotation value.
+    """
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.10, 0.10, 0.30, 0.30], score=0.8)
+    task = _task()
+    task["annotations"] = [_accepted_box([0.10, 0.10, 0.30, 0.30], "forklift")]
+    ctx = {
+        "result": [
+            {
+                "type": "keypoint",
+                "from_name": "click",
+                "value": {"x": 50, "y": 60, "labels": ["forklift"]},
+            }
+        ]
+    }
+    out = smart_click(task, ctx, client)
+    assert out == []
+
+
+def test_smart_click_keeps_different_class_overlap() -> None:
+    """Person clicked on top of a forklift bbox → kept. Class-aware."""
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.10, 0.10, 0.30, 0.30], score=0.8)
+    task = _task()
+    task["annotations"] = [_accepted_box([0.10, 0.10, 0.30, 0.30], "forklift")]
+    ctx = {
+        "result": [
+            {
+                "type": "keypoint",
+                "from_name": "click",
+                "value": {"x": 50, "y": 60, "labels": ["person"]},
+            }
+        ]
+    }
+    out = smart_click(task, ctx, client)
+    assert len(out) == 1
+    assert out[0]["value"]["rectanglelabels"] == ["person"]
+
+
+def test_smart_text_internal_nms_collapses_near_duplicates() -> None:
+    """Two SAM matches at near-identical coords collapse to one (NMS).
+
+    Lower-scoring duplicate is suppressed.
+    """
+    client = _StubSam3Client()
+    client._text_resp = _StubResp(
+        boxes=[
+            [0.10, 0.10, 0.30, 0.30],
+            [0.105, 0.105, 0.305, 0.305],   # ~99% IoU
+        ],
+        scores=[0.9, 0.4],
+        labels=["forklift", "forklift"],
+    )
+    out = smart_text(_task(), _text_context(["forklift"]), client)
+    assert len(out) == 1
+    assert out[0]["score"] == pytest.approx(0.9)
+
+
+def test_smart_text_internal_nms_keeps_different_classes_at_same_spot() -> None:
+    """Class-aware NMS — person and forklift at same coords both survive."""
+    client = _StubSam3Client()
+    client._text_resp = _StubResp(
+        boxes=[
+            [0.10, 0.10, 0.30, 0.30],
+            [0.10, 0.10, 0.30, 0.30],
+        ],
+        scores=[0.9, 0.8],
+        labels=["forklift", "person"],
+    )
+    out = smart_text(_task(), _text_context(["x"]), client)
+    assert len(out) == 2
+    assert {r["value"]["rectanglelabels"][0] for r in out} == {"forklift", "person"}
+
+
+def test_smart_text_drops_match_overlapping_seeded_prediction() -> None:
+    """Re-fire smart_text after task open → don't re-add the seeded box.
+
+    Pool is annotations + predictions + draft, so the seeded forklift
+    on `task["predictions"]` suppresses the new match.
+    """
+    client = _StubSam3Client()
+    client._text_resp = _StubResp(
+        boxes=[[0.10, 0.10, 0.30, 0.30]],
+        scores=[0.9],
+        labels=["forklift"],
+    )
+    task = _task()
+    task["predictions"] = [_seeded_prediction([0.10, 0.10, 0.30, 0.30], "forklift")]
+    out = smart_text(task, _text_context(["forklift"]), client)
+    assert out == []
+
+
+def test_visual_prompt_internal_nms_collapses_near_duplicates() -> None:
+    """SAM grounding head emitting two near-identical matches → one survives."""
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(
+        boxes_norm=[
+            [0.50, 0.50, 0.70, 0.70],
+            [0.502, 0.502, 0.702, 0.702],   # near-duplicate
+        ],
+        scores=[0.95, 0.5],
+    )
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "labels": ["forklift"]},
+            }
+        ]
+    }
+    out = visual_prompt(_task(), ctx, client)
+    assert len(out) == 1
+    assert out[0]["score"] == pytest.approx(0.95)
+
+
+def test_visual_prompt_drops_match_overlapping_seeded_prediction() -> None:
+    """Pool now includes task.predictions — re-firing visual_prompt does
+    not re-add a seeded box even before the reviewer accepts it."""
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0.50, 0.50, 0.70, 0.70]],
+        scores=[0.9],
+    )
+    task = _task()
+    task["predictions"] = [_seeded_prediction([0.50, 0.50, 0.70, 0.70], "forklift")]
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "labels": ["forklift"]},
+            }
+        ]
+    }
+    out = visual_prompt(task, ctx, client)
+    assert out == []
+
+
+def test_visual_prompt_dedup_is_class_aware_against_canvas() -> None:
+    """Different-class overlap on the canvas shouldn't suppress the match."""
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0.50, 0.50, 0.70, 0.70]],
+        scores=[0.9],
+    )
+    task = _task()
+    # Existing accepted box at the same coords but different class.
+    task["annotations"] = [_accepted_box([0.50, 0.50, 0.70, 0.70], "person")]
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "labels": ["forklift"]},
+            }
+        ]
+    }
+    out = visual_prompt(task, ctx, client)
+    assert len(out) == 1
+    assert out[0]["value"]["rectanglelabels"] == ["forklift"]
+
+
+def test_batch_proposals_is_not_deduped(seeded_pipeline_db: Path) -> None:
+    """Raw per-detector evidence layer — must NOT be deduped by route.
+
+    aav4's pipeline already produced the deduped consensus output as
+    the green seeded predictions; this route is the audit/debug layer.
+    Even when the canvas already has an accepted box at the same spot,
+    every cached proposal must come through.
+
+    Real signal: compare batch_proposals output WITH and WITHOUT a same-
+    class accepted box on the canvas. If the route ever started deduping
+    against ``task["annotations"]``, the count with annotations would
+    drop and this test would fail.
+    """
+    from manual_reviewer.ml_backend.routes import batch_proposals
+
+    task_clean = _task(image_id="img_a")
+    raw_clean = batch_proposals(task_clean, seeded_pipeline_db)
+    assert raw_clean, "fixture must produce at least one cached proposal"
+
+    # Place an accepted box that overlaps every cached proposal.
+    task_with_canvas = _task(image_id="img_a")
+    task_with_canvas["annotations"] = [
+        _accepted_box([0.0, 0.0, 1.0, 1.0], "forklift")
+    ]
+    raw_with_canvas = batch_proposals(task_with_canvas, seeded_pipeline_db)
+
+    assert len(raw_with_canvas) == len(raw_clean), (
+        "batch_proposals must be exempt from dedup; "
+        f"clean={len(raw_clean)} with_canvas={len(raw_with_canvas)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +1488,113 @@ def test_sam3_one_http_client_click_mask_serializes_request() -> None:
     assert resp.bbox == [0.0, 0.0, 0.1, 0.1]
     assert captured["json"]["point"] == [0.5, 0.5]
     assert captured["json"]["point_label"] == 1
+
+
+def test_sam3_1_visual_prompt_request_validates() -> None:
+    from data_miner.auto_annotation_v4.configs.wire import SAM3VisualPromptRequest
+
+    req = SAM3VisualPromptRequest(
+        image_path="/x.jpg", exemplar_boxes_norm=[[0.1, 0.1, 0.3, 0.3]]
+    )
+    assert req.threshold == pytest.approx(0.4)
+    assert req.max_results == 50
+    assert req.exemplar_labels == []
+
+
+def test_sam3_1_visual_prompt_response_round_trips() -> None:
+    from data_miner.auto_annotation_v4.configs.wire import SAM3VisualPromptResponse
+
+    resp = SAM3VisualPromptResponse(
+        boxes_norm=[[0.1, 0.1, 0.4, 0.5]],
+        scores=[0.85],
+    )
+    payload = resp.model_dump()
+    assert payload["boxes_norm"] == [[0.1, 0.1, 0.4, 0.5]]
+    parsed = SAM3VisualPromptResponse.model_validate(payload)
+    assert parsed.scores == [pytest.approx(0.85)]
+
+
+def test_sam3_one_api_decode_picks_visual_for_exemplar_request() -> None:
+    from data_miner.auto_annotation_v4.model_servers.sam3_1 import (
+        _VISUAL_TAG,
+        SAM3OneApi,
+    )
+
+    api = SAM3OneApi.__new__(SAM3OneApi)  # bypass setup
+    decoded = api.decode_request(
+        {
+            "image_path": "/x.jpg",
+            "exemplar_boxes_norm": [[0.1, 0.1, 0.3, 0.3]],
+        }
+    )
+    assert decoded["__mode__"] == _VISUAL_TAG
+
+
+def test_sam3_one_api_predict_routes_visual_prompt() -> None:
+    """Mode dispatch must reach SAM3OneModel.visual_prompt."""
+    from data_miner.auto_annotation_v4.configs.wire import SAM3VisualPromptResponse
+    from data_miner.auto_annotation_v4.model_servers.sam3_1 import SAM3OneApi
+
+    class _StubModel:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        def visual_prompt(self, **kwargs: Any) -> Any:
+            self.calls.append(("visual_prompt", kwargs))
+            return SAM3VisualPromptResponse(
+                boxes_norm=[[0, 0, 0.2, 0.2]], scores=[0.6]
+            )
+
+    api = SAM3OneApi.__new__(SAM3OneApi)
+    api.model = _StubModel()
+    decoded = api.decode_request(
+        {
+            "image_path": "/x.jpg",
+            "exemplar_boxes_norm": [[0.1, 0.1, 0.3, 0.3]],
+        }
+    )
+    out = api.predict(decoded)
+    assert isinstance(out, SAM3VisualPromptResponse)
+    assert api.model.calls[0][1]["exemplar_boxes_norm"] == [[0.1, 0.1, 0.3, 0.3]]
+
+
+def test_sam3_one_http_client_visual_prompt_serializes_request() -> None:
+    """Sam3OneHttpClient.visual_prompt sends a SAM3VisualPromptRequest body."""
+    from manual_reviewer.reconcile import Sam3OneHttpClient
+
+    captured: dict[str, Any] = {}
+
+    class _FakeResp:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "boxes_norm": [[0.1, 0.1, 0.4, 0.5]],
+                "scores": [0.8],
+                "mask_rles": None,
+            }
+
+    class _FakeSession:
+        def post(self, url: str, *, json: dict[str, Any], timeout: float) -> _FakeResp:
+            captured["url"] = url
+            captured["json"] = json
+            return _FakeResp()
+
+    client = Sam3OneHttpClient(
+        url="http://stub:1234/predict",
+        visual_url="http://stub:1234/predict",
+        session=_FakeSession(),
+    )
+    resp = client.visual_prompt(
+        image_path="/img.jpg",
+        exemplar_boxes_norm=[[0.1, 0.1, 0.3, 0.3]],
+    )
+    assert resp.boxes_norm == [[0.1, 0.1, 0.4, 0.5]]
+    assert captured["json"]["exemplar_boxes_norm"] == [[0.1, 0.1, 0.3, 0.3]]
+    assert captured["json"]["threshold"] == pytest.approx(0.4)
 
 
 def test_sam3_one_http_client_text_detect_returns_detector_response() -> None:

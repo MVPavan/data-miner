@@ -343,7 +343,11 @@ def test_reconcile_respects_min_positive_frames() -> None:
     assert len(client2.calls) == 1
 
 
-def test_reconcile_swallows_client_exceptions() -> None:
+def test_reconcile_records_transport_error_audit_row() -> None:
+    """Network/server failures must materialise a synthetic rejected row so
+    operators can tell "infra failed" from "object not present" — silent
+    skips bias the system toward false negatives without operator signal.
+    """
     imgs = _imgs_three_frames(missing_idx=2)
 
     class ExplodingClient:
@@ -351,9 +355,17 @@ def test_reconcile_swallows_client_exceptions() -> None:
             raise RuntimeError("server died")
 
     results = reconcile_group("clip_a", imgs, client=ExplodingClient())
-    # Exception became a no-box response — silently skipped, no rejected row.
     assert not results["img2"].propagated
-    assert not results["img2"].rejected
+    assert len(results["img2"].rejected) == 1
+    failed = results["img2"].rejected[0]
+    assert failed.candidate_id.endswith("#transport_error")
+    assert failed.mask_score == 0.0
+    assert failed.seed_iou == 0.0
+    # bbox falls back to the seed bbox; cluster_id and votes stay attached
+    # so the audit row points at the right cluster.
+    assert failed.bbox == failed.seed_bbox
+    assert failed.cluster_id == "clip_a::0"
+    assert failed.votes
 
 
 def test_reconcile_all_frames_have_detection_no_calls() -> None:

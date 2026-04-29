@@ -19,6 +19,7 @@ tests pass a stub.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -36,6 +37,8 @@ from .clustering import (
     iou,
 )
 from .sam3_client import RefineResponse, Sam3Client
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "PropagationConfig",
@@ -132,19 +135,48 @@ def reconcile_group(
         missing_image_ids = sorted(set(by_id) - positives)
         for target_id in missing_image_ids:
             target = by_id[target_id]
+            transport_error = False
             try:
                 resp: RefineResponse = client.refine(
                     image_path=target.image_path,
                     bbox=seed_bbox,
                     threshold=cfg.refine_threshold,
                 )
-            except Exception:
-                # Network/server failure — record as rejection so the audit
-                # row still names the cluster, and move on.
+            except Exception as exc:  # noqa: BLE001
+                # Network/server failure: log loudly so a flapping connection
+                # doesn't bias the system toward false negatives without
+                # operator signal, and record a synthetic rejection so the
+                # audit row still names the cluster + target frame.
+                logger.warning(
+                    "reconcile_group: SAM3-DART refine failed for cluster=%s target=%s: %s",
+                    cluster.cluster_id,
+                    target_id,
+                    exc,
+                )
                 resp = RefineResponse(box=None, score=0.0)
+                transport_error = True
 
             if resp.box is None:
-                continue  # SAM3-DART returned nothing — silently skip
+                if transport_error:
+                    # Synthetic rejected row: bbox==seed_bbox (best we can
+                    # do without a SAM response), score=0, seed_iou=0. The
+                    # ``#transport_error`` suffix on the candidate_id is the
+                    # discoverable signal that this row is an infra failure
+                    # vs. a real "object not present" rejection.
+                    per_image_rejected[target_id].append(
+                        ReconciledDetection(
+                            candidate_id=f"{cluster.cluster_id}@{target_id}#transport_error",
+                            class_name=cluster.class_name,
+                            class_id=cluster.class_id,
+                            bbox=seed_bbox,
+                            seed_bbox=seed_bbox,
+                            mask_score=0.0,
+                            seed_iou=0.0,
+                            cluster_id=cluster.cluster_id,
+                            votes=votes,
+                        )
+                    )
+                continue
 
             refined_iou = iou(seed_bbox, resp.box)
             propagated_id = f"{cluster.cluster_id}@{target_id}"

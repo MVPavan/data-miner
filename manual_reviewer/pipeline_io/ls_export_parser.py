@@ -77,6 +77,7 @@ def parse_ls_completion(
         r for r in raw_results
         if isinstance(r, dict) and r.get("type") == "rectanglelabels"
     ]
+    track_ids = _extract_track_ids(raw_results)
     seen_ids: set[str] = set()
     corrections: list[HumanCorrection] = []
 
@@ -125,6 +126,7 @@ def parse_ls_completion(
                 candidate_id=region_id or None,
                 class_name=class_name,
                 bbox=bbox,
+                track_id=track_ids.get(region_id) if region_id else None,
                 source=source,
                 original_class=original_class,
                 original_bbox=original_bbox,
@@ -196,12 +198,49 @@ def _extract_choice(results: list[dict[str, Any]], from_name: str) -> str | None
     return None
 
 
-def _extract_textarea(results: list[dict[str, Any]], from_name: str) -> str:
+def _extract_track_ids(results: list[dict[str, Any]]) -> dict[str, str]:
+    """Map ``rectangle_id → track_id`` for per-region ``track_id`` textareas.
+
+    The XML defines ``<TextArea name="track_id" perRegion="true">`` so LS
+    emits one entry per rectangle that the reviewer typed into. Each entry
+    carries ``parentID`` pointing back at the rectangle id; we walk the
+    raw result list once to build the lookup the rectangle pass uses.
+    """
+    out: dict[str, str] = {}
     for r in results:
-        if r.get("from_name") == from_name and r.get("type") == "textarea":
-            text = (r.get("value") or {}).get("text") or []
-            if text:
-                return "\n".join(str(t) for t in text)
+        if not isinstance(r, dict):
+            continue
+        if r.get("from_name") != "track_id" or r.get("type") != "textarea":
+            continue
+        parent = r.get("parentID") or r.get("parent_id")
+        if not isinstance(parent, str) or not parent:
+            continue
+        text = (r.get("value") or {}).get("text") or []
+        if isinstance(text, str):
+            text = [text]
+        if not isinstance(text, list) or not text:
+            continue
+        joined = "\n".join(str(t) for t in text).strip()
+        if joined:
+            out[parent] = joined
+    return out
+
+
+def _extract_textarea(results: list[dict[str, Any]], from_name: str) -> str:
+    """Pull a global TextArea value (no ``parentID``).
+
+    Per-region textareas (e.g. ``track_id``) carry a parentID linking
+    them to a rectangle and must NOT be returned here — the global
+    ``notes`` field is the only textarea this helper is for.
+    """
+    for r in results:
+        if r.get("from_name") != from_name or r.get("type") != "textarea":
+            continue
+        if r.get("parentID") or r.get("parent_id"):
+            continue
+        text = (r.get("value") or {}).get("text") or []
+        if text:
+            return "\n".join(str(t) for t in text)
     return ""
 
 

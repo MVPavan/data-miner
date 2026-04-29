@@ -38,6 +38,8 @@ from data_miner.auto_annotation_v4.configs.wire import (
     SAM3VideoTrackRequest,
     SAM3VideoTrackResponse,
     SAM3VideoTrackSeed,
+    SAM3VisualPromptRequest,
+    SAM3VisualPromptResponse,
 )
 
 __all__ = [
@@ -49,6 +51,7 @@ __all__ = [
     "DEFAULT_SAM3_1_REFINE_URL",
     "DEFAULT_SAM3_1_TEXT_URL",
     "DEFAULT_SAM3_1_TRACK_URL",
+    "DEFAULT_SAM3_1_VISUAL_URL",
     "DEFAULT_SAM3_DART_REFINE_URL",
 ]
 
@@ -58,6 +61,7 @@ DEFAULT_SAM3_1_REFINE_URL = "http://localhost:3014/predict"
 DEFAULT_SAM3_1_TRACK_URL = "http://localhost:3014/predict"
 DEFAULT_SAM3_1_CLICK_URL = "http://localhost:3014/predict"
 DEFAULT_SAM3_1_TEXT_URL = "http://localhost:3014/predict"
+DEFAULT_SAM3_1_VISUAL_URL = "http://localhost:3014/predict"
 
 
 @dataclass(frozen=True)
@@ -157,6 +161,7 @@ class Sam3OneHttpClient(_Sam3RefineHttpBase):
         track_url: str | None = None,
         click_url: str | None = None,
         text_url: str | None = None,
+        visual_url: str | None = None,
         timeout: float = 60.0,
         session: requests.Session | None = None,
     ) -> None:
@@ -166,6 +171,7 @@ class Sam3OneHttpClient(_Sam3RefineHttpBase):
         self._track_url = track_url or url or DEFAULT_SAM3_1_TRACK_URL
         self._click_url = click_url or url or DEFAULT_SAM3_1_CLICK_URL
         self._text_url = text_url or url or DEFAULT_SAM3_1_TEXT_URL
+        self._visual_url = visual_url or url or DEFAULT_SAM3_1_VISUAL_URL
 
     def track(
         self,
@@ -235,3 +241,33 @@ class Sam3OneHttpClient(_Sam3RefineHttpBase):
         )
         resp.raise_for_status()
         return DetectorResponse.model_validate(resp.json())
+
+    def visual_prompt(
+        self,
+        *,
+        image_path: str,
+        exemplar_boxes_norm: list[list[float]],
+        exemplar_labels: list[int] | None = None,
+        threshold: float = 0.4,
+        max_results: int = 50,
+    ) -> SAM3VisualPromptResponse:
+        """Box-prompt grounding (within-image visual prompting).
+
+        Sends the exemplar bbox(es) through SAM 3.1's geometric-prompt path
+        and returns every matching instance in the same image. Used by the
+        LS ML backend's "find similar" flow.
+        """
+        req = SAM3VisualPromptRequest(
+            image_path=image_path,
+            exemplar_boxes_norm=exemplar_boxes_norm,
+            exemplar_labels=exemplar_labels or [],
+            threshold=threshold,
+            max_results=max_results,
+        )
+        resp = self._session.post(
+            self._visual_url,
+            json=req.model_dump(),
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        return SAM3VisualPromptResponse.model_validate(resp.json())

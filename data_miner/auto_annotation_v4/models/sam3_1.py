@@ -45,6 +45,7 @@ from ..configs.wire import (
     SAM3VideoTrackObjectOutput,
     SAM3VideoTrackResponse,
     SAM3VideoTrackSeed,
+    SAM3VisualPromptResponse,
 )
 from .base import BaseDetectorModel, clamp01
 
@@ -131,6 +132,17 @@ def _xyxy_norm_to_xywh_norm(box_norm: list[float]) -> list[float]:
     if y2 < y1:
         y1, y2 = y2, y1
     return [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)]
+
+
+def _xyxy_norm_to_cxcywh_norm(box_norm: list[float]) -> list[float]:
+    """Convert ``[x1, y1, x2, y2]`` in [0,1] to ``[cx, cy, w, h]`` in [0,1].
+
+    SAM 3.1's ``Sam3Processor.add_geometric_prompt`` expects the exemplar
+    box in normalized cxcywh — see
+    ``sam3/model/sam3_image_processor.py:128`` docstring.
+    """
+    x, y, bw, bh = _xyxy_norm_to_xywh_norm(box_norm)
+    return [x + bw / 2.0, y + bh / 2.0, bw, bh]
 
 
 def _denorm_points(points: list[list[float]], w: int, h: int) -> np.ndarray:
@@ -379,6 +391,107 @@ class SAM3OneModel(BaseDetectorModel):
             mask_rle=None,
             score=best_score,
         )
+
+    def visual_prompt(
+        self,
+        image_path: str,
+        exemplar_boxes_norm: list[list[float]],
+        *,
+        exemplar_labels: list[int] | None = None,
+        threshold: float = 0.4,
+        max_results: int = 50,
+    ) -> SAM3VisualPromptResponse:
+        """Box-prompt grounding — feed exemplar(s) through the SAM 3.1
+        grounding head and return all matching instances in the same image.
+
+        Backed by ``Sam3Processor.add_geometric_prompt``. Exemplars are
+        accepted as normalized [x1, y1, x2, y2] (aav4 convention); the
+        processor wants normalized cxcywh, conversion happens at the seam.
+
+        ``exemplar_labels`` follow SAM convention: 1 = positive, 0 =
+        negative. Defaults to all positives. Multiple exemplars are each
+        appended to ``state["geometric_prompt"]`` and trigger a forward
+        pass — the LAST pass uses the accumulated N-box prompt so the
+        result is the correct N-exemplar grounding output, but at the
+        cost of N forward passes (the upstream processor exposes no
+        public API to set N boxes before a single forward). v1 only
+        sends one exemplar so this asymmetry is dormant.
+
+        Output is filtered by ``threshold`` (the processor's
+        ``confidence_threshold``) and capped at ``max_results``.
+        """
+        if not exemplar_boxes_norm:
+            return SAM3VisualPromptResponse(boxes_norm=[], scores=[])
+        if self._image_model is None:
+            raise RuntimeError(
+                "visual_prompt requires the SAM 3 image model. Reload "
+                "SAM3OneModel without enable_image_predictor=False."
+            )
+
+        from sam3.model.sam3_image_processor import Sam3Processor
+        import torch
+
+        labels = list(exemplar_labels) if exemplar_labels else [1] * len(
+            exemplar_boxes_norm
+        )
+        if len(labels) != len(exemplar_boxes_norm):
+            raise ValueError(
+                "exemplar_labels length must match exemplar_boxes_norm"
+            )
+
+        with Image.open(image_path) as im:
+            image = im.convert("RGB")
+            w, h = image.size
+
+        with self._lock:
+            processor = Sam3Processor(
+                self._image_model,
+                device=self._device,
+                confidence_threshold=float(threshold),
+            )
+            with torch.inference_mode():
+                state = processor.set_image(image)
+                for box_norm, label_int in zip(exemplar_boxes_norm, labels):
+                    cxcywh = _xyxy_norm_to_cxcywh_norm(box_norm)
+                    state = processor.add_geometric_prompt(
+                        box=cxcywh,
+                        label=bool(label_int),
+                        state=state,
+                    )
+            boxes_t = state.get("boxes")
+            scores_t = state.get("scores")
+
+        if boxes_t is None or scores_t is None:
+            return SAM3VisualPromptResponse(boxes_norm=[], scores=[])
+        if isinstance(boxes_t, torch.Tensor):
+            boxes_px = boxes_t.detach().cpu().numpy()
+        else:
+            boxes_px = np.asarray(boxes_t)
+        if isinstance(scores_t, torch.Tensor):
+            scores_np = scores_t.detach().cpu().numpy()
+        else:
+            scores_np = np.asarray(scores_t)
+        if boxes_px.size == 0:
+            return SAM3VisualPromptResponse(boxes_norm=[], scores=[])
+
+        # Sort highest-confidence first, cap at max_results.
+        order = np.argsort(-scores_np)
+        boxes_norm: list[list[float]] = []
+        scores_out: list[float] = []
+        for idx in order[:max_results]:
+            box_px = boxes_px[idx]
+            if len(box_px) != 4:
+                continue
+            x1 = clamp01(float(box_px[0]) / w)
+            y1 = clamp01(float(box_px[1]) / h)
+            x2 = clamp01(float(box_px[2]) / w)
+            y2 = clamp01(float(box_px[3]) / h)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            boxes_norm.append([x1, y1, x2, y2])
+            scores_out.append(float(scores_np[idx]))
+
+        return SAM3VisualPromptResponse(boxes_norm=boxes_norm, scores=scores_out)
 
     def text_detect(
         self,

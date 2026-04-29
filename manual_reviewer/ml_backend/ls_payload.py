@@ -18,6 +18,44 @@ DEFAULT_LABEL = "other"
 in the labeling_config XML, so LS will accept it as a valid label."""
 
 
+DEFAULT_LABELS: tuple[str, ...] = (
+    "forklift",
+    "palletjack",
+    "person",
+    "head",
+    "cellphone",
+    "wallet",
+    "bag",
+    "bicycle",
+    "motorcycle",
+    "car",
+    "truck",
+    "bus",
+    "van",
+    "cart",
+    "trolley",
+    "pallet",
+    "box",
+    "container",
+    "dog",
+    "cat",
+    "sign",
+    "cone",
+    "barrier",
+    "other",
+)
+"""24-class palette mirrored from labeling_config.xml. Used to snap
+free-text class hints (e.g. smart_text prompt) to a known LS label
+before they ride out as ``rectanglelabels``."""
+
+
+def snap_label(label: str | None) -> str:
+    """Return ``label`` if it's in :data:`DEFAULT_LABELS`, else ``DEFAULT_LABEL``."""
+    if isinstance(label, str) and label in DEFAULT_LABELS:
+        return label
+    return DEFAULT_LABEL
+
+
 def ls_box_to_norm(value: dict[str, Any]) -> list[float] | None:
     """Convert an LS RectangleLabels ``value`` dict to normalized [x1,y1,x2,y2].
 
@@ -74,21 +112,25 @@ def norm_box_to_ls_region(
     from_name: str = "bbox",
     to_name: str = "image",
     extra_meta: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Wrap a normalized bbox into an LS ``rectanglelabels`` result entry."""
+    original_width: int | None = None,
+    original_height: int | None = None,
+    original_rotation: int | None = None,
+) -> dict[str, Any] | None:
+    """Wrap a normalized bbox into an LS ``rectanglelabels`` result entry.
+
+    Returns ``None`` for degenerate (zero-area) boxes — the caller is
+    expected to skip the row rather than emit a phantom region.
+    """
     x1, y1, x2, y2 = bbox_norm
     x1 = max(0.0, min(1.0, float(x1)))
     y1 = max(0.0, min(1.0, float(y1)))
     x2 = max(0.0, min(1.0, float(x2)))
     y2 = max(0.0, min(1.0, float(y2)))
     if x2 <= x1 or y2 <= y1:
-        # Degenerate boxes are dropped by LS; emit them as zero-area at the
-        # click anyway so the reviewer can see *something* rather than
-        # nothing for an unconfident model output.
-        x2, y2 = x1 + 1e-6, y1 + 1e-6
+        return None
     width = x2 - x1
     height = y2 - y1
-    region = {
+    region: dict[str, Any] = {
         "id": region_id or uuid.uuid4().hex[:10],
         "type": "rectanglelabels",
         "from_name": from_name,
@@ -104,6 +146,12 @@ def norm_box_to_ls_region(
         },
         "score": float(score),
     }
+    if original_width is not None:
+        region["original_width"] = original_width
+    if original_height is not None:
+        region["original_height"] = original_height
+    if original_rotation is not None:
+        region["original_rotation"] = original_rotation
     if extra_meta:
         region["meta"] = extra_meta
     return region

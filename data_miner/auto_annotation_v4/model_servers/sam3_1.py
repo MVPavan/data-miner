@@ -28,6 +28,8 @@ from ..configs.wire import (
     SAM3RefineResponse,
     SAM3VideoTrackRequest,
     SAM3VideoTrackResponse,
+    SAM3VisualPromptRequest,
+    SAM3VisualPromptResponse,
 )
 from ..models.sam3_1 import SAM3OneModel
 from .base import DetectorServerBase
@@ -39,6 +41,7 @@ _REFINE_TAG = "__sam3_1_refine__"
 _TRACK_TAG = "__sam3_1_track__"
 _TEXT_TAG = "__sam3_1_text__"
 _CLICK_TAG = "__sam3_1_click__"
+_VISUAL_TAG = "__sam3_1_visual__"
 
 
 class SAM3OneApi(DetectorServerBase):
@@ -75,6 +78,9 @@ class SAM3OneApi(DetectorServerBase):
         if "seeds" in request:
             req = SAM3VideoTrackRequest.model_validate(request)
             return {"__mode__": _TRACK_TAG, "request": req}
+        if "exemplar_boxes_norm" in request:
+            req_visual = SAM3VisualPromptRequest.model_validate(request)
+            return {"__mode__": _VISUAL_TAG, "request": req_visual}
         if "bbox" in request:
             req_refine = SAM3RefineRequest.model_validate(request)
             return {"__mode__": _REFINE_TAG, "request": req_refine}
@@ -108,6 +114,8 @@ class SAM3OneApi(DetectorServerBase):
                 results.append(self._do_text_detect(req))
             elif mode == _CLICK_TAG:
                 results.append(self._do_click_mask(req))
+            elif mode == _VISUAL_TAG:
+                results.append(self._do_visual_prompt(req))
             else:
                 raise RuntimeError(f"unhandled mode: {mode!r}")
 
@@ -120,6 +128,7 @@ class SAM3OneApi(DetectorServerBase):
                 SAM3RefineResponse,
                 SAM3VideoTrackResponse,
                 SAM3ClickMaskResponse,
+                SAM3VisualPromptResponse,
                 DetectorResponse,
             ),
         ):
@@ -159,6 +168,17 @@ class SAM3OneApi(DetectorServerBase):
             point_norm=req.point,
             point_label=req.point_label,
             threshold=req.threshold,
+        )
+
+    def _do_visual_prompt(
+        self, req: SAM3VisualPromptRequest
+    ) -> SAM3VisualPromptResponse:
+        return self.model.visual_prompt(
+            image_path=req.image_path,
+            exemplar_boxes_norm=req.exemplar_boxes_norm,
+            exemplar_labels=req.exemplar_labels or None,
+            threshold=req.threshold,
+            max_results=req.max_results,
         )
 
 

@@ -206,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     propagated_count = 0
     rejected_count = 0
 
+    failed_groups = 0
     for group_id, image_ids in grouped.items():
         members = [by_id[i] for i in image_ids if i in by_id]
         if len(members) < 2:
@@ -213,12 +214,22 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         group_started = time.time()
-        results = reconcile_group(
-            group_id,
-            members,
-            client=client,
-            config=config,
-        )
+        try:
+            results = reconcile_group(
+                group_id,
+                members,
+                client=client,
+                config=config,
+            )
+        except Exception:
+            # One bad group must not kill a multi-hour batch — partial
+            # output (every group that ran cleanly so far) is still useful.
+            logger.exception(
+                "group=%s reconcile failed; continuing with remaining groups",
+                group_id,
+            )
+            failed_groups += 1
+            continue
         group_elapsed = (time.time() - group_started) * 1000.0
         for res in results.values():
             res = res.model_copy(update={"stage_timing_ms": group_elapsed})
@@ -242,14 +253,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     total_elapsed = time.time() - started
     logger.info(
-        "Done: %d images touched (rows written=%d), %d propagated, %d rejected, %.1fs",
+        "Done: %d images touched (rows written=%d), %d propagated, %d rejected, "
+        "%d group(s) failed, %.1fs",
         len(all_results),
         written,
         propagated_count,
         rejected_count,
+        failed_groups,
         total_elapsed,
     )
-    return 0
+    # Non-zero exit on partial failure so CI / wrapping cron jobs notice;
+    # data already written for clean groups is preserved.
+    return 0 if failed_groups == 0 else 3
 
 
 if __name__ == "__main__":

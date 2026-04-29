@@ -7,8 +7,10 @@ the export script is a one-shot CLI, not part of the live pipeline.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Iterable
 
@@ -17,6 +19,8 @@ from data_miner.auto_annotation_v4.configs.contracts import (
     ReconcileResult,
 )
 from data_miner.auto_annotation_v4.configs.enums import Stage
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "write_human_review",
@@ -28,6 +32,8 @@ __all__ = [
 def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA busy_timeout = 10000")
     return conn
 
@@ -52,7 +58,7 @@ def write_human_review(
     payload = result.model_dump_json()
     now = time.time()
 
-    with _connect(db_path) as conn:
+    with closing(_connect(db_path)) as conn, conn:
         cur = conn.cursor()
         cur.execute(
             "INSERT OR REPLACE INTO stages (image_id, stage, data, config_hash, created_at)"
@@ -76,7 +82,6 @@ def write_human_review(
                 " WHERE image_id = ?",
                 (json.dumps(completed), now, result.image_id),
             )
-        conn.commit()
 
 
 def write_reconcile_results(
@@ -100,7 +105,7 @@ def write_reconcile_results(
     """
     now = time.time()
     written = 0
-    with _connect(db_path) as conn:
+    with closing(_connect(db_path)) as conn, conn:
         cur = conn.cursor()
         for result in results:
             if skip_empty and not result.propagated and not result.rejected:
@@ -133,7 +138,6 @@ def write_reconcile_results(
                     (json.dumps(completed), now, result.image_id),
                 )
             written += 1
-        conn.commit()
     return written
 
 
@@ -160,12 +164,27 @@ def write_dedup_assignments(
     ]
     if not rows:
         return 0
-    with _connect(db_path) as conn:
+    image_ids = [r[3] for r in rows]
+    with closing(_connect(db_path)) as conn, conn:
         cur = conn.cursor()
+        placeholders = ",".join("?" for _ in image_ids)
+        existing = {
+            r["image_id"]
+            for r in cur.execute(
+                f"SELECT image_id FROM image_meta WHERE image_id IN ({placeholders})",
+                image_ids,
+            ).fetchall()
+        }
+        missing = [iid for iid in image_ids if iid not in existing]
+        if missing:
+            logger.warning(
+                "write_dedup_assignments: %d image_ids missing from image_meta (sample=%s)",
+                len(missing),
+                missing[:5],
+            )
         cur.executemany(
             "UPDATE image_meta SET dedup_status = ?, dedup_cluster_id = ?, updated_at = ?"
             " WHERE image_id = ?",
             rows,
         )
-        conn.commit()
         return cur.rowcount

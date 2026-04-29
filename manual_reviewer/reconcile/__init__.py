@@ -17,6 +17,18 @@ from .propagate import (
     PropagationConfig,
     reconcile_group,
 )
+from .propagate_static import (
+    CosineGenerator,
+    CropEncoder,
+    Match,
+    PropagateStaticConfig,
+    PropagateStaticSummary,
+    Reconciler,
+    Seed,
+    Verdict,
+    propagate_static,
+    verdict_to_ls_region,
+)
 from .sam3_client import (
     DEFAULT_SAM3_1_REFINE_URL,
     DEFAULT_SAM3_1_TRACK_URL,
@@ -29,19 +41,29 @@ from .sam3_client import (
 
 __all__ = [
     "AnnotationRef",
+    "CosineGenerator",
+    "CropEncoder",
     "DEFAULT_CLIP_REGEX",
     "DEFAULT_SAM3_1_REFINE_URL",
     "DEFAULT_SAM3_1_TRACK_URL",
     "DEFAULT_SAM3_DART_REFINE_URL",
     "DetectionCluster",
     "ImageContext",
+    "Match",
+    "PropagateStaticConfig",
+    "PropagateStaticSummary",
     "PropagationConfig",
+    "Reconciler",
     "RefineResponse",
     "Sam3Client",
     "Sam3HttpClient",
     "Sam3OneHttpClient",
+    "Seed",
+    "Verdict",
     "build_clusters",
     "group_images",
     "iou",
+    "propagate_static",
     "reconcile_group",
+    "verdict_to_ls_region",
 ]
