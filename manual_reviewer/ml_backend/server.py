@@ -31,11 +31,13 @@ from typing import Any
 
 from manual_reviewer.ml_backend.aav4_client import build_sam3_client
 from manual_reviewer.ml_backend.ls_payload import predictions_envelope
+from manual_reviewer.ml_backend.ls_rest import LSRestClient, build_ls_rest_client
 from manual_reviewer.ml_backend.routes import (
     Sam3LikeClient,
     batch_proposals,
     smart_click,
     smart_text,
+    smart_track,
     visual_prompt,
 )
 
@@ -46,6 +48,7 @@ _ROUTE_ENV_VARS = {
     "batch_proposals": "ENABLE_BATCH_PROPOSALS",
     "smart_click": "ENABLE_SMART_CLICK",
     "smart_text": "ENABLE_SMART_TEXT",
+    "smart_track": "ENABLE_SMART_TRACK",
     "visual_prompt": "ENABLE_VISUAL_PROMPT",
     "propagate_static": "ENABLE_PROPAGATE_STATIC",
 }
@@ -98,12 +101,14 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         self,
         *,
         sam3_client: Sam3LikeClient | None = None,
+        ls_rest: LSRestClient | None = None,
         db_path: Path | str | None = None,
         model_version: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._sam3_client: Sam3LikeClient | None = sam3_client or _maybe_build_client()
+        self._ls_rest: LSRestClient | None = ls_rest or build_ls_rest_client()
         self._db_path: Path | None = _resolve_db_path(db_path)
         self._model_version = model_version or os.environ.get(
             "ML_MODEL_VERSION", "manual_reviewer_v1"
@@ -163,6 +168,31 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         )
         has_draft = isinstance(context, dict) and bool(context.get("result"))
         if has_draft:
+            # smart_track is discriminated by ``from_name="smart_track"`` —
+            # check it first so a smart_track draft never falls into the
+            # generic rectangle handlers below.
+            has_track = self._sam3_client and any(
+                isinstance(r, dict) and r.get("from_name") == "smart_track"
+                for r in context["result"]
+            )
+            if has_track and _route_enabled("smart_track"):
+                _, propagate_result = smart_track(
+                    task, context, self._sam3_client, self._ls_rest,
+                )
+                if propagate_result is None:
+                    logger.info("→ smart_track did not run (preconditions unmet)")
+                else:
+                    logger.info(
+                        "→ smart_track propagated to %d/%d siblings (rejected motion=%d, score=%d, missing=%d)",
+                        propagate_result.propagated,
+                        propagate_result.siblings_total,
+                        propagate_result.rejected_motion,
+                        propagate_result.rejected_score,
+                        propagate_result.rejected_missing,
+                    )
+                return []
+            if has_track:
+                logger.info("→ smart_track disabled by env, falling through")
             # Visual prompt is discriminated by the V-tool's from_name, not
             # by region type — a regular bbox draw also produces type
             # "rectanglelabels" and we don't want THAT to fire ML.
@@ -184,12 +214,12 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
             for region in context["result"]:
                 if not isinstance(region, dict):
                     continue
-                if region.get("from_name") == "visual_prompt":
-                    # V-tool draft regions are handled by the visual_prompt
-                    # branch above; never let them fall through into the
-                    # smart_click / smart_text dispatchers (a V-tool
-                    # rectangle would otherwise type-match `rectanglelabels`
-                    # and trigger nothing useful here either way).
+                if region.get("from_name") in {"visual_prompt", "smart_track"}:
+                    # V-tool and smart_track draft regions are handled by
+                    # their own branches above; never let them fall
+                    # through into the smart_click / smart_text dispatchers
+                    # (both produce ``type=rectanglelabels`` which would
+                    # otherwise match the generic rect path).
                     continue
                 rtype = (region.get("type") or "").lower()
                 if rtype in {"keypointlabels", "keypoint"} and self._sam3_client:

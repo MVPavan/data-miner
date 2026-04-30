@@ -26,12 +26,12 @@ import argparse
 import json
 import logging
 import os
-import re
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
+from manual_reviewer.pipeline_io.clip_id import clip_prefix as _clip_prefix
 from manual_reviewer.pipeline_io import (
     build_task,
     iter_survivor_images,
@@ -252,19 +252,6 @@ def _fetch_existing_image_ids(
                 break
             page += 1
     return out
-
-
-_CLIP_SUFFIX = re.compile(r"_f\d+$")
-
-
-def _clip_prefix(image_id: str) -> str:
-    """Group key: image_id with the trailing ``_f<digits>`` suffix stripped.
-
-    Falls back to the full image_id when the suffix doesn't match (so
-    images that don't follow the convention still each form their own
-    one-element 'clip' instead of collapsing into a generic bucket).
-    """
-    return _CLIP_SUFFIX.sub("", image_id) or image_id
 
 
 def _select_per_clip(

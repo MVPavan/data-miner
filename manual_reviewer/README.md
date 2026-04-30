@@ -10,7 +10,7 @@ audit trail.
 pipeline.db  ──▶ build_tasks.py ──▶ Label Studio  ──▶ export_to_aa_v4.py ──▶ pipeline.db
                   (LS predictions)    (humans edit)        (Stage.HUMAN_REVIEW)
                                           ▲
-                                          │ smart="true" drafts (Ctrl+V/K/T)
+                                          │ smart="true" drafts (Ctrl+V/K/T/G)
                                           │
                                   ML backend (port 9090)
                                           │ HTTP
@@ -20,8 +20,9 @@ pipeline.db  ──▶ build_tasks.py ──▶ Label Studio  ──▶ export_t
 
 The ML backend never loads weights — it's a pure protocol adapter that
 turns LS smart-tool drafts into SAM 3.1 HTTP calls and a sqlite SELECT
-against `proposals`. SAM 3.1 covers click→mask, text→detect, and
-visual-prompt (exemplar) detection.
+against `proposals`. SAM 3.1 covers click→mask, text→detect,
+visual-prompt (exemplar) detection, and video-track for cross-frame
+static-object propagation.
 
 Annotation events are also captured to disk (`.ls_backup/`) on a 5-minute
 cron via `sync_ls_to_disk.py` — a lossless audit trail independent of
@@ -43,11 +44,14 @@ manual_reviewer/
 ├── docker-compose.review.yml        LS + Postgres + ML backend (alternative to manage_stack.sh)
 ├── ml_backend/                      LabelStudioMLBase adapter (no torch)
 │   ├── server.py                    Entry: `python -m manual_reviewer.ml_backend.server`
-│   ├── routes.py                    smart_click / smart_text / visual_prompt / batch_proposals
+│   ├── routes.py                    smart_click / smart_text / visual_prompt / smart_track / batch_proposals
+│   ├── smart_track_lib.py           SAM 3.1 video-tracker propagation across sibling frames
+│   ├── ls_rest.py                   LS REST writer for cross-task prediction posts
 │   ├── lswebhook.py                 LS annotation webhook → .ls_backup/ (push-side, idle today)
 │   ├── aav4_client.py               Sam3OneHttpClient builder + cached-proposals reader
 │   └── ls_payload.py                LS region builders + predictions envelope
 ├── pipeline_io/
+│   ├── clip_id.py                   image_id → clip prefix (strip _f<digits>)
 │   ├── db_reader.py                 read-only sqlite (PRAGMA query_only)
 │   ├── db_writer.py                 write Stage.HUMAN_REVIEW / Stage.RECONCILE / dedup
 │   ├── task_builder.py              per-image LS task assembly
@@ -66,7 +70,7 @@ manual_reviewer/
 │   ├── export_to_aa_v4.py           LS export → pipeline.db
 │   ├── run_reconcile.py             cross-frame reconcile → Stage.RECONCILE
 │   └── mark_dedup.py                apply external dedup manifest
-└── tests/                           377 tests (round-trip + ML backend + reconcile + sync)
+└── tests/                           403 tests (round-trip + ML backend + reconcile + sync + smart_track)
 ```
 
 ---
@@ -271,6 +275,7 @@ mouse:
 | `smart_click`| `Ctrl+K`| KeyPoint tool — click on an object → SAM 3.1 click→mask   |
 | `smart_text` | `Ctrl+T`| TextArea — type a prompt → SAM 3.1 text→detect            |
 | `visual_prompt` (V-tool) | `Ctrl+V`| Rectangle exemplar — draw a box → SAM 3.1 visual prompting on similar instances |
+| `smart_track`| `Ctrl+G`| Rectangle seed — draw a box on a static object → SAM 3.1 video tracker propagates it across sibling clip frames |
 
 Class hotkeys (active class for whichever tool is selected): `1` `2` `3`
 `4` `5` `6` `7` `8` `9` `0` `q` `w` `e` `r` `t` `y` `u` `i` `o` `p` `a`
@@ -318,6 +323,47 @@ propagates).
 
 The exemplar is a seed, not a duplicate, so the SAM-returned box at the
 exemplar location gets dropped automatically.
+
+### smart_track — propagate a static object across sibling frames
+
+Press `Ctrl+G` → draw a tight rectangle around a **static** object
+(parked car, sign, fixed equipment, building corner, etc.). The ML
+backend:
+
+1. Computes the clip prefix from the current task's `image_id` by
+   stripping the trailing `_f<frame_index>` (so
+   `Caifu_Center_Fewer_2_f00516` and `Caifu_Center_Fewer_2_f00645`
+   group together).
+2. Queries LS for every other task in the project with the same
+   prefix — the "siblings".
+3. Builds a JPEG-folder of seed + siblings, calls SAM 3.1's video
+   `/track` mode forward from the seed frame, gets per-sibling bbox +
+   score back.
+4. **Filters** for static-only: keeps siblings where the propagated
+   bbox center moved ≤ 0.05 (normalized) from the seed AND the score
+   is ≥ 0.5. A moving object's tracker output drifts spatially or
+   drops in confidence; either way it's rejected. SAM 3.1's temporal
+   disambiguation can leak unrelated detections into the response —
+   the motion threshold doubles as a same-object filter.
+5. POSTs surviving propagations as predictions to the matching
+   sibling tasks via `POST /api/predictions/`. The reviewer sees them
+   the next time they open one of those tasks.
+
+The route doesn't add anything to the *current* task's canvas — the
+seed rectangle the reviewer drew stays as their draft and they can
+keep it or discard it. The propagation lands on siblings.
+
+**What gets propagated:** the meta carries `outcome=propagated`,
+`from_image=<seed_image_id>`, `from_task=<seed_task_id>`, and
+`source=smart_track` so a downstream consumer can tell automatic
+propagations apart from human edits.
+
+**Tunables (env vars on the ML backend):**
+- `ENABLE_SMART_TRACK` — falsy disables the route entirely
+- The motion / score thresholds and per-call sibling cap (default
+  100) live in `manual_reviewer/ml_backend/smart_track_lib.py` —
+  v1 keeps them as code constants. Tighten if you see false-positive
+  propagations on near-static-but-moving objects.
 
 ### Auto-seeded finalize predictions (yellow drafts)
 
@@ -541,7 +587,7 @@ and the cron-driven `sync_ls_to_disk` diff.
 | Stack lifecycle | [`scripts/manage_stack.sh`](scripts/manage_stack.sh) — start/stop/restart/status/logs |
 | New project bootstrap | [`scripts/create_ls_project.py`](scripts/create_ls_project.py) — XML + storage + ML in one shot |
 | Class palette source | dataset's `classes.txt` (renderer: [`configs/build_labeling_config.py`](configs/build_labeling_config.py)) |
-| Auto: toggle hotkeys | `Esc` (none), `Ctrl+K` (smart_click), `Ctrl+T` (smart_text), `Ctrl+V` (visual_prompt) |
+| Auto: toggle hotkeys | `Esc` (none), `Ctrl+K` (smart_click), `Ctrl+T` (smart_text), `Ctrl+V` (visual_prompt), `Ctrl+G` (smart_track) |
 | Annotation backup | [`scripts/sync_ls_to_disk.py`](scripts/sync_ls_to_disk.py) (cron, 5 min) → `.ls_backup/project_<N>/` |
 | Schema additions | `Stage.HUMAN_REVIEW`, `Stage.RECONCILE` in [enums.py](../data_miner/auto_annotation_v4/configs/enums.py); `dedup_status` / `dedup_cluster_id` columns on `image_meta` |
 | Pydantic contracts | `HumanCorrection`, `HumanReviewResult`, `ReconcileResult`, `ReconciledDetection` in [contracts.py](../data_miner/auto_annotation_v4/configs/contracts.py) |

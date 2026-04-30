@@ -3,7 +3,7 @@
 Single source of truth: the dataset's ``classes.txt`` (one class per line).
 Hard-coding the palette in the XML drifted on every dataset switch — this
 reads the file at build time and substitutes a 4-block label palette
-(bbox + smart_click + visual_prompt) plus the page chrome.
+(bbox + smart_click + visual_prompt + smart_track) plus the page chrome.
 
 Hotkey map: 1-0, q-w-e-r-t-y-u-i-o-p, a-s-d, **skipping "v"** (reserved
 by the visual_prompt toggle) and "f" (reserved as a future fallback).
@@ -59,6 +59,7 @@ _TEMPLATE = """\
       <Choice value="visual_prompt" hotkey="ctrl+v"/>
       <Choice value="smart_click"   hotkey="ctrl+k"/>
       <Choice value="smart_text"    hotkey="ctrl+t"/>
+      <Choice value="smart_track"   hotkey="ctrl+g"/>
     </Choices>
   </View>
 
@@ -83,6 +84,14 @@ _TEMPLATE = """\
                    smart="true"
                    strokeColor="#ff7700" opacity="0.05" strokeWidth="2">
 {visual_labels}
+  </RectangleLabels>
+  </View>
+
+  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_track">
+  <RectangleLabels name="smart_track" toName="image"
+                   smart="true"
+                   strokeColor="#16a085" opacity="0.05" strokeWidth="2">
+{track_labels}
   </RectangleLabels>
   </View>
 
@@ -142,6 +151,7 @@ def render(classes_path: Path) -> str:
         bbox_labels=block,
         click_labels=block,
         visual_labels=block,
+        track_labels=block,
     )
 
 

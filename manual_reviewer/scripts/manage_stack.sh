@@ -161,6 +161,8 @@ start_ml_backend() {
   AAV4_PIPELINE_DB="$AAV4_PIPELINE_DB" \
   LS_BACKUP_DIR="$LS_BACKUP_DIR" \
   ENABLE_BATCH_PROPOSALS="$ENABLE_BATCH_PROPOSALS" \
+  LS_URL="http://localhost:$LS_PORT" \
+  LS_TOKEN="$LS_TOKEN" \
   nohup "$VENV_PY" -m manual_reviewer.ml_backend.server \
     >> "$(log_path ml_backend)" 2>&1 &
   echo $! > "$PIDFILE_DIR/ml_backend.pid"

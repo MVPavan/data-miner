@@ -31,6 +31,12 @@ from manual_reviewer.ml_backend.ls_payload import (
     norm_box_to_ls_region,
     snap_label,
 )
+from manual_reviewer.ml_backend.ls_rest import LSRestClient
+from manual_reviewer.ml_backend.smart_track_lib import (
+    PropagateResult,
+    TrackerLikeClient,
+    propagate_via_tracker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,7 @@ __all__ = [
     "dispatch",
     "smart_click",
     "smart_text",
+    "smart_track",
     "visual_prompt",
 ]
 
@@ -543,6 +550,146 @@ def smart_text(
     if dropped:
         logger.debug("smart_text: dropped %d duplicate(s) vs canvas", dropped)
     return out
+
+
+def _seed_from_smart_track_context(
+    context: dict[str, Any] | None,
+) -> tuple[list[float] | None, str | None]:
+    """Pull the seed bbox + class hint from a smart_track LS context.
+
+    Looks only at regions with ``from_name="smart_track"`` so a plain
+    bbox draw or a stray rectangle from another tool can't accidentally
+    fire propagation.
+    """
+    if not isinstance(context, dict):
+        return None, None
+    for region in context.get("result") or []:
+        if not isinstance(region, dict):
+            continue
+        if region.get("from_name") != "smart_track":
+            continue
+        rtype = (region.get("type") or "").lower()
+        if rtype not in {"rectanglelabels", "rectangle"}:
+            continue
+        value = region.get("value") or {}
+        bbox = ls_box_to_norm(value)
+        if bbox is None:
+            continue
+        label_hint: str | None = None
+        for key in ("rectanglelabels", "labels"):
+            arr = value.get(key)
+            if isinstance(arr, list) and arr:
+                first = arr[0]
+                if isinstance(first, str) and first:
+                    label_hint = first
+                    break
+        return bbox, label_hint
+    return None, None
+
+
+def _project_id_from_task(task: dict[str, Any]) -> int | None:
+    """LS predict() payloads put project at top level; build_tasks output
+    can also stash it under ``data.project``. Accept either.
+    """
+    proj = task.get("project")
+    if isinstance(proj, int):
+        return proj
+    proj_d = (task.get("data") or {}).get("project")
+    if isinstance(proj_d, int):
+        return proj_d
+    if isinstance(proj_d, str) and proj_d.isdigit():
+        return int(proj_d)
+    return None
+
+
+def smart_track(
+    task: dict[str, Any],
+    context: dict[str, Any] | None,
+    sam3_client: TrackerLikeClient,
+    ls_rest: LSRestClient | None,
+    *,
+    score_thresh: float = 0.5,
+    motion_thresh: float = 0.05,
+    max_siblings: int = 100,
+    model_version: str = "sam3_1_track",
+) -> tuple[list[dict[str, Any]], PropagateResult | None]:
+    """Static-object tracker propagation across sibling clip frames.
+
+    The reviewer draws an exemplar rectangle with the smart_track tool;
+    SAM 3.1's video tracker propagates that bbox across every sibling
+    task in the project (matched by clip-prefix on ``image_id``). Only
+    surviving propagations — high score + low spatial drift relative to
+    the seed — get POSTed to LS as predictions on the matching tasks.
+
+    Returns ``(regions, result)``:
+
+      * ``regions`` is always ``[]`` — propagation lands on *sibling*
+        tasks via REST, not on the current task. The reviewer sees
+        their own seed rectangle on the current task (LS draws drafts
+        natively); navigating to a sibling reveals the propagated
+        prediction.
+      * ``result`` is the :class:`PropagateResult` summary (or None if
+        we early-aborted before calling the tracker). The server logs
+        it; tests assert against it.
+
+    Required env-derived state (caller's job):
+
+      * ``sam3_client`` — a :class:`TrackerLikeClient` (live SAM 3.1
+        client OR a mock).
+      * ``ls_rest`` — a :class:`LSRestClient`. None disables the route
+        (cross-task writes are mandatory for usefulness).
+
+    Both ``score_thresh`` and ``motion_thresh`` enforce the static-only
+    semantics — moving objects either drop in confidence or drift
+    spatially across sparse frames; either way, they're rejected.
+    """
+    if ls_rest is None:
+        logger.info("smart_track: LS REST client not configured; skipping")
+        return [], None
+
+    seed_bbox, label_hint = _seed_from_smart_track_context(context)
+    if seed_bbox is None:
+        logger.info("smart_track: no seed rectangle in context")
+        return [], None
+    if (seed_bbox[2] - seed_bbox[0]) < 1e-3 or (seed_bbox[3] - seed_bbox[1]) < 1e-3:
+        logger.info("smart_track: seed bbox is degenerate (zero area)")
+        return [], None
+
+    image_path = _get_image_path(task)
+    image_id = (task.get("data") or {}).get("image_id")
+    project_id = _project_id_from_task(task)
+    if not image_path or not isinstance(image_id, str) or project_id is None:
+        logger.warning(
+            "smart_track: missing image_path/image_id/project (path=%r id=%r proj=%r)",
+            image_path, image_id, project_id,
+        )
+        return [], None
+
+    seed_label = snap_label(label_hint) if label_hint else DEFAULT_LABEL
+
+    logger.info(
+        "smart_track: seed image=%s bbox=%s label=%s project=%s",
+        image_id,
+        [round(b, 4) for b in seed_bbox],
+        seed_label,
+        project_id,
+    )
+
+    result = propagate_via_tracker(
+        sam3_client=sam3_client,
+        ls_rest=ls_rest,
+        project_id=project_id,
+        seed_image_path=image_path,
+        seed_image_id=image_id,
+        seed_bbox=seed_bbox,
+        seed_label=seed_label,
+        current_task_id=task.get("id"),
+        score_thresh=score_thresh,
+        motion_thresh=motion_thresh,
+        max_siblings=max_siblings,
+        model_version=model_version,
+    )
+    return [], result
 
 
 def batch_proposals(
