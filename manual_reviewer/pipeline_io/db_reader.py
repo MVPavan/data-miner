@@ -112,7 +112,7 @@ def read_image_payload(
     dicts/lists — failures fall back to the raw string with a ``_parse_error``
     marker rather than raising.
     """
-    with _connect(db_path) as conn:
+    with closing(_connect(db_path)) as conn:
         meta_row = conn.execute(
             "SELECT * FROM image_meta WHERE image_id = ?", (image_id,)
         ).fetchone()

@@ -141,6 +141,8 @@ def _region_score(region: dict[str, Any]) -> float:
 def canvas_rectangles(
     task: dict[str, Any],
     context: dict[str, Any] | None,
+    *,
+    include_visual_prompt: bool = False,
 ) -> list[tuple[BboxNorm, str | None]]:
     """All rectangle ``(bbox, class)`` pairs visible at predict time.
 
@@ -154,6 +156,12 @@ def canvas_rectangles(
       3. the current draft (``context.result``) — covers the
          exemplar-self duplicate for the V-tool and any accumulated
          in-flight regions.
+
+    The V-tool exemplar (``from_name="visual_prompt"``) is excluded
+    from the draft sweep by default so smart_text matches don't get
+    suppressed by a leftover exemplar. The visual_prompt route itself
+    needs the exemplar in the pool to dedup the SAM-returned duplicate
+    at the exemplar location, so it passes ``include_visual_prompt=True``.
 
     Order matters when a caller chooses to truncate the pool, but for
     IoU dedup the order is irrelevant.
@@ -189,6 +197,11 @@ def canvas_rectangles(
     if isinstance(context, dict):
         for region in context.get("result") or []:
             if not isinstance(region, dict) or not _is_rectangle(region):
+                continue
+            if (
+                not include_visual_prompt
+                and region.get("from_name") == "visual_prompt"
+            ):
                 continue
             bbox = _region_bbox(region)
             if bbox is not None:

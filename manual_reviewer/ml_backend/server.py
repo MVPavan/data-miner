@@ -136,7 +136,10 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
                 {
                     "result": regions,
                     "model_version": self._model_version,
-                    "score": 1.0 if regions else 0.0,
+                    "score": max(
+                        (float(r.get("score", 0.0) or 0.0) for r in regions),
+                        default=0.0,
+                    ),
                 }
             )
         return out
@@ -223,8 +226,13 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         result = context.get("result")
         if not isinstance(result, list):
             return f"keys={sorted(context.keys())}"
-        types = [(r or {}).get("type") for r in result if isinstance(r, dict)]
-        return f"result_types={types}"
+        # Include from_name so we can tell V-tool draft (visual_prompt) from
+        # regular bbox draws when both produce type=rectanglelabels.
+        items = [
+            f"{(r or {}).get('from_name')}:{(r or {}).get('type')}"
+            for r in result if isinstance(r, dict)
+        ]
+        return f"results=[{', '.join(items)}]"
 
     # Public envelope helper for callers that bypass LS but want the same
     # ``predictions`` shape (used by the test suite).
@@ -247,6 +255,9 @@ def _maybe_build_client() -> Sam3LikeClient | None:
         return None
 
 
+_DB_PATH_WARNED: set[str] = set()
+
+
 def _resolve_db_path(value: Path | str | None) -> Path | None:
     if value is not None:
         p = Path(value)
@@ -255,7 +266,15 @@ def _resolve_db_path(value: Path | str | None) -> Path | None:
     if not env_value:
         return None
     p = Path(env_value)
-    return p if p.exists() else None
+    if p.exists():
+        return p
+    if env_value not in _DB_PATH_WARNED:
+        logger.warning(
+            "AAV4_PIPELINE_DB=%s does not exist; batch_proposals will return empty",
+            env_value,
+        )
+        _DB_PATH_WARNED.add(env_value)
+    return None
 
 
 # ---------------------------------------------------------------------------

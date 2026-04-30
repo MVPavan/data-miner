@@ -29,6 +29,7 @@ from manual_reviewer.ml_backend.ls_payload import (
     ls_keypoint_to_norm,
     ls_textarea_value_to_prompts,
     norm_box_to_ls_region,
+    snap_label,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,18 @@ def _get_image_path(task: dict[str, Any]) -> str | None:
     return None
 
 
+def _get_image_dims(task: dict[str, Any]) -> tuple[int | None, int | None]:
+    """Return ``(width, height)`` from ``task.data.image_size`` if present."""
+    data = task.get("data") or {}
+    size = data.get("image_size")
+    if isinstance(size, (list, tuple)) and len(size) == 2:
+        try:
+            return int(size[0]), int(size[1])
+        except (TypeError, ValueError):
+            return None, None
+    return None, None
+
+
 def _bbox_to_norm_list(bbox: Any) -> list[float] | None:
     """aav4 BoundingBox dict / list → normalized [x1, y1, x2, y2] list."""
     if isinstance(bbox, dict):
@@ -119,7 +132,10 @@ def _bbox_to_norm_list(bbox: Any) -> list[float] | None:
     return None
 
 
-def _picked_label_from_context(context: dict[str, Any] | None) -> str | None:
+def _picked_label_from_context(
+    context: dict[str, Any] | None,
+    triggering_region: dict[str, Any] | None = None,
+) -> str | None:
     """Look at the LS context for a label the reviewer pre-selected.
 
     Accepts every label-array key LS may emit, depending on which tool
@@ -129,19 +145,34 @@ def _picked_label_from_context(context: dict[str, Any] | None) -> str | None:
       * ``keypointlabels``  — KeyPointLabels (the smart_click tool).
       * ``labels``          — bare ``<Labels>`` block, kept for backward
         compat with older XML configs / seeded predictions.
+
+    When ``triggering_region`` is supplied (e.g. the keypoint that fired
+    smart_click), its own labels are checked first so a paired keypoint
+    class wins over an unrelated rectangle that happens to ride the
+    same draft.
     """
-    if not isinstance(context, dict):
-        return None
-    for region in context.get("result") or []:
-        if not isinstance(region, dict):
-            continue
-        value = region.get("value") or {}
-        for key in ("labels", "rectanglelabels", "keypointlabels"):
+
+    def _from_value(value: dict[str, Any]) -> str | None:
+        for key in ("keypointlabels", "rectanglelabels", "labels"):
             arr = value.get(key)
             if isinstance(arr, list) and arr:
                 first = arr[0]
                 if isinstance(first, str) and first:
                     return first
+        return None
+
+    if isinstance(triggering_region, dict):
+        own = _from_value(triggering_region.get("value") or {})
+        if own:
+            return own
+    if not isinstance(context, dict):
+        return None
+    for region in context.get("result") or []:
+        if not isinstance(region, dict):
+            continue
+        own = _from_value(region.get("value") or {})
+        if own:
+            return own
     return None
 
 
@@ -180,6 +211,7 @@ def smart_click(
         return []
     point: list[float] | None = None
     point_label = 1
+    trigger_region: dict[str, Any] | None = None
     for region in context.get("result") or []:
         if not isinstance(region, dict):
             continue
@@ -189,6 +221,7 @@ def smart_click(
         candidate = ls_keypoint_to_norm(region.get("value") or {})
         if candidate is not None:
             point = candidate
+            trigger_region = region
             break
     if point is None:
         logger.info("smart_click: no keypoint found in context")
@@ -217,19 +250,25 @@ def smart_click(
     if bbox is None:
         logger.info("smart_click: SAM 3.1 returned no bbox (score=%.3f)", score)
         return []
-    label = _picked_label_from_context(context) or DEFAULT_LABEL
+    label = _picked_label_from_context(context, trigger_region) or DEFAULT_LABEL
     logger.info(
         "smart_click: bbox=%s score=%.3f label=%s",
         [round(b, 4) for b in bbox],
         score,
         label,
     )
+    width, height = _get_image_dims(task)
     region = norm_box_to_ls_region(
         list(bbox),
         label,
         score=score,
         extra_meta={"source": "smart_click", "model_version": model_version},
+        original_width=width,
+        original_height=height,
+        original_rotation=0,
     )
+    if region is None:
+        return []
     survivors, dropped = dedup_against(
         [region], canvas_rectangles(task, context), iou=dedup_iou
     )
@@ -335,7 +374,7 @@ def visual_prompt(
     if not exemplars:
         logger.info("visual_prompt: all exemplars degenerate (zero area)")
         return []
-    existing = canvas_rectangles(task, context)
+    existing = canvas_rectangles(task, context, include_visual_prompt=True)
 
     logger.info(
         "visual_prompt: image=%s exemplars=%d label=%s threshold=%.2f existing=%d",
@@ -359,6 +398,7 @@ def visual_prompt(
     boxes = list(getattr(resp, "boxes_norm", []) or [])
     scores = list(getattr(resp, "scores", []) or [])
     label = label_hint or DEFAULT_LABEL
+    width, height = _get_image_dims(task)
 
     proposed: list[dict[str, Any]] = []
     for idx, bbox in enumerate(boxes):
@@ -366,17 +406,20 @@ def visual_prompt(
         if bbox_norm is None:
             continue
         score = scores[idx] if idx < len(scores) else 0.0
-        proposed.append(
-            norm_box_to_ls_region(
-                bbox_norm,
-                label,
-                score=float(score or 0.0),
-                extra_meta={
-                    "source": "visual_prompt",
-                    "model_version": model_version,
-                },
-            )
+        region = norm_box_to_ls_region(
+            bbox_norm,
+            label,
+            score=float(score or 0.0),
+            extra_meta={
+                "source": "visual_prompt",
+                "model_version": model_version,
+            },
+            original_width=width,
+            original_height=height,
+            original_rotation=0,
         )
+        if region is not None:
+            proposed.append(region)
 
     # Internal NMS first: collapse near-duplicate matches the model
     # emitted on the same instance. External dedup second: drop matches
@@ -453,26 +496,31 @@ def smart_text(
     boxes = list(getattr(resp, "boxes", []) or [])
     scores = list(getattr(resp, "scores", []) or [])
     labels = list(getattr(resp, "labels", []) or [])
+    width, height = _get_image_dims(task)
 
     proposed: list[dict[str, Any]] = []
     for idx, bbox in enumerate(boxes):
         bbox_norm = _bbox_to_norm_list(bbox)
         if bbox_norm is None:
             continue
-        label = labels[idx] if idx < len(labels) and labels[idx] else DEFAULT_LABEL
+        raw_label = labels[idx] if idx < len(labels) and labels[idx] else DEFAULT_LABEL
+        label = snap_label(raw_label)
         score = scores[idx] if idx < len(scores) else 0.0
-        proposed.append(
-            norm_box_to_ls_region(
-                bbox_norm,
-                label,
-                score=float(score or 0.0),
-                extra_meta={
-                    "source": "smart_text",
-                    "model_version": model_version,
-                    "prompt": label,
-                },
-            )
+        region = norm_box_to_ls_region(
+            bbox_norm,
+            label,
+            score=float(score or 0.0),
+            extra_meta={
+                "source": "smart_text",
+                "model_version": model_version,
+                "prompt": raw_label,
+            },
+            original_width=width,
+            original_height=height,
+            original_rotation=0,
         )
+        if region is not None:
+            proposed.append(region)
 
     nmsed = nms_regions(proposed, iou=nms_iou)
     survivors, dropped = dedup_against(
@@ -511,6 +559,7 @@ def batch_proposals(
     if not isinstance(image_id, str) or not image_id:
         return []
     candidates = read_cached_proposals(db_path, image_id)
+    width, height = _get_image_dims(task)
     out: list[dict[str, Any]] = []
     for cand in candidates:
         if len(out) >= max_regions:
@@ -522,19 +571,22 @@ def batch_proposals(
         if bbox_norm is None:
             continue
         label = cand.get("class_name") or DEFAULT_LABEL
-        out.append(
-            norm_box_to_ls_region(
-                bbox_norm,
-                label,
-                score=confidence,
-                region_id=cand.get("candidate_id"),
-                extra_meta={
-                    "source": "batch_proposals",
-                    "model_version": model_version,
-                    "detector": cand.get("model"),
-                },
-            )
+        region = norm_box_to_ls_region(
+            bbox_norm,
+            label,
+            score=confidence,
+            region_id=cand.get("candidate_id"),
+            extra_meta={
+                "source": "batch_proposals",
+                "model_version": model_version,
+                "detector": cand.get("model"),
+            },
+            original_width=width,
+            original_height=height,
+            original_rotation=0,
         )
+        if region is not None:
+            out.append(region)
     return out
 
 

@@ -12,8 +12,12 @@ default canvas. VLM verdicts and per-model proposal summaries are folded into
 
 from __future__ import annotations
 
+import logging
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
 
 
 def build_task(
@@ -23,12 +27,15 @@ def build_task(
     job_id: str = "",
     model_version: str = "aa_v4_finalize",
     include_ghost_drops: bool = True,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """Build one Label Studio task dict from a ``read_image_payload`` result.
 
     ``image_url_template`` is formatted with ``path=<image_path>``. The default
     targets Label Studio's local-files-serving (``LOCAL_FILES_SERVING_ENABLED``)
     so the image bytes are streamed by LS itself.
+
+    Returns ``None`` when ``meta.image_path`` is empty/missing or contains a
+    ``..`` path-traversal segment — caller should skip the row.
     """
     image_id = image_payload["image_id"]
     meta = image_payload["meta"]
@@ -55,15 +62,20 @@ def build_task(
 
     image_size = _resolve_image_size(stages)
 
-    image_path = meta.get("image_path", "")
-    # LS local-files-serving expects the path as a URL query value. ``?``,
-    # ``&``, ``#``, ``%`` and spaces in the original path would otherwise
-    # break the URL silently and the reviewer sees a blank canvas.
-    image_url = (
-        image_url_template.format(path=quote(image_path, safe="/"))
-        if image_path
-        else ""
-    )
+    image_path = meta.get("image_path", "") or ""
+    if not image_path:
+        logger.warning(
+            "build_task: skipping image_id=%s with empty image_path", image_id
+        )
+        return None
+    if _has_path_traversal(image_path):
+        logger.warning(
+            "build_task: skipping image_id=%s with path traversal in image_path=%r",
+            image_id,
+            image_path,
+        )
+        return None
+    image_url = image_url_template.format(path=quote(image_path, safe="/"))
 
     data: dict[str, Any] = {
         "image": image_url,
@@ -90,6 +102,7 @@ def build_task(
         height=height,
         model_version=model_version,
         cross_frame_suggestions=reconcile_propagated,
+        image_id=image_id,
     )
 
     return {
@@ -97,6 +110,39 @@ def build_task(
         "predictions": predictions,
         "meta": {"image_id": image_id, "job_id": job_id},
     }
+
+
+def _has_path_traversal(image_path: str) -> bool:
+    posix_parts = PurePosixPath(image_path).parts
+    win_parts = PureWindowsPath(image_path).parts
+    return ".." in posix_parts or ".." in win_parts
+
+
+def _bbox_to_ls_value(
+    bbox: dict[str, Any], *, image_id: str, candidate_id: str
+) -> tuple[float, float, float, float] | None:
+    try:
+        x1 = float(bbox.get("x1", 0.0))
+        y1 = float(bbox.get("y1", 0.0))
+        x2 = float(bbox.get("x2", 0.0))
+        y2 = float(bbox.get("y2", 0.0))
+    except (TypeError, ValueError):
+        return None
+    for name, val in (("x1", x1), ("y1", y1), ("x2", x2), ("y2", y2)):
+        if val < -0.05 or val > 1.05:
+            logger.warning(
+                "bbox out of [0,1] for image_id=%s candidate_id=%s %s=%s; clamping",
+                image_id,
+                candidate_id,
+                name,
+                val,
+            )
+            break
+    x1 = max(0.0, min(1.0, x1))
+    y1 = max(0.0, min(1.0, y1))
+    x2 = max(0.0, min(1.0, x2))
+    y2 = max(0.0, min(1.0, y2))
+    return x1, y1, x2, y2
 
 
 def _resolve_image_size(stages: dict[str, Any]) -> list[int] | None:
@@ -189,6 +235,7 @@ def _build_predictions(
     height: int | None,
     model_version: str,
     cross_frame_suggestions: list[dict[str, Any]] | None = None,
+    image_id: str = "",
 ) -> list[dict[str, Any]]:
     """Convert finalize annotations into LS RectangleLabels predictions.
 
@@ -213,21 +260,25 @@ def _build_predictions(
     }
 
     results: list[dict[str, Any]] = []
-    for ann in final_annotations:
+    dropped = 0
+    for i, ann in enumerate(final_annotations):
         if not isinstance(ann, dict):
             continue
         bbox = ann.get("bbox") or {}
         candidate_id = ann.get("candidate_id") or ""
         class_name = ann.get("class_name") or ""
         if not candidate_id or not class_name:
+            logger.warning(
+                "dropping finalize annotation idx=%d image_id=%s missing candidate_id/class_name",
+                i,
+                image_id,
+            )
+            dropped += 1
             continue
-        try:
-            x1 = float(bbox.get("x1", 0.0))
-            y1 = float(bbox.get("y1", 0.0))
-            x2 = float(bbox.get("x2", 0.0))
-            y2 = float(bbox.get("y2", 0.0))
-        except (TypeError, ValueError):
+        coords = _bbox_to_ls_value(bbox, image_id=image_id, candidate_id=candidate_id)
+        if coords is None:
             continue
+        x1, y1, x2, y2 = coords
         results.append(
             {
                 "id": candidate_id,
@@ -254,21 +305,23 @@ def _build_predictions(
             }
         )
 
-    for sug in cross_frame_suggestions or []:
+    for j, sug in enumerate(cross_frame_suggestions or []):
         if not isinstance(sug, dict):
             continue
         bbox = sug.get("bbox") or {}
         candidate_id = sug.get("candidate_id") or ""
         class_name = sug.get("class_name") or ""
         if not candidate_id or not class_name:
+            logger.warning(
+                "dropping cross_frame suggestion idx=%d image_id=%s missing candidate_id/class_name",
+                j,
+                image_id,
+            )
             continue
-        try:
-            x1 = float(bbox.get("x1", 0.0))
-            y1 = float(bbox.get("y1", 0.0))
-            x2 = float(bbox.get("x2", 0.0))
-            y2 = float(bbox.get("y2", 0.0))
-        except (TypeError, ValueError):
+        coords = _bbox_to_ls_value(bbox, image_id=image_id, candidate_id=candidate_id)
+        if coords is None:
             continue
+        x1, y1, x2, y2 = coords
         results.append(
             {
                 "id": candidate_id,

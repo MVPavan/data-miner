@@ -135,7 +135,13 @@ def test_canvas_rectangles_includes_predictions() -> None:
 
 
 def test_canvas_rectangles_includes_draft_context() -> None:
-    """The exemplar in context.result must show up as canvas rectangle."""
+    """The exemplar in context.result shows up only when the caller opts in.
+
+    By default ``from_name="visual_prompt"`` regions are filtered out so a
+    leftover V-tool exemplar doesn't suppress smart_text matches. The
+    visual_prompt route itself passes ``include_visual_prompt=True`` to
+    keep the exemplar in the dedup pool.
+    """
     ctx = {
         "result": [
             {
@@ -146,7 +152,8 @@ def test_canvas_rectangles_includes_draft_context() -> None:
             }
         ]
     }
-    out = canvas_rectangles({}, ctx)
+    assert canvas_rectangles({}, ctx) == []
+    out = canvas_rectangles({}, ctx, include_visual_prompt=True)
     assert len(out) == 1
     assert out[0][1] == "forklift"
 
@@ -170,9 +177,14 @@ def test_canvas_rectangles_merges_all_three_sources() -> None:
             }
         ]
     }
+    # Default: V-tool exemplar is excluded from the canvas pool.
     out = canvas_rectangles(task, ctx)
     classes = sorted(c for _, c in out)
-    assert classes == ["bicycle", "forklift", "person"]
+    assert classes == ["forklift", "person"]
+    # With include_visual_prompt=True: visual_prompt route's view of the pool.
+    out_v = canvas_rectangles(task, ctx, include_visual_prompt=True)
+    classes_v = sorted(c for _, c in out_v)
+    assert classes_v == ["bicycle", "forklift", "person"]
 
 
 def test_canvas_rectangles_ignores_non_rectangle_regions() -> None:

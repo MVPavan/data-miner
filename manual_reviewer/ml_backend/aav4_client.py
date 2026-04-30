@@ -13,20 +13,68 @@ import in tests that don't have the LS ML backend SDK installed.
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+import requests
 
 from manual_reviewer.reconcile.sam3_client import (
     DEFAULT_SAM3_1_REFINE_URL,
     Sam3OneHttpClient,
 )
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "build_sam3_client",
     "read_cached_proposals",
 ]
+
+
+_RETRYABLE_EXCS: tuple[type[BaseException], ...] = (
+    requests.ConnectionError,
+    requests.Timeout,
+)
+
+
+class _RetryOnceClient:
+    """Wraps :class:`Sam3OneHttpClient` with one retry on transient errors.
+
+    Per-region click latency budget rules out backoff. A single retry on
+    ``ConnectionError`` / ``Timeout`` covers the common "server just
+    bounced / TCP RST" case without doubling click latency on real
+    failures.
+    """
+
+    def __init__(self, inner: Sam3OneHttpClient) -> None:
+        self._inner = inner
+
+    def _call_with_retry(self, name: str, **kwargs: Any) -> Any:
+        method = getattr(self._inner, name)
+        try:
+            return method(**kwargs)
+        except _RETRYABLE_EXCS as exc:
+            logger.warning(
+                "SAM 3.1 %s: transient error %s; retrying once",
+                name,
+                exc.__class__.__name__,
+            )
+            return method(**kwargs)
+
+    def click_mask(self, **kwargs: Any) -> Any:
+        return self._call_with_retry("click_mask", **kwargs)
+
+    def text_detect(self, **kwargs: Any) -> Any:
+        return self._call_with_retry("text_detect", **kwargs)
+
+    def visual_prompt(self, **kwargs: Any) -> Any:
+        return self._call_with_retry("visual_prompt", **kwargs)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
 
 
 def build_sam3_client(
@@ -39,6 +87,10 @@ def build_sam3_client(
     Env vars:
         SAM3_1_URL: base /predict endpoint (default: localhost:3014).
         SAM3_1_TIMEOUT: per-request timeout in seconds (default: 60).
+
+    Wraps the raw :class:`Sam3OneHttpClient` in a one-retry shim so a
+    single transient ConnectionError/Timeout doesn't bubble up to the
+    reviewer as a missing region.
     """
     resolved_url = url or os.environ.get("SAM3_1_URL") or DEFAULT_SAM3_1_REFINE_URL
     if timeout is None:
@@ -46,7 +98,8 @@ def build_sam3_client(
             timeout = float(os.environ.get("SAM3_1_TIMEOUT", "60"))
         except ValueError:
             timeout = 60.0
-    return Sam3OneHttpClient(url=resolved_url, timeout=timeout)
+    inner = Sam3OneHttpClient(url=resolved_url, timeout=timeout)
+    return _RetryOnceClient(inner)  # type: ignore[return-value]
 
 
 def read_cached_proposals(

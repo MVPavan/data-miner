@@ -333,13 +333,10 @@ def test_build_task_custom_image_url_template_substitutes_path() -> None:
     )
 
 
-def test_build_task_empty_image_path_yields_empty_url() -> None:
+def test_build_task_empty_image_path_returns_none() -> None:
     payload = _minimal_payload()
     payload["meta"]["image_path"] = ""
-    task = build_task(payload)
-    assert task["data"]["image"] == ""
-    # image_path key still present with empty string value
-    assert task["data"]["image_path"] == ""
+    assert build_task(payload) is None
 
 
 def test_build_task_review_items_with_non_dict_entries_does_not_crash() -> None:
@@ -688,7 +685,7 @@ def test_parse_created_at_missing_uses_now() -> None:
     assert before <= result.reviewed_at <= after + 1.0
 
 
-def test_parse_invalid_frame_state_choice_defaults_to_clean() -> None:
+def test_parse_invalid_frame_state_choice_defaults_to_needs_more_review() -> None:
     completion = {
         "id": 1,
         "result": [
@@ -701,7 +698,7 @@ def test_parse_invalid_frame_state_choice_defaults_to_clean() -> None:
         ],
     }
     result = parse_ls_completion(completion, image_id="img_a")
-    assert result.frame_state == "clean"
+    assert result.frame_state == "needs_more_review"
 
 
 def test_parse_multiple_textarea_lines_joined_with_newlines() -> None:
@@ -789,3 +786,72 @@ def test_parse_lead_time_missing_defaults_to_zero() -> None:
 def test_parse_id_missing_defaults_completion_id_zero() -> None:
     result = parse_ls_completion({"result": []}, image_id="img_a")
     assert result.ls_completion_id == 0
+
+
+def test_parse_non_numeric_completion_id_falls_back_to_zero() -> None:
+    completion = {"id": "abc-not-a-number", "result": []}
+    result = parse_ls_completion(completion, image_id="img_a")
+    assert result.ls_completion_id == 0
+
+
+def test_build_task_path_traversal_image_path_returns_none() -> None:
+    payload = _minimal_payload()
+    payload["meta"]["image_path"] = "/tmp/imgs/../etc/passwd"
+    assert build_task(payload) is None
+
+
+def test_build_task_clamps_out_of_range_bbox_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    payload = _minimal_payload()
+    payload["stages"]["finalize"] = {
+        "final_annotations": [
+            {
+                "candidate_id": "c1",
+                "class_name": "forklift",
+                "bbox": {"x1": -0.2, "y1": 0.2, "x2": 1.5, "y2": 0.6},
+            }
+        ],
+    }
+    with caplog.at_level("WARNING", logger="manual_reviewer.pipeline_io.task_builder"):
+        task = build_task(payload)
+    region = task["predictions"][0]["result"][0]
+    assert region["value"]["x"] == pytest.approx(0.0)
+    assert region["value"]["x"] + region["value"]["width"] == pytest.approx(100.0)
+    assert any("out of [0,1]" in rec.message for rec in caplog.records)
+
+
+def test_build_task_logs_drop_for_missing_candidate_id(caplog: pytest.LogCaptureFixture) -> None:
+    payload = _minimal_payload()
+    payload["stages"]["finalize"] = {
+        "final_annotations": [
+            {
+                "candidate_id": "",
+                "class_name": "forklift",
+                "bbox": {"x1": 0.1, "y1": 0.2, "x2": 0.4, "y2": 0.6},
+            }
+        ],
+    }
+    with caplog.at_level("WARNING", logger="manual_reviewer.pipeline_io.task_builder"):
+        build_task(payload)
+    assert any("dropping finalize annotation" in rec.message for rec in caplog.records)
+
+
+def test_bbox_equal_with_image_size_is_pixel_aware() -> None:
+    from manual_reviewer.pipeline_io.ls_export_parser import _bbox_equal
+    from data_miner.auto_annotation_v4.configs.contracts import BoundingBox
+
+    a = BoundingBox(x1=0.10, y1=0.10, x2=0.20, y2=0.20)
+    # 0.4 px shift on a 1000-px-wide image — within 0.5/1000 = 5e-4
+    b = BoundingBox(x1=0.1004, y1=0.10, x2=0.20, y2=0.20)
+    assert _bbox_equal(a, b, image_size=(1000, 1000)) is True
+    # 0.6 px shift — outside the pixel-aware tolerance
+    c = BoundingBox(x1=0.1006, y1=0.10, x2=0.20, y2=0.20)
+    assert _bbox_equal(a, c, image_size=(1000, 1000)) is False
+
+
+def test_bbox_equal_default_tolerance_unchanged() -> None:
+    from manual_reviewer.pipeline_io.ls_export_parser import _bbox_equal
+    from data_miner.auto_annotation_v4.configs.contracts import BoundingBox
+
+    a = BoundingBox(x1=0.10, y1=0.10, x2=0.20, y2=0.20)
+    b = BoundingBox(x1=0.10005, y1=0.10, x2=0.20, y2=0.20)
+    assert _bbox_equal(a, b) is True

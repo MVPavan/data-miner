@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 # ``human_review`` is event-driven (written by manual_reviewer/scripts/export_to_aa_v4.py)
 # rather than worker-driven, but it shows up in image_meta.stages_completed so the
 # viewer's filter UI must offer it as a selectable stage.
-PIPELINE_STAGES = ("detect", "filter", "evaluate", "refine", "finalize", "human_review")
+PIPELINE_STAGES = ("detect", "filter", "evaluate", "refine", "finalize", "human_review", "reconcile")
 
 # Static schema for /api/search/schema. Class lists are populated from each
 # stage's lazy-built index when present, falling back to classes.txt.
@@ -425,12 +425,28 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
         # can still show the option for future jobs that do run refine.
         return {"classes": [], "statuses": []}
 
+    def _build_index_event_stage(stage: str) -> dict[str, Any]:
+        """Index for event-driven stages (``human_review`` / ``reconcile``).
+
+        These stages aren't part of ``STAGE_ORDER`` and the frontend doesn't
+        currently filter them by class/status — but ``/api/search?stage=...``
+        must still accept them rather than 500 with a KeyError. We surface the
+        set of image_ids that have a row in ``stages`` for this stage so the
+        search results page can paginate them.
+        """
+        rows = _query(
+            "SELECT image_id FROM stages WHERE stage=?", (stage,)
+        )
+        return {"image_ids": {r["image_id"] for r in rows}}
+
     _BUILDERS = {
         "detect": _build_index_detect,
         "filter": _build_index_filter,
         "evaluate": _build_index_evaluate,
         "refine": _build_index_refine,
         "finalize": _build_index_finalize,
+        "human_review": lambda: _build_index_event_stage("human_review"),
+        "reconcile": lambda: _build_index_event_stage("reconcile"),
     }
 
     def _get_index(stage: str) -> dict:
@@ -503,6 +519,11 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
                     result |= book.get(cn, set())
             return result
 
+        if stage in ("human_review", "reconcile"):
+            # Event-driven stages: no class/status filter wired up yet, just
+            # return the set of images that have a row for this stage.
+            return set(idx.get("image_ids") or set())
+
         # refine — empty scaffold
         return set()
 
@@ -559,7 +580,7 @@ def create_app(job_dir: Path, image_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/search")
     async def search(
-        stage: str = Query(..., pattern=r"^(detect|filter|evaluate|refine|finalize)$"),
+        stage: str = Query(..., pattern=r"^(detect|filter|evaluate|refine|finalize|human_review|reconcile)$"),
         classes: str = Query("", description="Comma-separated class names; empty = any"),
         statuses: str = Query("", description="Comma-separated stage-specific statuses"),
         reasons: str = Query("", description="Filter drop reasons (filter+dropped only)"),

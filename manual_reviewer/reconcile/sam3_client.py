@@ -51,17 +51,22 @@ __all__ = [
     "DEFAULT_SAM3_1_REFINE_URL",
     "DEFAULT_SAM3_1_TEXT_URL",
     "DEFAULT_SAM3_1_TRACK_URL",
+    "DEFAULT_SAM3_1_URL",
     "DEFAULT_SAM3_1_VISUAL_URL",
     "DEFAULT_SAM3_DART_REFINE_URL",
 ]
 
 
 DEFAULT_SAM3_DART_REFINE_URL = "http://localhost:3013/refine"
-DEFAULT_SAM3_1_REFINE_URL = "http://localhost:3014/predict"
-DEFAULT_SAM3_1_TRACK_URL = "http://localhost:3014/predict"
-DEFAULT_SAM3_1_CLICK_URL = "http://localhost:3014/predict"
-DEFAULT_SAM3_1_TEXT_URL = "http://localhost:3014/predict"
-DEFAULT_SAM3_1_VISUAL_URL = "http://localhost:3014/predict"
+# SAM 3.1 LitServe dispatches by request shape — a single endpoint serves
+# refine/track/click/text/visual. Per-mode aliases preserved for callers
+# that may want to override one mode independently.
+DEFAULT_SAM3_1_URL = "http://localhost:3014/predict"
+DEFAULT_SAM3_1_REFINE_URL = DEFAULT_SAM3_1_URL
+DEFAULT_SAM3_1_TRACK_URL = DEFAULT_SAM3_1_URL
+DEFAULT_SAM3_1_CLICK_URL = DEFAULT_SAM3_1_URL
+DEFAULT_SAM3_1_TEXT_URL = DEFAULT_SAM3_1_URL
+DEFAULT_SAM3_1_VISUAL_URL = DEFAULT_SAM3_1_URL
 
 
 @dataclass(frozen=True)
@@ -99,7 +104,21 @@ class _Sam3RefineHttpBase:
     ) -> None:
         self._url = url or self._default_url
         self._timeout = timeout
+        # Track whether we own the session so __exit__ only closes
+        # sessions we created (caller-supplied sessions stay open).
+        self._owns_session = session is None
         self._session = session or requests.Session()
+
+    def close(self) -> None:
+        if self._owns_session:
+            self._session.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
 
     def refine(
         self,

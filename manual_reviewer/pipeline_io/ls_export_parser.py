@@ -35,6 +35,7 @@ normalized [0, 1] BoundingBox.
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from datetime import datetime
@@ -45,6 +46,15 @@ from data_miner.auto_annotation_v4.configs.contracts import (
     HumanCorrection,
     HumanReviewResult,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def parse_ls_completion(
@@ -135,7 +145,15 @@ def parse_ls_completion(
 
     deletions = sorted(seeded_by_id.keys() - seen_ids)
 
-    frame_state = _extract_choice(raw_results, "frame_state") or "clean"
+    raw_frame_state = _extract_choice(raw_results, "frame_state")
+    frame_state = raw_frame_state or "clean"
+    if frame_state not in {"clean", "needs_more_review", "ambiguous_skip"}:
+        logger.warning(
+            "unknown frame_state=%r for image_id=%s; falling back to needs_more_review",
+            frame_state,
+            image_id,
+        )
+        frame_state = "needs_more_review"
     notes = _extract_textarea(raw_results, "notes")
 
     reviewed_at = _completion_timestamp(completion)
@@ -147,12 +165,12 @@ def parse_ls_completion(
         reviewer_id=rid,
         reviewed_at=reviewed_at,
         duration_seconds=duration,
-        frame_state=frame_state if frame_state in {"clean", "needs_more_review", "ambiguous_skip"} else "clean",
+        frame_state=frame_state,
         corrections=corrections,
         deletions=deletions,
         notes=notes,
         ml_modes_used=[],
-        ls_completion_id=int(completion.get("id") or 0),
+        ls_completion_id=_safe_int(completion.get("id"), 0),
     )
 
 
@@ -182,7 +200,24 @@ def _ls_value_to_bbox(value: dict[str, Any]) -> BoundingBox:
     return BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2)
 
 
-def _bbox_equal(a: BoundingBox, b: BoundingBox, tol: float = 1e-4) -> bool:
+def _bbox_equal(
+    a: BoundingBox,
+    b: BoundingBox,
+    tol: float | None = None,
+    *,
+    image_size: tuple[int, int] | list[int] | None = None,
+) -> bool:
+    if tol is None:
+        if image_size and len(image_size) == 2:
+            try:
+                w_px = float(image_size[0])
+                h_px = float(image_size[1])
+            except (TypeError, ValueError):
+                w_px = h_px = 0.0
+            largest = max(w_px, h_px)
+            tol = 0.5 / largest if largest > 0 else 1e-4
+        else:
+            tol = 1e-4
     return all(
         math.isclose(getattr(a, k), getattr(b, k), abs_tol=tol)
         for k in ("x1", "y1", "x2", "y2")

@@ -121,12 +121,17 @@ Note the project ID from the URL (`/projects/<N>/data`).
 
 ### A3. Push tasks from pipeline.db
 
+Prefer `LS_TOKEN=…` in the environment over `--ls-token <…>` on the
+command line — token strings on argv are visible to anyone with `ps`
+access. Both `build_tasks` and `export_to_aa_v4` read `$LS_TOKEN` as the
+default for `--ls-token`.
+
 ```sh
-.venv/bin/python -m manual_reviewer.scripts.build_tasks \
+LS_TOKEN=<token-from-A2.4> \
+    .venv/bin/python -m manual_reviewer.scripts.build_tasks \
     --db $JOB_DIR/pipeline.db \
     --traces-dir $JOB_DIR/traces \
     --ls-url http://localhost:8080 \
-    --ls-token <token-from-A2.4> \
     --ls-project <project-id-from-A2> \
     --skip-existing \
     --limit 50            # start small to validate; remove for full job
@@ -166,14 +171,14 @@ Submit moves to the next task.
 ### A5. Pull the corrections back
 
 ```sh
-.venv/bin/python -m manual_reviewer.scripts.export_to_aa_v4 \
+LS_TOKEN=<token> \
+    .venv/bin/python -m manual_reviewer.scripts.export_to_aa_v4 \
     --db $JOB_DIR/pipeline.db \
     --traces-dir $JOB_DIR/traces \
     --labels-dir $JOB_DIR/labels \
     --classes-file $JOB_DIR/classes.txt \
     --rewrite-yolo \
     --ls-url http://localhost:8080 \
-    --ls-token <token> \
     --ls-project <project-id> \
     --since $(date -d 'yesterday' +%s)   # optional: only fetch new
 ```

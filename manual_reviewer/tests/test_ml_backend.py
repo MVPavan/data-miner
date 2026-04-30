@@ -135,6 +135,49 @@ def test_norm_box_to_ls_region_falls_back_to_default_label() -> None:
     assert region["value"]["rectanglelabels"] == [DEFAULT_LABEL]
 
 
+def test_norm_box_to_ls_region_drops_degenerate_box() -> None:
+    """Zero-area input → ``None`` (no phantom 1e-6 region)."""
+    assert norm_box_to_ls_region([0.5, 0.5, 0.5, 0.5], "forklift") is None
+    assert norm_box_to_ls_region([0.6, 0.5, 0.5, 0.6], "forklift") is None
+
+
+def test_norm_box_to_ls_region_emits_original_dims_when_provided() -> None:
+    region = norm_box_to_ls_region(
+        [0.1, 0.2, 0.4, 0.6],
+        "forklift",
+        original_width=1920,
+        original_height=1080,
+        original_rotation=0,
+    )
+    assert region is not None
+    assert region["original_width"] == 1920
+    assert region["original_height"] == 1080
+    assert region["original_rotation"] == 0
+
+
+def test_norm_box_to_ls_region_omits_original_dims_when_none() -> None:
+    region = norm_box_to_ls_region([0.1, 0.2, 0.4, 0.6], "forklift")
+    assert region is not None
+    assert "original_width" not in region
+    assert "original_height" not in region
+    assert "original_rotation" not in region
+
+
+def test_snap_label_passes_through_known_label() -> None:
+    from manual_reviewer.ml_backend.ls_payload import snap_label
+
+    assert snap_label("forklift") == "forklift"
+    assert snap_label("person") == "person"
+
+
+def test_snap_label_falls_back_for_unknown_label() -> None:
+    from manual_reviewer.ml_backend.ls_payload import snap_label
+
+    assert snap_label("a green forklift") == DEFAULT_LABEL
+    assert snap_label("") == DEFAULT_LABEL
+    assert snap_label(None) == DEFAULT_LABEL  # type: ignore[arg-type]
+
+
 def test_predictions_envelope_returns_empty_for_no_regions() -> None:
     assert predictions_envelope([], model_version="v") == []
 
@@ -270,6 +313,32 @@ def test_smart_click_accepts_keypointlabels_hint() -> None:
     assert out[0]["value"]["rectanglelabels"] == ["bicycle"]
 
 
+def test_smart_click_prefers_keypoint_label_over_unrelated_rectangle() -> None:
+    """When the triggering keypoint carries its own ``keypointlabels``, that
+    class wins over an unrelated rectangle that happens to ride the same
+    draft. Otherwise the V-tool palette would override the click's class."""
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.1, 0.2, 0.3, 0.4], score=0.7)
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 50, "y": 50, "width": 10, "height": 10,
+                          "rectanglelabels": ["bicycle"]},
+            },
+            {
+                "type": "keypointlabels",
+                "from_name": "click",
+                "value": {"x": 50, "y": 60, "keypointlabels": ["forklift"]},
+            },
+        ]
+    }
+    out = smart_click(_task(), ctx, client)
+    assert len(out) == 1
+    assert out[0]["value"]["rectanglelabels"] == ["forklift"]
+
+
 def test_smart_click_returns_empty_when_no_bbox() -> None:
     client = _StubSam3Client()
     client._click_resp = _StubResp(bbox=None, score=0.1)
@@ -351,6 +420,33 @@ def test_smart_text_swallows_client_exceptions() -> None:
     client = _StubSam3Client()
     client._text_raises = RuntimeError("boom")
     assert smart_text(_task(), _text_context(["forklift"]), client) == []
+
+
+def test_smart_text_snaps_unknown_label_to_default() -> None:
+    """Free-text prompt strings that don't match the LS palette get snapped
+    to ``DEFAULT_LABEL``; the raw prompt is preserved on ``meta.prompt``."""
+    client = _StubSam3Client()
+    client._text_resp = _StubResp(
+        boxes=[[0.1, 0.1, 0.4, 0.5]],
+        scores=[0.9],
+        labels=["a green thing"],   # not in the 24-class palette
+    )
+    out = smart_text(_task(), _text_context(["a green thing"]), client)
+    assert len(out) == 1
+    assert out[0]["value"]["rectanglelabels"] == [DEFAULT_LABEL]
+    assert out[0]["meta"]["prompt"] == "a green thing"
+
+
+def test_smart_text_keeps_known_palette_label() -> None:
+    """Known palette label rides through unchanged."""
+    client = _StubSam3Client()
+    client._text_resp = _StubResp(
+        boxes=[[0.1, 0.1, 0.4, 0.5]],
+        scores=[0.9],
+        labels=["forklift"],
+    )
+    out = smart_text(_task(), _text_context(["forklift"]), client)
+    assert out[0]["value"]["rectanglelabels"] == ["forklift"]
 
 
 # ---------------------------------------------------------------------------
@@ -844,7 +940,8 @@ def test_server_predict_smart_click_path() -> None:
     out = backend.predict([_task()], context=_click_context(50, 60))
     assert len(out) == 1
     assert out[0]["result"]
-    assert out[0]["score"] == 1.0
+    # Envelope score now reflects the best per-region score, not 1.0.
+    assert out[0]["score"] == pytest.approx(0.8)
     assert client.calls[0][0] == "click_mask"
 
 
@@ -920,6 +1017,42 @@ def test_server_envelope_helper_wraps_regions() -> None:
     env = backend.envelope([region])
     assert len(env) == 1
     assert env[0]["result"] == [region]
+
+
+def test_server_envelope_score_is_max_region_score() -> None:
+    """Envelope score reflects the best per-region score, not a constant 1.0."""
+    client = _StubSam3Client()
+    client._text_resp = _StubResp(
+        boxes=[[0.1, 0.1, 0.4, 0.5], [0.6, 0.6, 0.9, 0.9]],
+        scores=[0.42, 0.81],
+        labels=["forklift", "forklift"],
+    )
+    backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
+    out = backend.predict([_task()], context=_text_context(["forklift"]))
+    assert out[0]["score"] == pytest.approx(0.81)
+
+
+def test_server_envelope_score_zero_for_no_regions() -> None:
+    backend = ManualReviewerMLBackend(sam3_client=None, db_path=None)
+    out = backend.predict([_task()], context=None)
+    assert out[0]["result"] == []
+    assert out[0]["score"] == 0.0
+
+
+def test_resolve_db_path_warns_when_env_path_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``AAV4_PIPELINE_DB`` env set to a non-existent path → logs WARNING."""
+    import logging
+
+    from manual_reviewer.ml_backend import server as server_mod
+
+    monkeypatch.setenv("AAV4_PIPELINE_DB", str(tmp_path / "missing.db"))
+    server_mod._DB_PATH_WARNED.clear()
+    with caplog.at_level(logging.WARNING, logger="manual_reviewer.ml_backend.server"):
+        result = server_mod._resolve_db_path(None)
+    assert result is None
+    assert any("AAV4_PIPELINE_DB" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -1630,3 +1763,143 @@ def test_sam3_one_http_client_text_detect_returns_detector_response() -> None:
     resp = client.text_detect(image_path="/img.jpg", prompts=["forklift"])
     assert resp.labels == ["forklift"]
     assert captured["json"]["prompts"] == ["forklift"]
+
+
+# ---------------------------------------------------------------------------
+# 9. aav4_client retry-once shim + canvas contamination
+# ---------------------------------------------------------------------------
+
+
+def test_build_sam3_client_retries_once_on_connection_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One transient ConnectionError is retried; the second call succeeds."""
+    import requests
+
+    from manual_reviewer.ml_backend import aav4_client as aav4
+
+    calls: list[str] = []
+
+    class _Inner:
+        def click_mask(self, **kwargs: Any) -> Any:
+            calls.append("click_mask")
+            if len(calls) == 1:
+                raise requests.ConnectionError("RST")
+            return _StubResp(bbox=[0.1, 0.1, 0.2, 0.2], score=0.5)
+
+        def text_detect(self, **kwargs: Any) -> Any:
+            calls.append("text_detect")
+            return _StubResp(boxes=[], scores=[], labels=[])
+
+        def visual_prompt(self, **kwargs: Any) -> Any:
+            calls.append("visual_prompt")
+            return _StubResp(boxes_norm=[], scores=[])
+
+    wrapped = aav4._RetryOnceClient(_Inner())  # type: ignore[arg-type]
+    resp = wrapped.click_mask(image_path="/x.jpg", point=[0.5, 0.5])
+    assert resp.score == pytest.approx(0.5)
+    assert calls == ["click_mask", "click_mask"]
+
+
+def test_build_sam3_client_does_not_retry_unrelated_errors() -> None:
+    """A RuntimeError (not ConnectionError/Timeout) bubbles up unretried."""
+    from manual_reviewer.ml_backend import aav4_client as aav4
+
+    calls: list[str] = []
+
+    class _Inner:
+        def click_mask(self, **kwargs: Any) -> Any:
+            calls.append("click_mask")
+            raise RuntimeError("not retryable")
+
+        def text_detect(self, **kwargs: Any) -> Any:
+            return None
+
+        def visual_prompt(self, **kwargs: Any) -> Any:
+            return None
+
+    wrapped = aav4._RetryOnceClient(_Inner())  # type: ignore[arg-type]
+    with pytest.raises(RuntimeError):
+        wrapped.click_mask(image_path="/x.jpg", point=[0.5, 0.5])
+    assert calls == ["click_mask"]
+
+
+def test_build_sam3_client_retries_once_on_timeout() -> None:
+    import requests
+
+    from manual_reviewer.ml_backend import aav4_client as aav4
+
+    calls: list[str] = []
+
+    class _Inner:
+        def click_mask(self, **kwargs: Any) -> Any:
+            calls.append("click_mask")
+            if len(calls) == 1:
+                raise requests.Timeout("slow")
+            return _StubResp(bbox=[0, 0, 0.1, 0.1], score=0.4)
+
+        def text_detect(self, **kwargs: Any) -> Any:
+            return None
+
+        def visual_prompt(self, **kwargs: Any) -> Any:
+            return None
+
+    wrapped = aav4._RetryOnceClient(_Inner())  # type: ignore[arg-type]
+    resp = wrapped.click_mask(image_path="/x.jpg", point=[0.5, 0.5])
+    assert resp.score == pytest.approx(0.4)
+    assert calls == ["click_mask", "click_mask"]
+
+
+def test_smart_text_does_not_dedup_against_v_tool_exemplar() -> None:
+    """V-tool exemplar on canvas must NOT suppress smart_text matches.
+
+    Without filtering visual_prompt regions out of the canvas pool, a
+    same-class smart_text match overlapping a leftover exemplar would
+    silently disappear.
+    """
+    client = _StubSam3Client()
+    client._text_resp = _StubResp(
+        boxes=[[0.10, 0.10, 0.30, 0.30]],
+        scores=[0.9],
+        labels=["forklift"],
+    )
+    ctx = {
+        "result": [
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "labels": ["forklift"]},
+            },
+            {
+                "type": "textarea",
+                "from_name": "text_query",
+                "value": {"text": ["forklift"]},
+            },
+        ]
+    }
+    out = smart_text(_task(), ctx, client)
+    assert len(out) == 1
+    assert out[0]["value"]["rectanglelabels"] == ["forklift"]
+
+
+def test_smart_click_emits_original_dims_when_image_size_known() -> None:
+    """Image dims from ``task.data.image_size`` ride through onto the region."""
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.1, 0.1, 0.5, 0.5], score=0.7)
+    out = smart_click(_task(), _click_context(50, 60), client)
+    assert len(out) == 1
+    assert out[0]["original_width"] == 1920
+    assert out[0]["original_height"] == 1080
+    assert out[0]["original_rotation"] == 0
+
+
+def test_smart_click_omits_original_dims_when_image_size_missing() -> None:
+    """No ``image_size`` in task.data → keys absent rather than ``None``."""
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.1, 0.1, 0.5, 0.5], score=0.7)
+    task = {"id": 1, "data": {"image_path": "/tmp/x.jpg"}}
+    out = smart_click(task, _click_context(50, 60), client)
+    assert len(out) == 1
+    assert "original_width" not in out[0]
+    assert "original_height" not in out[0]

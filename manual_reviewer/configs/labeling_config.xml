@@ -26,31 +26,34 @@
          rotateControl="false" brightnessControl="false"
          maxHeight="78vh"/>
 
+  <!-- Hotkeys pinned to skip "v" so the V-tool (visual_prompt smart RectangleLabels)
+       can claim hotkey="v". Auto-assignment used to grab v for the 23rd label
+       (barrier), preventing V-tool activation. -->
   <RectangleLabels name="bbox" toName="image">
-    <Label value="forklift"   background="#e74c3c"/>
-    <Label value="palletjack" background="#3498db"/>
-    <Label value="person"     background="#2ecc71"/>
-    <Label value="head"       background="#9b59b6"/>
-    <Label value="cellphone"  background="#e67e22"/>
-    <Label value="wallet"     background="#f1c40f"/>
-    <Label value="bag"        background="#1abc9c"/>
-    <Label value="bicycle"    background="#34495e"/>
-    <Label value="motorcycle" background="#7f8c8d"/>
-    <Label value="car"        background="#c0392b"/>
-    <Label value="truck"      background="#2980b9"/>
-    <Label value="bus"        background="#27ae60"/>
-    <Label value="van"        background="#8e44ad"/>
-    <Label value="cart"       background="#d35400"/>
-    <Label value="trolley"    background="#f39c12"/>
-    <Label value="pallet"     background="#16a085"/>
-    <Label value="box"        background="#2c3e50"/>
-    <Label value="container"  background="#95a5a6"/>
-    <Label value="dog"        background="#e84393"/>
-    <Label value="cat"        background="#fd79a8"/>
-    <Label value="sign"       background="#a29bfe"/>
-    <Label value="cone"       background="#fdcb6e"/>
-    <Label value="barrier"    background="#74b9ff"/>
-    <Label value="other"      background="#dfe6e9"/>
+    <Label value="forklift"   background="#e74c3c" hotkey="1"/>
+    <Label value="palletjack" background="#3498db" hotkey="2"/>
+    <Label value="person"     background="#2ecc71" hotkey="3"/>
+    <Label value="head"       background="#9b59b6" hotkey="4"/>
+    <Label value="cellphone"  background="#e67e22" hotkey="5"/>
+    <Label value="wallet"     background="#f1c40f" hotkey="6"/>
+    <Label value="bag"        background="#1abc9c" hotkey="7"/>
+    <Label value="bicycle"    background="#34495e" hotkey="8"/>
+    <Label value="motorcycle" background="#7f8c8d" hotkey="9"/>
+    <Label value="car"        background="#c0392b" hotkey="0"/>
+    <Label value="truck"      background="#2980b9" hotkey="q"/>
+    <Label value="bus"        background="#27ae60" hotkey="w"/>
+    <Label value="van"        background="#8e44ad" hotkey="e"/>
+    <Label value="cart"       background="#d35400" hotkey="r"/>
+    <Label value="trolley"    background="#f39c12" hotkey="t"/>
+    <Label value="pallet"     background="#16a085" hotkey="y"/>
+    <Label value="box"        background="#2c3e50" hotkey="u"/>
+    <Label value="container"  background="#95a5a6" hotkey="i"/>
+    <Label value="dog"        background="#e84393" hotkey="o"/>
+    <Label value="cat"        background="#fd79a8" hotkey="p"/>
+    <Label value="sign"       background="#a29bfe" hotkey="a"/>
+    <Label value="cone"       background="#fdcb6e" hotkey="s"/>
+    <Label value="barrier"    background="#74b9ff" hotkey="d"/>
+    <Label value="other"      background="#dfe6e9" hotkey="f"/>
   </RectangleLabels>
 
   <!-- smart_click: KeyPointLabels with the same 24-class palette so the
@@ -59,31 +62,33 @@
        and `rectanglelabels`). The ML backend calls SAM 3.1 click_mask
        and returns a RectangleLabels region carrying the same class.
        Negative clicks deferred. -->
+  <!-- Same 24 hotkeys as bbox so that pressing "3" selects "person" regardless
+       of which tool is active. None use "v" — that's reserved for V-tool. -->
   <KeyPointLabels name="click" toName="image" smart="true" strokeWidth="3">
-    <Label value="forklift"   background="#e74c3c"/>
-    <Label value="palletjack" background="#3498db"/>
-    <Label value="person"     background="#2ecc71"/>
-    <Label value="head"       background="#9b59b6"/>
-    <Label value="cellphone"  background="#e67e22"/>
-    <Label value="wallet"     background="#f1c40f"/>
-    <Label value="bag"        background="#1abc9c"/>
-    <Label value="bicycle"    background="#34495e"/>
-    <Label value="motorcycle" background="#7f8c8d"/>
-    <Label value="car"        background="#c0392b"/>
-    <Label value="truck"      background="#2980b9"/>
-    <Label value="bus"        background="#27ae60"/>
-    <Label value="van"        background="#8e44ad"/>
-    <Label value="cart"       background="#d35400"/>
-    <Label value="trolley"    background="#f39c12"/>
-    <Label value="pallet"     background="#16a085"/>
-    <Label value="box"        background="#2c3e50"/>
-    <Label value="container"  background="#95a5a6"/>
-    <Label value="dog"        background="#e84393"/>
-    <Label value="cat"        background="#fd79a8"/>
-    <Label value="sign"       background="#a29bfe"/>
-    <Label value="cone"       background="#fdcb6e"/>
-    <Label value="barrier"    background="#74b9ff"/>
-    <Label value="other"      background="#dfe6e9"/>
+    <Label value="forklift"   background="#e74c3c" hotkey="1"/>
+    <Label value="palletjack" background="#3498db" hotkey="2"/>
+    <Label value="person"     background="#2ecc71" hotkey="3"/>
+    <Label value="head"       background="#9b59b6" hotkey="4"/>
+    <Label value="cellphone"  background="#e67e22" hotkey="5"/>
+    <Label value="wallet"     background="#f1c40f" hotkey="6"/>
+    <Label value="bag"        background="#1abc9c" hotkey="7"/>
+    <Label value="bicycle"    background="#34495e" hotkey="8"/>
+    <Label value="motorcycle" background="#7f8c8d" hotkey="9"/>
+    <Label value="car"        background="#c0392b" hotkey="0"/>
+    <Label value="truck"      background="#2980b9" hotkey="q"/>
+    <Label value="bus"        background="#27ae60" hotkey="w"/>
+    <Label value="van"        background="#8e44ad" hotkey="e"/>
+    <Label value="cart"       background="#d35400" hotkey="r"/>
+    <Label value="trolley"    background="#f39c12" hotkey="t"/>
+    <Label value="pallet"     background="#16a085" hotkey="y"/>
+    <Label value="box"        background="#2c3e50" hotkey="u"/>
+    <Label value="container"  background="#95a5a6" hotkey="i"/>
+    <Label value="dog"        background="#e84393" hotkey="o"/>
+    <Label value="cat"        background="#fd79a8" hotkey="p"/>
+    <Label value="sign"       background="#a29bfe" hotkey="a"/>
+    <Label value="cone"       background="#fdcb6e" hotkey="s"/>
+    <Label value="barrier"    background="#74b9ff" hotkey="d"/>
+    <Label value="other"      background="#dfe6e9" hotkey="f"/>
   </KeyPointLabels>
 
   <!-- visual_prompt: the V-tool. Reviewer presses V (or picks the orange
@@ -97,30 +102,30 @@
   <RectangleLabels name="visual_prompt" toName="image"
                    smart="true" smartOnly="true"
                    hotkey="v" strokeColor="#ff7700">
-    <Label value="forklift"   background="#e74c3c"/>
-    <Label value="palletjack" background="#3498db"/>
-    <Label value="person"     background="#2ecc71"/>
-    <Label value="head"       background="#9b59b6"/>
-    <Label value="cellphone"  background="#e67e22"/>
-    <Label value="wallet"     background="#f1c40f"/>
-    <Label value="bag"        background="#1abc9c"/>
-    <Label value="bicycle"    background="#34495e"/>
-    <Label value="motorcycle" background="#7f8c8d"/>
-    <Label value="car"        background="#c0392b"/>
-    <Label value="truck"      background="#2980b9"/>
-    <Label value="bus"        background="#27ae60"/>
-    <Label value="van"        background="#8e44ad"/>
-    <Label value="cart"       background="#d35400"/>
-    <Label value="trolley"    background="#f39c12"/>
-    <Label value="pallet"     background="#16a085"/>
-    <Label value="box"        background="#2c3e50"/>
-    <Label value="container"  background="#95a5a6"/>
-    <Label value="dog"        background="#e84393"/>
-    <Label value="cat"        background="#fd79a8"/>
-    <Label value="sign"       background="#a29bfe"/>
-    <Label value="cone"       background="#fdcb6e"/>
-    <Label value="barrier"    background="#74b9ff"/>
-    <Label value="other"      background="#dfe6e9"/>
+    <Label value="forklift"   background="#e74c3c" hotkey="1"/>
+    <Label value="palletjack" background="#3498db" hotkey="2"/>
+    <Label value="person"     background="#2ecc71" hotkey="3"/>
+    <Label value="head"       background="#9b59b6" hotkey="4"/>
+    <Label value="cellphone"  background="#e67e22" hotkey="5"/>
+    <Label value="wallet"     background="#f1c40f" hotkey="6"/>
+    <Label value="bag"        background="#1abc9c" hotkey="7"/>
+    <Label value="bicycle"    background="#34495e" hotkey="8"/>
+    <Label value="motorcycle" background="#7f8c8d" hotkey="9"/>
+    <Label value="car"        background="#c0392b" hotkey="0"/>
+    <Label value="truck"      background="#2980b9" hotkey="q"/>
+    <Label value="bus"        background="#27ae60" hotkey="w"/>
+    <Label value="van"        background="#8e44ad" hotkey="e"/>
+    <Label value="cart"       background="#d35400" hotkey="r"/>
+    <Label value="trolley"    background="#f39c12" hotkey="t"/>
+    <Label value="pallet"     background="#16a085" hotkey="y"/>
+    <Label value="box"        background="#2c3e50" hotkey="u"/>
+    <Label value="container"  background="#95a5a6" hotkey="i"/>
+    <Label value="dog"        background="#e84393" hotkey="o"/>
+    <Label value="cat"        background="#fd79a8" hotkey="p"/>
+    <Label value="sign"       background="#a29bfe" hotkey="a"/>
+    <Label value="cone"       background="#fdcb6e" hotkey="s"/>
+    <Label value="barrier"    background="#74b9ff" hotkey="d"/>
+    <Label value="other"      background="#dfe6e9" hotkey="f"/>
   </RectangleLabels>
 
   <!-- Footer row: per-image metadata sits below the canvas so the image

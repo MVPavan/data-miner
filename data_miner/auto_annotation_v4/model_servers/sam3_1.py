@@ -216,12 +216,16 @@ if __name__ == "__main__":
     api._bpe_path = args.bpe_path
     api._apply_temporal_disambiguation = not args.no_temporal_disambiguation
 
+    # LitServer's devices= wants int(s), not "cuda:N" strings. Accept either.
+    gpu_str = str(args.gpu)
+    device_idx = int(gpu_str.split(":", 1)[1]) if gpu_str.startswith("cuda:") else int(gpu_str)
+
     # max_batch_size=1: SAM 3.1 sessions are stateful, batching would
     # interleave session ids across workers.
     server = ls.LitServer(
         api,
         accelerator="gpu",
-        devices=[args.gpu],
+        devices=[device_idx],
         max_batch_size=1,
     )
     server.run(port=args.port)

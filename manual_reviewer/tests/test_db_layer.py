@@ -727,6 +727,26 @@ def test_write_dedup_assignments_accepts_null_cluster_id(tmp_path: Path) -> None
     assert row == ("survivor", None)
 
 
+def test_write_dedup_assignments_logs_missing_image_ids(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Missing image_ids should produce a warning log, not silent zero update."""
+    db_path = tmp_path / "missing.db"
+
+    async def _seed() -> None:
+        async with CheckpointDB(db_path) as db:
+            await db.register_image("known", "/tmp/known.jpg")
+
+    asyncio.run(_seed())
+    with caplog.at_level("WARNING", logger="manual_reviewer.pipeline_io.db_writer"):
+        n = write_dedup_assignments(
+            db_path,
+            [("known", "cA", True), ("ghost1", "cA", False), ("ghost2", "cA", False)],
+        )
+    assert n == 1
+    assert any("missing from image_meta" in rec.message for rec in caplog.records)
+
+
 def test_write_dedup_assignments_back_to_back_no_deadlock(tmp_path: Path) -> None:
     """Sequential calls on the same DB must serialize via WAL/busy_timeout."""
     db_path = tmp_path / "btb.db"

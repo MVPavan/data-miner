@@ -43,8 +43,12 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "PropagationConfig",
     "ImageContext",
+    "MAX_CONSECUTIVE_TRANSPORT_ERRORS",
     "reconcile_group",
 ]
+
+
+MAX_CONSECUTIVE_TRANSPORT_ERRORS = 5
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,11 @@ class PropagationConfig:
     refine_threshold: float = 0.5
     """Threshold passed to SAM3-DART's /refine endpoint (its internal
     binarization cutoff). Independent of accept_score."""
+
+    max_consecutive_transport_errors: int = MAX_CONSECUTIVE_TRANSPORT_ERRORS
+    """Bail with RuntimeError after N consecutive transport-error refines
+    in the same group — a flapping SAM endpoint shouldn't silently flood
+    the audit log with synthetic rejected rows."""
 
 
 @dataclass(frozen=True)
@@ -117,6 +126,7 @@ def reconcile_group(
         im.image_id: [] for im in images
     }
 
+    consecutive_transport_errors = 0
     for cluster in clusters:
         positives = cluster.positive_image_ids
         if len(positives) < cfg.min_positive_frames:
@@ -156,13 +166,27 @@ def reconcile_group(
                 resp = RefineResponse(box=None, score=0.0)
                 transport_error = True
 
+            if transport_error:
+                consecutive_transport_errors += 1
+                if consecutive_transport_errors >= cfg.max_consecutive_transport_errors:
+                    raise RuntimeError(
+                        f"reconcile_group: aborting group={group_id} after "
+                        f"{consecutive_transport_errors} consecutive SAM transport "
+                        f"errors (cluster={cluster.cluster_id}, target={target_id}); "
+                        f"the endpoint appears to be down."
+                    )
+            else:
+                consecutive_transport_errors = 0
+
             if resp.box is None:
                 if transport_error:
                     # Synthetic rejected row: bbox==seed_bbox (best we can
-                    # do without a SAM response), score=0, seed_iou=0. The
-                    # ``#transport_error`` suffix on the candidate_id is the
-                    # discoverable signal that this row is an infra failure
-                    # vs. a real "object not present" rejection.
+                    # do without a SAM response), score=0, seed_iou=0.
+                    # ``reject_reason="transport_error"`` is the structured
+                    # signal that this row is an infra failure rather than
+                    # a real "object not present" rejection. The
+                    # ``#transport_error`` candidate_id suffix is preserved
+                    # for legacy string-grep callers.
                     per_image_rejected[target_id].append(
                         ReconciledDetection(
                             candidate_id=f"{cluster.cluster_id}@{target_id}#transport_error",
@@ -174,12 +198,26 @@ def reconcile_group(
                             seed_iou=0.0,
                             cluster_id=cluster.cluster_id,
                             votes=votes,
+                            reject_reason="transport_error",
                         )
                     )
+                # No-mask (non-transport): silent skip — neither propagated nor rejected.
                 continue
 
-            refined_iou = iou(seed_bbox, resp.box)
+            # Acceptance-IoU is measured against the best-matching real
+            # member, not the (potentially mid-air) cluster centroid.
+            refined_iou = max(
+                iou(m.annotation.bbox, resp.box) for m in cluster.members
+            )
             propagated_id = f"{cluster.cluster_id}@{target_id}"
+            score_ok = resp.score >= cfg.accept_score
+            iou_ok = refined_iou >= cfg.accept_iou
+            if score_ok and iou_ok:
+                reject_reason = None
+            elif not score_ok:
+                reject_reason = "below_score"
+            else:
+                reject_reason = "below_iou"
             detection = ReconciledDetection(
                 candidate_id=propagated_id,
                 class_name=cluster.class_name,
@@ -190,12 +228,10 @@ def reconcile_group(
                 seed_iou=refined_iou,
                 cluster_id=cluster.cluster_id,
                 votes=votes,
+                reject_reason=reject_reason,
             )
 
-            if (
-                resp.score >= cfg.accept_score
-                and refined_iou >= cfg.accept_iou
-            ):
+            if score_ok and iou_ok:
                 per_image_propagated[target_id].append(detection)
             else:
                 per_image_rejected[target_id].append(detection)

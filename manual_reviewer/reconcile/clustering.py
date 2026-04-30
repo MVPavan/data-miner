@@ -6,10 +6,14 @@ overlap at IoU ≥ threshold are clustered — the assumption is that within a
 group (similar camera pose), high-IoU same-class detections in different
 frames are looking at the same physical (static) object.
 
-Clustering is greedy single-link: start with the highest-confidence
-annotation, pull in any compatible annotation, repeat. Output is a list of
-``DetectionCluster`` entries. Singletons (only seen in 1 image) are emitted
-too — the caller decides whether to skip them via ``min_positive_frames``.
+Clustering is **anchor-greedy**: start with the highest-confidence
+annotation, pull in any other annotation that meets IoU vs. *the anchor*,
+mark them consumed, repeat with the next unconsumed anchor. This is NOT
+true single-link — a chain A↔B↔C where IoU(A,C) is below threshold drops
+C. Callers that need full transitive single-link merging must pre-merge
+upstream. Output is a list of ``DetectionCluster`` entries. Singletons
+(only seen in 1 image) are emitted too — the caller decides whether to
+skip them via ``min_positive_frames``.
 """
 
 from __future__ import annotations
@@ -96,21 +100,23 @@ def build_clusters(
     iou_threshold: float = 0.5,
     group_id: str = "",
 ) -> list[DetectionCluster]:
-    """Greedy single-link cluster of cross-frame annotations by class + IoU.
+    """Anchor-greedy cluster of cross-frame annotations by class + IoU.
 
     ``refs`` is a flat list across all images in a group. The clusterer
-    requires same ``class_name`` AND IoU ≥ threshold to merge; matches across
-    different *images* are preferred (we never merge two annotations from the
-    *same* image — that's already aav4's job).
+    requires same ``class_name`` AND IoU ≥ threshold *vs. the anchor* to
+    merge; matches across different *images* are preferred (we never merge
+    two annotations from the *same* image — that's already aav4's job).
 
     Anchors are picked highest-confidence first so a cluster's centroid is
-    biased toward the strongest evidence.
+    biased toward the strongest evidence. Confidence is rounded to 4
+    decimals in the sort key so tied scores fall back to a stable
+    ``(image_id, candidate_id)`` tiebreak across runs.
     """
-    # Sort by confidence desc; stable on (image_id, candidate_id) for determinism.
+    # Sort by rounded confidence desc; stable tiebreak on (image_id, candidate_id).
     sorted_refs = sorted(
         refs,
         key=lambda r: (
-            -r.annotation.confidence,
+            -round(r.annotation.confidence, 4),
             r.image_id,
             r.annotation.candidate_id,
         ),

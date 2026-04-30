@@ -551,6 +551,7 @@ class ReconciledDetection(BaseModel):
     seed_iou: float = Field(ge=0.0, le=1.0)
     cluster_id: str
     votes: list[PropagationVote] = Field(default_factory=list)
+    reject_reason: Literal["below_score", "below_iou", "no_mask", "transport_error"] | None = None
 
 
 class ReconcileResult(BaseModel):

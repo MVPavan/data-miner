@@ -44,7 +44,15 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${LS_PORT:-8080}:8080"
+      # Bound to localhost by default; override LS_BIND_HOST=0.0.0.0 only after
+      # rotating LS_PASSWORD / LS_PG_PASSWORD off the documented defaults.
+      - "${LS_BIND_HOST:-127.0.0.1}:${LS_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     environment:
       DJANGO_DB: default
       POSTGRE_NAME: ${LS_PG_DB:-labelstudio}
@@ -53,6 +61,9 @@ services:
       POSTGRE_HOST: postgres
       POSTGRE_PORT: 5432
       LABEL_STUDIO_USERNAME: ${LS_USERNAME:-admin@example.com}
+      # IMPORTANT: deployments MUST override LS_PASSWORD (and LS_PG_PASSWORD)
+      # before exposing the port off-host. The default below is for local
+      # bring-up only.
       LABEL_STUDIO_PASSWORD: ${LS_PASSWORD:-changeme}
       LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
       LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /label-studio/data/images
@@ -81,9 +92,14 @@ services:
       LABEL_STUDIO_ML_PORT: "9090"
       LOGLEVEL: ${ML_BACKEND_LOGLEVEL:-INFO}
     volumes:
-      # Read-only bind mount of the host pipeline.db. The ML backend opens
-      # a query-only sqlite connection so concurrent aav4 writers are safe.
-      - ${AAV4_PIPELINE_DB_HOST:-./pipeline.db}:/data/pipeline.db:ro
+      # Bind-mount of the host pipeline.db. Mounting a single SQLite file
+      # ``:ro`` blocks the WAL/SHM sidecars the aa_v4 writer needs, so we
+      # mount read-write and rely on the ML backend opening the connection
+      # with PRAGMA query_only / ?mode=ro&immutable=1 on the Python side.
+      # Operators who want a hard FS-level guarantee should bind-mount the
+      # *containing directory* read-only instead (and accept that aa_v4
+      # cannot append while the review stack is up).
+      - ${AAV4_PIPELINE_DB_HOST:-./pipeline.db}:/data/pipeline.db
     extra_hosts:
       # Make host.docker.internal resolve on Linux too — needed because the
       # SAM 3.1 GPU server lives on the host network, not in compose.

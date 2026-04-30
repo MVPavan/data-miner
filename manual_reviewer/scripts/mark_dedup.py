@@ -63,11 +63,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.manifest_clusters:
         assignments = list(_walk_clusters(json.loads(args.manifest_clusters.read_text(encoding="utf-8"))))
-    elif args.manifest_flat:
-        assignments = list(_walk_flat(json.loads(args.manifest_flat.read_text(encoding="utf-8"))))
     else:
-        logger.error("provide --manifest-clusters or --manifest-flat")
-        return 2
+        assignments = list(_walk_flat(json.loads(args.manifest_flat.read_text(encoding="utf-8"))))
 
     if not assignments:
         logger.warning("manifest produced 0 assignments")
@@ -121,7 +118,7 @@ def _walk_flat(raw: Any):
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Apply dedup assignments to aa_v4 pipeline.db")
     p.add_argument("--db", type=Path, required=True)
-    src = p.add_mutually_exclusive_group()
+    src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--manifest-clusters", type=Path, default=None)
     src.add_argument("--manifest-flat", type=Path, default=None)
     return p.parse_args(argv)

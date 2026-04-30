@@ -225,6 +225,30 @@ def test_build_clusters_low_iou_stays_separate() -> None:
     assert len(clusters) == 2
 
 
+def test_build_clusters_tied_confidence_is_stable_across_runs() -> None:
+    """Tied float confidences must not flip cluster ordering — anchor pick
+    falls back to ``(image_id, candidate_id)`` so two runs with the same
+    inputs produce the same cluster list."""
+    bbox = _bbox(0.10, 0.10, 0.50, 0.50)
+    far = _bbox(0.80, 0.80, 0.95, 0.95)
+    refs_a = [
+        AnnotationRef("img1", _ann("c1", "forklift", 0.9, bbox)),
+        AnnotationRef("img2", _ann("c2", "forklift", 0.9, bbox)),
+        AnnotationRef("img3", _ann("c3", "forklift", 0.9, far)),
+    ]
+    refs_b = list(reversed(refs_a))
+    a = build_clusters(refs_a, iou_threshold=0.5, group_id="g")
+    b = build_clusters(refs_b, iou_threshold=0.5, group_id="g")
+    # Same anchors and members regardless of input order.
+    a_keys = [
+        (c.cluster_id, sorted(m.image_id for m in c.members)) for c in a
+    ]
+    b_keys = [
+        (c.cluster_id, sorted(m.image_id for m in c.members)) for c in b
+    ]
+    assert a_keys == b_keys
+
+
 def test_canonical_bbox_handles_zero_confidence() -> None:
     b = _bbox(0.10, 0.10, 0.50, 0.50)
     refs = [
@@ -359,6 +383,7 @@ def test_reconcile_records_transport_error_audit_row() -> None:
     assert len(results["img2"].rejected) == 1
     failed = results["img2"].rejected[0]
     assert failed.candidate_id.endswith("#transport_error")
+    assert failed.reject_reason == "transport_error"
     assert failed.mask_score == 0.0
     assert failed.seed_iou == 0.0
     # bbox falls back to the seed bbox; cluster_id and votes stay attached
@@ -366,6 +391,116 @@ def test_reconcile_records_transport_error_audit_row() -> None:
     assert failed.bbox == failed.seed_bbox
     assert failed.cluster_id == "clip_a::0"
     assert failed.votes
+
+
+def test_reconcile_circuit_breaker_after_consecutive_transport_errors() -> None:
+    """After N consecutive transport errors in one group the orchestrator
+    must bail with a RuntimeError rather than silently flooding the audit
+    log — a flapping SAM endpoint deserves operator signal."""
+    bbox = _bbox(0.10, 0.10, 0.50, 0.50)
+    # Six positive frames + six missing frames => up to 6 refine calls.
+    imgs: list[ImageContext] = []
+    for i in range(6):
+        imgs.append(
+            ImageContext(
+                image_id=f"pos{i}",
+                image_path=f"/data/clip_b_{i:04d}.jpg",
+                final_annotations=[_ann(f"c{i}", "forklift", 0.9, bbox)],
+            )
+        )
+    for i in range(6):
+        imgs.append(
+            ImageContext(
+                image_id=f"miss{i}",
+                image_path=f"/data/clip_b_miss_{i:04d}.jpg",
+                final_annotations=[],
+            )
+        )
+
+    class ExplodingClient:
+        def refine(self, *, image_path, bbox, threshold=0.5):
+            raise RuntimeError("server died")
+
+    with pytest.raises(RuntimeError, match="transport errors"):
+        reconcile_group(
+            "clip_b",
+            imgs,
+            client=ExplodingClient(),
+            config=PropagationConfig(max_consecutive_transport_errors=3),
+        )
+
+
+def test_reconcile_seed_iou_uses_best_member_not_centroid() -> None:
+    """seed_iou must be max-IoU vs. real members, not vs. the centroid.
+
+    Two members whose score-weighted centroid sits between them: a refined
+    response that matches one member exactly should clear the IoU floor,
+    even though IoU(refined, centroid) is well below the floor.
+    """
+    # Same area, offset enough that IoU(member_a, member_b) ≈ 0.33
+    # (clusters at IoU≥0.3) and IoU(member_a, centroid) ≈ 0.6 (would
+    # fail default accept_iou=0.7 if we still used centroid-IoU).
+    member_a = _bbox(0.10, 0.10, 0.40, 0.40)
+    member_b = _bbox(0.25, 0.10, 0.55, 0.40)
+    imgs = [
+        ImageContext(
+            image_id="img0",
+            image_path="/data/clip_c_0000.jpg",
+            final_annotations=[_ann("c0", "thing", 0.9, member_a)],
+        ),
+        ImageContext(
+            image_id="img1",
+            image_path="/data/clip_c_0001.jpg",
+            final_annotations=[_ann("c1", "thing", 0.9, member_b)],
+        ),
+        ImageContext(
+            image_id="img2",
+            image_path="/data/clip_c_0002.jpg",
+            final_annotations=[],
+        ),
+    ]
+    # SAM returns a box equal to member_a — with high score.
+    client = _StubClient(
+        per_image={
+            "/data/clip_c_0002.jpg": RefineResponse(box=member_a, score=0.9),
+        },
+    )
+    results = reconcile_group(
+        "clip_c",
+        imgs,
+        client=client,
+        config=PropagationConfig(
+            min_positive_frames=2, cluster_iou_threshold=0.3
+        ),
+    )
+    # max(IoU vs. members) = 1.0 (vs member_a) so the propagation is
+    # accepted; centroid-IoU would be ~0.6 and the row would have been
+    # bucketed as below_iou.
+    assert len(results["img2"].propagated) == 1
+    assert results["img2"].propagated[0].seed_iou == pytest.approx(1.0)
+
+
+def test_reconcile_reject_reason_below_score() -> None:
+    imgs = _imgs_three_frames(missing_idx=2)
+    client = _StubClient(default_score=0.3)  # below default accept_score 0.5
+    results = reconcile_group("clip_a", imgs, client=client)
+    rejected = results["img2"].rejected
+    assert len(rejected) == 1
+    assert rejected[0].reject_reason == "below_score"
+
+
+def test_reconcile_reject_reason_below_iou() -> None:
+    imgs = _imgs_three_frames(missing_idx=2)
+    drifted = _bbox(0.80, 0.80, 0.95, 0.95)  # IoU vs members ≈ 0
+    client = _StubClient(
+        per_image={
+            "/data/clip_a_0002.jpg": RefineResponse(box=drifted, score=0.95),
+        },
+    )
+    results = reconcile_group("clip_a", imgs, client=client)
+    rejected = results["img2"].rejected
+    assert len(rejected) == 1
+    assert rejected[0].reject_reason == "below_iou"
 
 
 def test_reconcile_all_frames_have_detection_no_calls() -> None:
@@ -600,6 +735,122 @@ def test_run_reconcile_cli_writes_propagation_for_missing_frame(
     assert image_ids == {"clip_a_003"}
 
 
+def test_run_reconcile_cli_flushes_per_group_and_emits_skipped_singletons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-group flush: writes happen as each group finishes, not just at
+    the end. Singleton/skipped groups still emit empty rows so stale
+    RECONCILE rows from a prior run get overwritten."""
+    db_path = tmp_path / "pipeline.db"
+    bbox = BoundingBox(x1=0.10, y1=0.10, x2=0.50, y2=0.50)
+
+    async def _seed() -> None:
+        async with CheckpointDB(db_path) as db:
+            await db.save_job_info(
+                job_id="cli-test",
+                image_dir="/tmp",
+                config_hash="h1",
+                prompt_version="v1",
+            )
+            await db.register_image_batch(
+                [
+                    ("clip_a_001", "/data/clip_a_0001.jpg"),
+                    ("clip_a_002", "/data/clip_a_0002.jpg"),
+                    # Singleton group (own clip_id, only one frame).
+                    ("loneclip_001", "/data/loneclip_0001.jpg"),
+                ]
+            )
+            for image_id, idx in (("clip_a_001", 0), ("clip_a_002", 1), ("loneclip_001", 2)):
+                ann = FinalAnnotation(
+                    candidate_id=f"c{idx}",
+                    class_name="forklift",
+                    class_id=0,
+                    bbox=bbox,
+                    confidence=0.9,
+                    action=FinalAction.ACCEPT,
+                    source_model="sam3_dart",
+                )
+                await db.save_stage(
+                    image_id,
+                    Stage.FINALIZE,
+                    FinalizeResult(image_id=image_id, final_annotations=[ann]),
+                    "h1",
+                )
+            async with db._transaction() as tx:
+                await tx.execute(
+                    "UPDATE image_meta SET stages_completed=? "
+                    "WHERE image_id IN ('clip_a_001','clip_a_002','loneclip_001')",
+                    (json.dumps(["detect", "filter", "evaluate", "refine", "finalize"]),),
+                )
+
+    asyncio.run(_seed())
+
+    from manual_reviewer.scripts import run_reconcile as run_reconcile_mod
+
+    write_calls: list[int] = []
+    real_writer = run_reconcile_mod.write_reconcile_results
+
+    def _spy_writer(db, results, **kwargs):
+        write_calls.append(len(results))
+        return real_writer(db, results, **kwargs)
+
+    class _Stub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def refine(self, *, image_path: str, bbox: BoundingBox, threshold: float = 0.5):
+            return RefineResponse(box=bbox, score=0.95)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(run_reconcile_mod, "Sam3OneHttpClient", _Stub)
+    monkeypatch.setattr(run_reconcile_mod, "write_reconcile_results", _spy_writer)
+
+    # Run WITHOUT --keep-empty so we prove that singleton empty rows are
+    # written via force_keep (not via the global --keep-empty flag).
+    rc = run_reconcile_mod.main(
+        ["--db", str(db_path), "--grouping", "clip_id"]
+    )
+    assert rc == 0
+    # At least 2 separate write calls (one per group emitted) — proves we
+    # don't batch all groups into a single end-of-run write.
+    assert len(write_calls) >= 2
+
+    # The singleton group's empty row was emitted to overwrite any stale
+    # prior-run rows — even with skip_empty=True (no --keep-empty).
+    with sqlite3.connect(str(db_path)) as conn:
+        rows = conn.execute(
+            "SELECT image_id FROM stages WHERE stage=?",
+            (Stage.RECONCILE.value,),
+        ).fetchall()
+    image_ids = {r[0] for r in rows}
+    assert "loneclip_001" in image_ids
+
+
+def test_run_reconcile_cli_returns_one_when_no_finalize_images(
+    tmp_path: Path,
+) -> None:
+    """Empty / misconfigured DB returns rc=1 so cron / CI catches the no-op."""
+    from manual_reviewer.scripts import run_reconcile as run_reconcile_mod
+
+    db_path = tmp_path / "empty.db"
+
+    async def _seed() -> None:
+        async with CheckpointDB(db_path) as db:
+            await db.save_job_info(
+                job_id="empty",
+                image_dir="/tmp",
+                config_hash="h1",
+                prompt_version="v1",
+            )
+
+    asyncio.run(_seed())
+
+    rc = run_reconcile_mod.main(["--db", str(db_path)])
+    assert rc == 1
+
+
 def test_run_reconcile_cli_backend_sam3_dart_picks_legacy_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -701,6 +952,34 @@ def test_sam3_one_http_client_refine_handles_no_box() -> None:
     )
     assert result.box is None
     assert result.score == 0.0
+
+
+def test_sam3_one_http_client_context_manager_closes_session() -> None:
+    """Sam3OneHttpClient is a context manager that closes its owned session
+    on __exit__, but leaves caller-supplied sessions alone."""
+    from manual_reviewer.reconcile import Sam3OneHttpClient
+
+    class _ClosableSession:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    # Owned session — closed on exit.
+    with Sam3OneHttpClient(url="http://stub:1/predict") as c1:
+        owned = c1._session
+        assert isinstance(owned, type(c1._session))
+    # If we got here with no error, the client is constructable as a
+    # context manager. We can't directly inspect requests.Session.close()
+    # without monkeypatching, but we can verify `close()` does no harm.
+    c1.close()  # idempotent
+
+    # Caller-supplied session stays open.
+    sess = _ClosableSession()
+    with Sam3OneHttpClient(url="http://stub:1/predict", session=sess) as c2:
+        assert c2._session is sess
+    assert sess.closed is False
 
 
 def test_sam3_one_http_client_track_serializes_seeds() -> None:

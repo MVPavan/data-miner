@@ -4,3 +4,7 @@ Reads from and writes to the aa_v4 ``pipeline.db`` so reviewer corrections
 land alongside the auto-pipeline's stage-level audit trail. See
 ``docs/review_system.md`` for the overall design.
 """
+
+FINALIZE_MODEL_VERSION = "aa_v4_finalize"
+
+__all__ = ["FINALIZE_MODEL_VERSION"]

@@ -463,12 +463,14 @@ class SAM3OneModel(BaseDetectorModel):
 
         if boxes_t is None or scores_t is None:
             return SAM3VisualPromptResponse(boxes_norm=[], scores=[])
+        # SAM 3.1 returns BFloat16 tensors on GPU; cast to float32 before
+        # .numpy() since NumPy has no BF16 dtype.
         if isinstance(boxes_t, torch.Tensor):
-            boxes_px = boxes_t.detach().cpu().numpy()
+            boxes_px = boxes_t.detach().to(torch.float32).cpu().numpy()
         else:
             boxes_px = np.asarray(boxes_t)
         if isinstance(scores_t, torch.Tensor):
-            scores_np = scores_t.detach().cpu().numpy()
+            scores_np = scores_t.detach().to(torch.float32).cpu().numpy()
         else:
             scores_np = np.asarray(scores_t)
         if boxes_px.size == 0:

@@ -267,3 +267,134 @@ def test_fetch_filters_by_since(patch_httpx, monkeypatch: pytest.MonkeyPatch) ->
     out = mod._fetch_from_ls(_args(since=cutoff))
     image_ids = [data.get("image_id") for _ann, data, _seed in out]
     assert image_ids == ["new"]
+
+
+# ---------------------------------------------------------------------------
+# argparse hardening
+# ---------------------------------------------------------------------------
+
+
+def test_argparse_requires_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LS_TOKEN", raising=False)
+    with pytest.raises(SystemExit):
+        mod._parse_args(["--db", "/tmp/x.db"])
+
+
+def test_argparse_in_file_with_since_rejected(tmp_path) -> None:
+    f = tmp_path / "x.json"
+    f.write_text("[]")
+    with pytest.raises(SystemExit):
+        mod._parse_args(["--db", "/tmp/x.db", "--in-file", str(f), "--since", "1.0"])
+
+
+def test_argparse_ls_token_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+    monkeypatch.setenv("LS_TOKEN", "env_tok")
+    importlib.reload(mod)
+    args = mod._parse_args(
+        ["--db", "/tmp/x.db", "--ls-url", "http://x", "--ls-project", "1"]
+    )
+    assert args.ls_token == "env_tok"
+
+
+# ---------------------------------------------------------------------------
+# token redaction in error logs
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_redacts_token_in_error(patch_httpx) -> None:
+    fake = patch_httpx([])
+    # Override get to return 5xx with token in body
+    def _bad_get(url, params=None):
+        fake.calls.append({"url": url, "params": dict(params or {})})
+        r = _FakeResponse([], status_code=500)
+        r.text = "internal error: token=secret_t in headers"
+        return r
+    fake.get = _bad_get  # type: ignore[assignment]
+    with pytest.raises(RuntimeError) as ei:
+        mod._fetch_from_ls(_args(ls_token="secret_t"))
+    assert "secret_t" not in str(ei.value)
+    assert "<redacted>" in str(ei.value)
+
+
+# ---------------------------------------------------------------------------
+# classes_file fail-fast
+# ---------------------------------------------------------------------------
+
+
+def test_rewrite_yolo_empty_classes_file_raises(tmp_path) -> None:
+    from manual_reviewer.scripts.export_to_aa_v4 import _rewrite_yolo_label
+    classes = tmp_path / "classes.txt"
+    classes.write_text("\n  \n\n", encoding="utf-8")
+    labels_dir = tmp_path / "labels"
+
+    class _Bbox:
+        x1, y1, x2, y2 = 0.1, 0.1, 0.2, 0.2
+
+    class _C:
+        class_name = "anything"
+        bbox = _Bbox()
+
+    class _Result:
+        corrections = [_C()]
+        frame_state = "clean"
+
+    with pytest.raises(ValueError, match="empty or malformed"):
+        _rewrite_yolo_label(labels_dir, "img1", _Result(), classes)
+
+
+def test_trace_dedup_fallback_uses_reviewed_at(tmp_path) -> None:
+    """When ls_completion_id is 0/falsy, dedup falls back to (image_id, reviewed_at)
+    so re-running export doesn't duplicate the trace block."""
+    from data_miner.auto_annotation_v4.configs.contracts import HumanReviewResult
+
+    traces_dir = tmp_path / "traces"
+    result = HumanReviewResult(
+        image_id="img_a",
+        reviewer_id="r",
+        reviewed_at=42.0,
+        ls_completion_id=0,
+    )
+    mod._append_trace(traces_dir, "img_a", result)
+    mod._append_trace(traces_dir, "img_a", result)
+
+    import json
+    payload = json.loads((traces_dir / "img_a.json").read_text())
+    assert isinstance(payload, list)
+    assert len(payload) == 1, "duplicate trace blocks were not dedup'd"
+
+
+def test_trace_refuses_when_no_id_and_no_reviewed_at(tmp_path, caplog) -> None:
+    from data_miner.auto_annotation_v4.configs.contracts import HumanReviewResult
+
+    traces_dir = tmp_path / "traces"
+    result = HumanReviewResult(
+        image_id="img_a", reviewer_id="r", reviewed_at=0.0,
+        ls_completion_id=0,
+    )
+    with caplog.at_level("WARNING"):
+        mod._append_trace(traces_dir, "img_a", result)
+    assert not (traces_dir / "img_a.json").exists()
+    assert any("refusing trace append" in r.message for r in caplog.records)
+
+
+def test_rewrite_yolo_strips_bom(tmp_path) -> None:
+    from manual_reviewer.scripts.export_to_aa_v4 import _rewrite_yolo_label
+    classes = tmp_path / "classes.txt"
+    classes.write_text("﻿cat\ndog\n", encoding="utf-8")
+    labels_dir = tmp_path / "labels"
+
+    class _Bbox:
+        x1, y1, x2, y2 = 0.1, 0.1, 0.2, 0.2
+
+    class _C:
+        class_name = "cat"
+        bbox = _Bbox()
+
+    class _Result:
+        corrections = [_C()]
+        frame_state = "clean"
+
+    _rewrite_yolo_label(labels_dir, "img1", _Result(), classes)
+    out = (labels_dir / "img1.txt").read_text(encoding="utf-8")
+    assert out.startswith("0 ")  # cat got id 0 even with BOM

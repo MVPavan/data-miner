@@ -266,7 +266,7 @@ class CosineGenerator:
                     vec.shape[0] if vec.ndim == 1 else -1,
                 )
                 continue
-            cosine = float(np.dot(seed_emb, vec))
+            cosine = float(np.clip(np.dot(seed_emb, vec), -1.0, 1.0))
             if not np.isfinite(cosine) or cosine < self._cosine_thresh:
                 continue
             out.append(

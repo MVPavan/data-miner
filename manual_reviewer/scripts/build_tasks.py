@@ -25,7 +25,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
 
     tasks: list[dict[str, Any]] = []
     skipped_no_finalize = 0
+    skipped_invalid = 0
     for row in iter_survivor_images(db_path, limit=args.limit, require_finalize=True):
         image_id = row["image_id"]
         try:
@@ -71,9 +74,17 @@ def main(argv: list[str] | None = None) -> int:
             image_url_template=args.image_url_template,
             job_id=job_id,
         )
+        if task is None:
+            skipped_invalid += 1
+            continue
         tasks.append(task)
 
-    logger.info("built %d tasks (skipped %d without finalize)", len(tasks), skipped_no_finalize)
+    logger.info(
+        "built %d tasks (skipped %d without finalize, %d invalid)",
+        len(tasks),
+        skipped_no_finalize,
+        skipped_invalid,
+    )
     if not tasks:
         logger.warning("no tasks to write/post")
         return 1
@@ -94,10 +105,17 @@ def main(argv: list[str] | None = None) -> int:
             project_id=args.ls_project,
             skip_existing=args.skip_existing,
             timeout=args.ls_timeout,
+            batch_size=args.ls_batch_size,
         )
         logger.info("posted %d tasks to LS project %s", posted, args.ls_project)
 
     return 0
+
+
+def _redact_token(s: str, token: str | None) -> str:
+    if not token or not s:
+        return s
+    return s.replace(token, "<redacted>")
 
 
 def _post_to_ls(
@@ -108,6 +126,7 @@ def _post_to_ls(
     project_id: int,
     skip_existing: bool,
     timeout: float,
+    batch_size: int = 100,
 ) -> int:
     """POST tasks via Label Studio's bulk import endpoint.
 
@@ -115,6 +134,10 @@ def _post_to_ls(
     by ``data.image_id`` so re-runs of build_tasks are idempotent. Trades one
     extra HTTP roundtrip per task for safety; pass ``False`` when bulk
     importing into a clean project.
+
+    Sends in chunks of ``batch_size`` with up to 3 retries (1s/2s/4s
+    exponential backoff) on 5xx so a transient LS hiccup doesn't drop the
+    whole push.
     """
     try:
         import httpx
@@ -127,7 +150,9 @@ def _post_to_ls(
     base_url = base_url.rstrip("/")
 
     if skip_existing:
-        existing = _fetch_existing_image_ids(httpx, base_url, headers, project_id, timeout)
+        existing = _fetch_existing_image_ids(
+            httpx, base_url, headers, project_id, timeout, strict_existing=True
+        )
         before = len(tasks)
         tasks = [t for t in tasks if t["data"].get("image_id") not in existing]
         logger.info("skip_existing: %d already imported, %d remain", before - len(tasks), len(tasks))
@@ -135,11 +160,37 @@ def _post_to_ls(
             return 0
 
     url = f"{base_url}/api/projects/{project_id}/import"
+    posted = 0
     with httpx.Client(timeout=timeout, headers=headers) as client:
-        resp = client.post(url, json=tasks)
-        if resp.status_code >= 300:
-            raise RuntimeError(f"LS import failed {resp.status_code}: {resp.text[:500]}")
-    return len(tasks)
+        for start in range(0, len(tasks), max(1, batch_size)):
+            chunk = tasks[start:start + batch_size]
+            chunk_ids = [t["data"].get("image_id") for t in chunk]
+            last_exc: Exception | None = None
+            for attempt in range(3):
+                try:
+                    resp = client.post(url, json=chunk)
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    resp = None
+                if resp is not None and resp.status_code < 300:
+                    posted += len(chunk)
+                    last_exc = None
+                    break
+                if resp is not None and 400 <= resp.status_code < 500:
+                    body = _redact_token(resp.text[:500], token)
+                    raise RuntimeError(
+                        f"LS import failed {resp.status_code}: {body}"
+                    )
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+            else:
+                status = getattr(resp, "status_code", "n/a") if resp is not None else "n/a"
+                body = _redact_token(getattr(resp, "text", "")[:500], token) if resp is not None else str(last_exc)
+                logger.error(
+                    "LS import chunk failed after 3 attempts (status=%s) image_ids=%s: %s",
+                    status, chunk_ids, body,
+                )
+    return posted
 
 
 def _fetch_existing_image_ids(
@@ -148,16 +199,28 @@ def _fetch_existing_image_ids(
     headers: dict[str, str],
     project_id: int,
     timeout: float,
+    *,
+    strict_existing: bool = False,
 ) -> set[str]:
-    """Return image_ids already in the LS project. Best-effort, non-fatal."""
+    """Return image_ids already in the LS project.
+
+    When ``strict_existing`` is True, raises on transport/HTTP failure so the
+    caller knows idempotency cannot be guaranteed. Otherwise falls back to
+    an empty set.
+    """
     url = f"{base_url}/api/projects/{project_id}/tasks"
     out: set[str] = set()
     page = 1
+    token = headers.get("Authorization", "").removeprefix("Token ").strip() or None
     with httpx_module.Client(timeout=timeout, headers=headers) as client:
         while True:
             resp = client.get(url, params={"page": page, "page_size": 200})
             if resp.status_code >= 300:
-                logger.warning("LS task list failed %s: %s", resp.status_code, resp.text[:200])
+                body = _redact_token(resp.text[:200], token)
+                msg = f"LS task list failed {resp.status_code}: {body}"
+                if strict_existing:
+                    raise RuntimeError(msg)
+                logger.warning("%s", msg)
                 return out
             payload = resp.json() or {}
             tasks = payload if isinstance(payload, list) else payload.get("tasks") or []
@@ -186,9 +249,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="URL template; {path} is the image_meta.image_path value",
     )
     p.add_argument("--ls-url", default=None, help="LS base URL, e.g. http://localhost:8080")
-    p.add_argument("--ls-token", default=None, help="LS API token")
+    p.add_argument(
+        "--ls-token",
+        default=os.environ.get("LS_TOKEN"),
+        help="LS API token; defaults to $LS_TOKEN env var (preferred — avoids exposure in `ps`)",
+    )
     p.add_argument("--ls-project", type=int, default=None, help="LS project id")
     p.add_argument("--ls-timeout", type=float, default=30.0)
+    p.add_argument("--ls-batch-size", type=int, default=100,
+                   help="Tasks per LS bulk-import POST; chunked to bound retry blast radius")
     p.add_argument("--skip-existing", action="store_true",
                    help="Skip tasks whose image_id already exists in the LS project")
     return p.parse_args(argv)

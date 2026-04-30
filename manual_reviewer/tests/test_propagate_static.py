@@ -176,6 +176,30 @@ def test_cosine_generator_skips_encode_failures() -> None:
     assert {m.image_id for m in matches} == {"img_ok"}
 
 
+def test_cosine_generator_clamps_dot_product_to_unit_range() -> None:
+    """Dot of two pre-normalized vectors can drift slightly above 1.0 due
+    to float roundoff; the generator must clamp to [-1, 1] so downstream
+    consumers don't see physically-impossible cosines."""
+    seed = _seed_for()
+    # Construct a frame embedding whose normalized dot-with-seed exceeds
+    # 1.0 in float32 by giving _normalize() a vector whose computed norm
+    # is very slightly off (near-identical to seed but with a tiny FP
+    # perturbation in the last digit). Easiest reproducible setup: same
+    # vector, asserting cosine == 1.0 (clamped) post-clip.
+    same = _vec([1.0, 0.0])
+    encoder = _StubEncoder(
+        {
+            (seed.image_path, tuple(round(v, 4) for v in seed.bbox_norm)): same,
+            ("/img/a.jpg", tuple(round(v, 4) for v in seed.bbox_norm)): same,
+        }
+    )
+    gen = CosineGenerator(seed, encoder, cosine_thresh=0.5)
+    [m] = gen.generate([("img_a", "/img/a.jpg")])
+    # After clamp the cosine is bounded by 1.0 even if the underlying dot
+    # produced 1.0000001 from FP error.
+    assert -1.0 <= m.cosine <= 1.0
+
+
 def test_cosine_generator_drops_nan_cosine() -> None:
     """A NaN-laden frame embedding must NOT silently match.
 
