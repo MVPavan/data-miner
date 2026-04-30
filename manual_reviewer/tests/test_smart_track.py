@@ -654,16 +654,18 @@ def test_track_similar_returns_regions_with_correct_from_name() -> None:
     assert all(r["meta"]["source"] == "track_similar" for r in regions)
 
 
-def test_track_similar_persists_matches_as_prediction() -> None:
-    """Phase 1 must POST matches via LS REST so Phase 2 can read them.
+def test_track_similar_persists_each_match_separately() -> None:
+    """Phase 1 must POST each match as its own prediction record.
 
-    Smart-tool predict responses are ephemeral browser-side overlays —
-    LS doesn't auto-save them to task["predictions"]. Without explicit
-    persistence, hitting Shift+J immediately after Phase 1 would find
-    nothing on the server.
+    Reasoning: LS Community's UI delete-button calls DELETE
+    /api/predictions/<id>/. When each match is its own prediction,
+    deleting a single yellow draft removes that record server-side
+    and Phase 2 sees only survivors. Bundling all N matches into one
+    prediction would either drop everything on a single delete (LS
+    nukes the whole record) or leave the prediction intact (LS does
+    nothing) — both broken UX. Per-match predictions are the only
+    shape that supports selective rejection cleanly.
     """
-    # Exemplar at (0.10, 0.10)–(0.20, 0.20). Returned matches at far-away
-    # locations so canvas-dedup against the exemplar doesn't eat them.
     sam3 = _StubSam3Visual(_StubVisualPromptResp(
         boxes_norm=[[0.40, 0.40, 0.50, 0.50], [0.70, 0.70, 0.80, 0.80]],
         scores=[0.85, 0.82],
@@ -672,13 +674,14 @@ def test_track_similar_persists_matches_as_prediction() -> None:
     task = _task()  # task["id"] = 100
     regions = track_similar(task, _track_similar_context(label="forklift"), sam3, ls_rest=ls)
     assert len(regions) == 2
-    # LS got a single POST /api/predictions/ carrying both matches.
-    assert len(ls.posted) == 1
-    posted = ls.posted[0]
-    assert posted["task_id"] == 100
-    assert posted["model_version"] == "sam3_1_track_similar"
-    assert len(posted["result"]) == 2
-    assert all(r["from_name"] == "track_similar" for r in posted["result"])
+    # LS got TWO POSTs, one per match.
+    assert len(ls.posted) == 2
+    for posted in ls.posted:
+        assert posted["task_id"] == 100
+        assert posted["model_version"] == "sam3_1_track_similar"
+        # Each prediction has exactly one region.
+        assert len(posted["result"]) == 1
+        assert posted["result"][0]["from_name"] == "track_similar"
 
 
 def test_track_similar_works_without_ls_rest() -> None:

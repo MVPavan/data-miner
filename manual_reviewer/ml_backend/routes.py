@@ -811,30 +811,31 @@ def track_similar(
     if dropped:
         logger.debug("track_similar: dropped %d duplicate(s) vs canvas", dropped)
 
-    # Persist matches as a real prediction so Phase 2 (propagate_now) can
-    # read them from task["predictions"]. Smart-tool predict responses
-    # are ephemeral; without this, hitting Shift+J immediately after
-    # Phase 1 finds nothing on the server side.
+    # Persist each match as a SEPARATE prediction record. LS's UI
+    # delete-button calls DELETE /api/predictions/<id>/ — when each
+    # match has its own prediction record, deleting a yellow draft
+    # in the canvas removes that record server-side, and Phase 2
+    # reads only the survivors. If we bundled all N matches into one
+    # prediction, LS's delete on a single region would either nuke
+    # the whole thing or leave it intact (version-dependent), and
+    # Phase 2 couldn't tell selective rejections.
     task_id = task.get("id")
     if out and ls_rest is not None and isinstance(task_id, int):
-        max_score = max(
-            (float(r.get("score", 0.0) or 0.0) for r in out), default=0.0,
-        )
-        pid = ls_rest.post_prediction(
-            task_id=task_id,
-            result=out,
-            score=max_score,
-            model_version=model_version,
-        )
-        if pid is not None:
-            logger.info(
-                "track_similar: persisted %d region(s) as prediction id=%s",
-                len(out), pid,
+        persisted = 0
+        for region in out:
+            score = float(region.get("score", 0.0) or 0.0)
+            pid = ls_rest.post_prediction(
+                task_id=task_id,
+                result=[region],
+                score=score,
+                model_version=model_version,
             )
-        else:
-            logger.warning(
-                "track_similar: failed to persist prediction; Phase 2 won't see these"
-            )
+            if pid is not None:
+                persisted += 1
+        logger.info(
+            "track_similar: persisted %d/%d region(s) as separate predictions",
+            persisted, len(out),
+        )
 
     return out
 
