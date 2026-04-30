@@ -204,7 +204,9 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
                 for r in context["result"]
             )
             if has_track_similar and _route_enabled("track_similar"):
-                out = track_similar(task, context, self._sam3_client)
+                out = track_similar(
+                    task, context, self._sam3_client, self._ls_rest,
+                )
                 logger.info("→ track_similar returned %d region(s)", len(out))
                 return out
             if has_track_similar:

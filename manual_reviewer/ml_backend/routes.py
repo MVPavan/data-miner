@@ -711,6 +711,7 @@ def track_similar(
     task: dict[str, Any],
     context: dict[str, Any] | None,
     sam3_client: Sam3LikeClient,
+    ls_rest: LSRestClient | None = None,
     *,
     threshold: float = 0.4,
     max_results: int = 50,
@@ -725,6 +726,14 @@ def track_similar(
     and the returned regions also carry ``from_name="track_similar"``.
     The tag is the correlation key Phase 2 (:func:`propagate_now`) uses
     to know which rectangles on the canvas to propagate.
+
+    **Persistence note:** smart-tool predict responses are ephemeral
+    browser-side overlays — LS doesn't save them to ``task["predictions"]``
+    automatically. For Phase 2 to find these matches later, we POST a
+    persistent prediction record via LS REST (when ``ls_rest`` is
+    configured). The same regions also ride back in the predict
+    response so the reviewer sees immediate feedback; LS dedupes on
+    region.id so they don't show twice.
 
     The reviewer drops or accepts the returned same-frame matches as
     they do today; only what survives review will get propagated when
@@ -801,6 +810,32 @@ def track_similar(
     )
     if dropped:
         logger.debug("track_similar: dropped %d duplicate(s) vs canvas", dropped)
+
+    # Persist matches as a real prediction so Phase 2 (propagate_now) can
+    # read them from task["predictions"]. Smart-tool predict responses
+    # are ephemeral; without this, hitting Shift+J immediately after
+    # Phase 1 finds nothing on the server side.
+    task_id = task.get("id")
+    if out and ls_rest is not None and isinstance(task_id, int):
+        max_score = max(
+            (float(r.get("score", 0.0) or 0.0) for r in out), default=0.0,
+        )
+        pid = ls_rest.post_prediction(
+            task_id=task_id,
+            result=out,
+            score=max_score,
+            model_version=model_version,
+        )
+        if pid is not None:
+            logger.info(
+                "track_similar: persisted %d region(s) as prediction id=%s",
+                len(out), pid,
+            )
+        else:
+            logger.warning(
+                "track_similar: failed to persist prediction; Phase 2 won't see these"
+            )
+
     return out
 
 
@@ -811,19 +846,24 @@ def _collect_track_similar_seeds(
     """Walk current task's annotations + context to find track_similar
     rectangles that survived review.
 
-    Sources, in priority order:
+    Sources, dedup'd by rounded bbox key:
 
       1. ``task["annotations"][N]["result"]`` — accepted regions.
-      2. ``context["result"]`` — current draft.
-      3. ``task["predictions"][N]["result"]`` filtered to
-         ``from_name="track_similar"`` whose ``id`` STILL appears in
-         the latest annotation (i.e. the reviewer didn't reject it).
+         The reviewer explicitly committed these, so they're the
+         strongest signal of "propagate this".
+      2. ``context["result"]`` — current draft (typically the trigger
+         KeyPoint, but may include in-flight rectangles).
+      3. ``task["predictions"][N]["result"]`` — Phase 1 output that's
+         still on the canvas. LS Community keeps predictions in this
+         array regardless of UI-side rejection, so reading from here
+         means **all** Phase 1 matches propagate unless the reviewer
+         has accepted them into annotations (then dedup wins) or
+         explicitly DELETEd the prediction record via the LS REST API.
 
-    For Option A we only need (1) + (2) — the Phase 2 trigger fires
-    after the user has accepted/rejected, so accepted regions ARE in
-    annotations, and rejected regions are simply absent. We don't
-    look at predictions because Phase 2's contract is "propagate what
-    the reviewer kept".
+    The reviewer's natural workflow ("draw exemplar → review same-frame
+    → Shift+J") results in matches sitting in ``predictions[]`` until
+    they accept; (3) is the path that makes Phase 2 fire usefully
+    without a separate per-match accept step.
 
     Each seed gets a fresh ``track_group_id`` (UUID) tagged on the
     sibling propagations so a future cascade route can correlate.
@@ -859,27 +899,28 @@ def _collect_track_similar_seeds(
         )
 
     seen: set[tuple[float, float, float, float]] = set()
+
+    def _consider(region: Any) -> None:
+        spec = _from_region(region)
+        if spec is None:
+            return
+        key = tuple(round(b, 4) for b in spec.bbox)
+        if key in seen:
+            return
+        seen.add(key)
+        seeds.append(spec)
+
     for ann in task.get("annotations") or []:
         for region in (ann or {}).get("result") or []:
-            spec = _from_region(region)
-            if spec is None:
-                continue
-            key = tuple(round(b, 4) for b in spec.bbox)
-            if key in seen:
-                continue
-            seen.add(key)
-            seeds.append(spec)
+            _consider(region)
 
     if isinstance(context, dict):
         for region in context.get("result") or []:
-            spec = _from_region(region)
-            if spec is None:
-                continue
-            key = tuple(round(b, 4) for b in spec.bbox)
-            if key in seen:
-                continue
-            seen.add(key)
-            seeds.append(spec)
+            _consider(region)
+
+    for pred in task.get("predictions") or []:
+        for region in (pred or {}).get("result") or []:
+            _consider(region)
 
     return seeds
 

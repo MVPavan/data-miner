@@ -654,6 +654,45 @@ def test_track_similar_returns_regions_with_correct_from_name() -> None:
     assert all(r["meta"]["source"] == "track_similar" for r in regions)
 
 
+def test_track_similar_persists_matches_as_prediction() -> None:
+    """Phase 1 must POST matches via LS REST so Phase 2 can read them.
+
+    Smart-tool predict responses are ephemeral browser-side overlays —
+    LS doesn't auto-save them to task["predictions"]. Without explicit
+    persistence, hitting Shift+J immediately after Phase 1 would find
+    nothing on the server.
+    """
+    # Exemplar at (0.10, 0.10)–(0.20, 0.20). Returned matches at far-away
+    # locations so canvas-dedup against the exemplar doesn't eat them.
+    sam3 = _StubSam3Visual(_StubVisualPromptResp(
+        boxes_norm=[[0.40, 0.40, 0.50, 0.50], [0.70, 0.70, 0.80, 0.80]],
+        scores=[0.85, 0.82],
+    ))
+    ls = _StubLSRest([])
+    task = _task()  # task["id"] = 100
+    regions = track_similar(task, _track_similar_context(label="forklift"), sam3, ls_rest=ls)
+    assert len(regions) == 2
+    # LS got a single POST /api/predictions/ carrying both matches.
+    assert len(ls.posted) == 1
+    posted = ls.posted[0]
+    assert posted["task_id"] == 100
+    assert posted["model_version"] == "sam3_1_track_similar"
+    assert len(posted["result"]) == 2
+    assert all(r["from_name"] == "track_similar" for r in posted["result"])
+
+
+def test_track_similar_works_without_ls_rest() -> None:
+    """Backward-compat: when ls_rest is None, route still returns matches
+    (just doesn't persist). Tests that don't need cross-task writes still
+    work."""
+    sam3 = _StubSam3Visual(_StubVisualPromptResp(
+        boxes_norm=[[0.40, 0.40, 0.50, 0.50]],
+        scores=[0.85],
+    ))
+    regions = track_similar(_task(), _track_similar_context(), sam3, ls_rest=None)
+    assert len(regions) == 1
+
+
 def test_track_similar_no_exemplar_returns_empty() -> None:
     sam3 = _StubSam3Visual(_StubVisualPromptResp(boxes_norm=[], scores=[]))
     regions = track_similar(_task(), {"result": []}, sam3)
@@ -800,6 +839,83 @@ def test_propagate_now_multiple_seeds_dedups_by_bbox(tmp_path: Path) -> None:
         ]
     }
     regions, result = propagate_now(task, ctx_with_dup, sam3, ls_rest=ls)
+    assert result.seeds_total == 1
+
+
+def test_propagate_now_picks_up_phase1_predictions(tmp_path: Path) -> None:
+    """Regression: Phase 2 must read Phase 1 matches that are still in
+    task["predictions"][] (the natural state right after Phase 1 fires
+    and before the reviewer manually accepts each match into annotations).
+
+    Without this, a reviewer who hits Shift+J immediately after Phase 1
+    would see 'no track_similar regions found' even though 5 yellow
+    drafts are visible on the canvas.
+    """
+    seed_path = tmp_path / "seed.jpg"
+    sib_path = tmp_path / "sib.jpg"
+    for p in (seed_path, sib_path):
+        p.write_bytes(b"jpeg")
+    ls = _StubLSRest([
+        {"id": 100, "data": {"image_id": "clip_f00000", "image_path": str(seed_path)}},
+        {"id": 101, "data": {"image_id": "clip_f00100", "image_path": str(sib_path)}},
+    ])
+    pole = [0.10, 0.10, 0.20, 0.20]
+    sam3 = _StubSam3(_resp([
+        (1, [(1, pole, 0.91)]),
+    ]))
+    task = _task(image_id="clip_f00000", image_path=str(seed_path), project=42)
+    # Empty annotations — user hasn't explicitly accepted yet.
+    task["annotations"] = []
+    # Phase 1 left a track_similar prediction in task["predictions"].
+    task["predictions"] = [{
+        "result": [{
+            "from_name": "track_similar",
+            "to_name": "image",
+            "type": "rectanglelabels",
+            "value": {
+                "x": pole[0] * 100, "y": pole[1] * 100,
+                "width": (pole[2] - pole[0]) * 100,
+                "height": (pole[3] - pole[1]) * 100,
+                "rectanglelabels": ["forklift"], "rotation": 0,
+            },
+        }]
+    }]
+    regions, result = propagate_now(task, _propagate_trigger_context(), sam3, ls_rest=ls)
+    assert regions == []
+    assert result is not None
+    assert result.seeds_total == 1
+    assert result.propagated == 1
+
+
+def test_propagate_now_dedups_across_annotations_and_predictions(tmp_path: Path) -> None:
+    """Same bbox in both annotations and predictions counts as one seed."""
+    seed_path = tmp_path / "seed.jpg"
+    sib_path = tmp_path / "sib.jpg"
+    for p in (seed_path, sib_path):
+        p.write_bytes(b"jpeg")
+    ls = _StubLSRest([
+        {"id": 100, "data": {"image_id": "clip_f00000", "image_path": str(seed_path)}},
+        {"id": 101, "data": {"image_id": "clip_f00100", "image_path": str(sib_path)}},
+    ])
+    pole = [0.10, 0.10, 0.20, 0.20]
+    sam3 = _StubSam3(_resp([(1, [(1, pole, 0.91)])]))
+    task = _task(image_id="clip_f00000", image_path=str(seed_path), project=42)
+    task["annotations"] = [_annotation_with_track_similar((pole, "forklift"))]
+    # Same bbox also lives in predictions (Phase 1 result that user accepted).
+    task["predictions"] = [{
+        "result": [{
+            "from_name": "track_similar",
+            "to_name": "image",
+            "type": "rectanglelabels",
+            "value": {
+                "x": pole[0] * 100, "y": pole[1] * 100,
+                "width": (pole[2] - pole[0]) * 100,
+                "height": (pole[3] - pole[1]) * 100,
+                "rectanglelabels": ["forklift"], "rotation": 0,
+            },
+        }]
+    }]
+    regions, result = propagate_now(task, _propagate_trigger_context(), sam3, ls_rest=ls)
     assert result.seeds_total == 1
 
 
