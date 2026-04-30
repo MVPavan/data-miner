@@ -22,13 +22,27 @@
 <View>
   <Header value="aa_v4 Manual Review"/>
 
+  <!-- Auto-tool selector: visual badge mirroring the active smart tool.
+       Each Choice's hotkey matches the corresponding smart-control hotkey
+       so LS double-dispatch keeps the badge in sync. Esc → none. -->
+  <View style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+    <Header value="Auto:"/>
+    <Choices name="auto_tool" toName="image" choice="single" showInline="true">
+      <Choice value="none"          hotkey="escape" selected="true"/>
+      <Choice value="visual_prompt" hotkey="ctrl+v"/>
+      <Choice value="smart_click"   hotkey="ctrl+k"/>
+      <Choice value="smart_text"    hotkey="ctrl+t"/>
+    </Choices>
+  </View>
+
   <Image name="image" value="$image" zoom="true" zoomControl="true"
          rotateControl="false" brightnessControl="false"
          maxHeight="78vh"/>
 
-  <!-- Hotkeys pinned to skip "v" so the V-tool (visual_prompt smart RectangleLabels)
-       can claim hotkey="v". Auto-assignment used to grab v for the 23rd label
-       (barrier), preventing V-tool activation. -->
+  <!-- Bbox palette only shows when no Auto-tool is selected. Auto-tools
+       expose their own palette below; gating this keeps exactly one
+       label palette on screen at a time. -->
+  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="none">
   <RectangleLabels name="bbox" toName="image">
     <Label value="forklift"   background="#e74c3c" hotkey="1"/>
     <Label value="palletjack" background="#3498db" hotkey="2"/>
@@ -55,15 +69,11 @@
     <Label value="barrier"    background="#74b9ff" hotkey="d"/>
     <Label value="other"      background="#dfe6e9" hotkey="f"/>
   </RectangleLabels>
+  </View>
 
-  <!-- smart_click: KeyPointLabels with the same 24-class palette so the
-       reviewer's hotkey class rides every keypoint draft as
-       value.keypointlabels (routes accept that key alongside `labels`
-       and `rectanglelabels`). The ML backend calls SAM 3.1 click_mask
-       and returns a RectangleLabels region carrying the same class.
-       Negative clicks deferred. -->
-  <!-- Same 24 hotkeys as bbox so that pressing "3" selects "person" regardless
-       of which tool is active. None use "v" — that's reserved for V-tool. -->
+  <!-- smart_click: only visible when auto_tool=smart_click is selected.
+       Hides the redundant palette by default; reduces toolbar clutter. -->
+  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_click">
   <KeyPointLabels name="click" toName="image" smart="true" strokeWidth="3">
     <Label value="forklift"   background="#e74c3c" hotkey="1"/>
     <Label value="palletjack" background="#3498db" hotkey="2"/>
@@ -90,6 +100,7 @@
     <Label value="barrier"    background="#74b9ff" hotkey="d"/>
     <Label value="other"      background="#dfe6e9" hotkey="f"/>
   </KeyPointLabels>
+  </View>
 
   <!-- visual_prompt: the V-tool. Reviewer presses V (or picks the orange
        rectangle in the toolbar), drags a box around an exemplar object,
@@ -99,9 +110,10 @@
        any existing rectangle (IoU > 0.7) are dropped server-side, so
        the SAM-returned duplicate at the exemplar location goes away
        automatically. The reviewer's active class rides through. -->
+  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="visual_prompt">
   <RectangleLabels name="visual_prompt" toName="image"
                    smart="true" smartOnly="true"
-                   hotkey="v" strokeColor="#ff7700">
+                   strokeColor="#ff7700">
     <Label value="forklift"   background="#e74c3c" hotkey="1"/>
     <Label value="palletjack" background="#3498db" hotkey="2"/>
     <Label value="person"     background="#2ecc71" hotkey="3"/>
@@ -127,6 +139,7 @@
     <Label value="barrier"    background="#74b9ff" hotkey="d"/>
     <Label value="other"      background="#dfe6e9" hotkey="f"/>
   </RectangleLabels>
+  </View>
 
   <!-- Footer row: per-image metadata sits below the canvas so the image
        gets the full viewport width. Phase D-layout. -->
@@ -137,9 +150,11 @@
            RectangleLabels region per match. No maxSubmissions — the
            reviewer can iterate prompts (e.g. 'forklift', then 'pallet')
            without first deleting the previous one. -->
-      <TextArea name="text_query" toName="image" smart="true"
-                editable="true"
-                placeholder="text prompt — e.g. 'forklift'"/>
+      <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_text">
+        <TextArea name="text_query" toName="image" smart="true"
+                  editable="true"
+                  placeholder="text prompt — e.g. 'forklift'"/>
+      </View>
 
       <TextArea name="notes" toName="image" rows="2" maxSubmissions="1"
                 placeholder="Notes for this image (optional)"/>
