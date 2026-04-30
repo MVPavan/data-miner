@@ -47,12 +47,15 @@ from manual_reviewer.pipeline_io.clip_id import clip_prefix
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "MultiSeedPropagateResult",
     "PropagateResult",
+    "SeedSpec",
     "Sibling",
     "TrackerLikeClient",
     "build_jpeg_folder",
     "filter_track_response",
     "find_siblings",
+    "propagate_multi_via_tracker",
     "propagate_via_tracker",
 ]
 
@@ -98,6 +101,30 @@ class PropagateResult:
     rejected_motion: int = 0
     rejected_score: int = 0
     rejected_missing: int = 0
+    written_task_ids: list[int] = field(default_factory=list)
+
+
+@dataclass
+class SeedSpec:
+    """One seed bbox + label + correlation key for multi-seed propagation."""
+
+    bbox: list[float]
+    label: str
+    track_group_id: str  # uuid the same on all sibling propagations of this seed
+
+
+@dataclass
+class MultiSeedPropagateResult:
+    """Outcome of one ``propagate_multi_via_tracker`` call.
+
+    ``per_seed`` is keyed by ``SeedSpec.track_group_id`` so the caller
+    can correlate a particular exemplar with its propagation count.
+    """
+
+    siblings_total: int = 0
+    seeds_total: int = 0
+    propagated: int = 0
+    per_seed: dict[str, "PropagateResult"] = field(default_factory=dict)
     written_task_ids: list[int] = field(default_factory=list)
 
 
@@ -357,5 +384,142 @@ def propagate_via_tracker(
         result.rejected_motion,
         result.rejected_score,
         result.rejected_missing,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Multi-seed orchestrator (Option A Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def propagate_multi_via_tracker(
+    *,
+    sam3_client: TrackerLikeClient,
+    ls_rest: LSRestClient,
+    project_id: int,
+    seed_image_path: str,
+    seed_image_id: str,
+    seeds: list[SeedSpec],
+    current_task_id: int | None = None,
+    score_thresh: float = 0.5,
+    motion_thresh: float = 0.05,
+    max_siblings: int = 100,
+    model_version: str = "sam3_1_track",
+) -> MultiSeedPropagateResult:
+    """Multi-seed tracker propagation in a single SAM 3.1 round-trip.
+
+    SAM 3.1's video predictor accepts ``seeds: list[Sam3VideoTrackSeed]``
+    so we send all N seeds in one ``/track`` call. The response carries
+    per-frame, per-``obj_id`` outputs; we apply the same static-only
+    filter (score >= ``score_thresh`` AND center motion <=
+    ``motion_thresh``) independently per seed.
+
+    Each surviving propagation gets POSTed to LS as a prediction on the
+    matching sibling task, tagged in ``meta`` with ``track_group_id`` so
+    the user (or a future cascade) can correlate same-frame seed and
+    cross-frame propagations.
+
+    Sibling discovery and JPEG-folder building are shared with the
+    single-seed orchestrator, so this function does not re-query LS for
+    siblings — both single and multi-seed paths walk the same wire
+    contract.
+    """
+    siblings = find_siblings(
+        ls_rest,
+        project_id=project_id,
+        seed_image_id=seed_image_id,
+        max_siblings=max_siblings,
+    )
+    result = MultiSeedPropagateResult(
+        siblings_total=len(siblings),
+        seeds_total=len(seeds),
+    )
+    if not siblings or not seeds:
+        logger.info(
+            "smart_track: multi-seed early-out (siblings=%d, seeds=%d) for %s",
+            len(siblings),
+            len(seeds),
+            seed_image_id,
+        )
+        return result
+
+    folder = build_jpeg_folder(seed_image_path, [s.image_path for s in siblings])
+    try:
+        sam_seeds = [
+            SAM3VideoTrackSeed(obj_id=idx + 1, frame_index=0, bbox=list(s.bbox))
+            for idx, s in enumerate(seeds)
+        ]
+        try:
+            response = sam3_client.track(
+                resource_path=str(folder),
+                seeds=sam_seeds,
+                propagation_direction="forward",
+                return_masks=False,
+            )
+        except Exception as exc:  # noqa: BLE001 — never crash LS predict()
+            logger.warning("propagate_multi: SAM 3.1 /track failed: %s", exc)
+            return result
+
+        # Collect per-seed (obj_id) outputs by re-scanning the response.
+        # SAM 3.1 may renumber obj_ids when temporal-disambiguation auto-
+        # adds instances — so we don't trust the obj_id mapping; we apply
+        # the spatial motion filter per seed instead. The filter for each
+        # seed picks the closest detection in each frame within
+        # motion_thresh and above score_thresh.
+        for spec in seeds:
+            per_frame, stats = filter_track_response(
+                response,
+                seed_bbox=list(spec.bbox),
+                score_thresh=score_thresh,
+                motion_thresh=motion_thresh,
+            )
+            seed_result = PropagateResult(
+                siblings_total=len(siblings),
+                rejected_motion=stats["motion"],
+                rejected_score=stats["score"],
+                rejected_missing=stats["missing"],
+            )
+            for frame_idx, (bbox, score) in sorted(per_frame.items()):
+                sib_idx = frame_idx - 1
+                if not 0 <= sib_idx < len(siblings):
+                    continue
+                sib = siblings[sib_idx]
+                region = norm_box_to_ls_region(
+                    bbox,
+                    spec.label,
+                    score=score,
+                    extra_meta={
+                        "source": "smart_track",
+                        "model_version": model_version,
+                        "from_image": seed_image_id,
+                        "from_task": current_task_id,
+                        "outcome": "propagated",
+                        "track_group_id": spec.track_group_id,
+                    },
+                )
+                if region is None:
+                    continue
+                pid = ls_rest.post_prediction(
+                    task_id=sib.task_id,
+                    result=[region],
+                    score=score,
+                    model_version=model_version,
+                )
+                if pid is not None:
+                    seed_result.propagated += 1
+                    seed_result.written_task_ids.append(sib.task_id)
+                    result.written_task_ids.append(sib.task_id)
+                    result.propagated += 1
+            result.per_seed[spec.track_group_id] = seed_result
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+    logger.info(
+        "propagate_multi: seed_image=%s seeds=%d siblings=%d total_propagated=%d",
+        seed_image_id,
+        result.seeds_total,
+        result.siblings_total,
+        result.propagated,
     )
     return result

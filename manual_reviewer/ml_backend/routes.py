@@ -33,8 +33,11 @@ from manual_reviewer.ml_backend.ls_payload import (
 )
 from manual_reviewer.ml_backend.ls_rest import LSRestClient
 from manual_reviewer.ml_backend.smart_track_lib import (
+    MultiSeedPropagateResult,
     PropagateResult,
+    SeedSpec,
     TrackerLikeClient,
+    propagate_multi_via_tracker,
     propagate_via_tracker,
 )
 
@@ -51,9 +54,11 @@ __all__ = [
     "Sam3LikeClient",
     "batch_proposals",
     "dispatch",
+    "propagate_now",
     "smart_click",
     "smart_text",
     "smart_track",
+    "track_similar",
     "visual_prompt",
 ]
 
@@ -288,6 +293,8 @@ def smart_click(
 
 def _exemplars_from_context(
     context: dict[str, Any] | None,
+    *,
+    from_name: str = "visual_prompt",
 ) -> tuple[list[list[float]], str | None]:
     """Pull rectangle exemplar(s) + a class hint out of an LS context.
 
@@ -296,14 +303,17 @@ def _exemplars_from_context(
     ``labels`` array (Phase A shape) and is preserved on the propagated
     output regions so they don't all get tagged ``other``.
 
-    When dispatch identifies the exemplar via ``from_name="visual_prompt"``
-    only those regions are returned; otherwise every rectangle is treated
-    as a potential exemplar (covers test paths and direct route calls).
+    ``from_name`` selects which smart Rectangle is treated as the
+    exemplar source. Default ``visual_prompt`` matches the V-tool;
+    pass ``track_similar`` for the smart_track_all (Option A) flow.
+    When that smart-tool tag is found in the context, only its regions
+    are accepted as exemplars; otherwise we fall back to any rectangle
+    (covers test paths and direct route calls).
     """
     if not isinstance(context, dict):
         return [], None
-    visual_only = any(
-        isinstance(r, dict) and r.get("from_name") == "visual_prompt"
+    scoped_only = any(
+        isinstance(r, dict) and r.get("from_name") == from_name
         for r in context.get("result") or []
     )
     boxes: list[list[float]] = []
@@ -314,7 +324,7 @@ def _exemplars_from_context(
         rtype = (region.get("type") or "").lower()
         if rtype not in {"rectanglelabels", "rectangle"}:
             continue
-        if visual_only and region.get("from_name") != "visual_prompt":
+        if scoped_only and region.get("from_name") != from_name:
             continue
         value = region.get("value") or {}
         bbox = ls_box_to_norm(value)
@@ -683,6 +693,256 @@ def smart_track(
         seed_image_id=image_id,
         seed_bbox=seed_bbox,
         seed_label=seed_label,
+        current_task_id=task.get("id"),
+        score_thresh=score_thresh,
+        motion_thresh=motion_thresh,
+        max_siblings=max_siblings,
+        model_version=model_version,
+    )
+    return [], result
+
+
+# ---------------------------------------------------------------------------
+# Option A: track_similar (Phase 1) + propagate_now (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def track_similar(
+    task: dict[str, Any],
+    context: dict[str, Any] | None,
+    sam3_client: Sam3LikeClient,
+    *,
+    threshold: float = 0.4,
+    max_results: int = 50,
+    dedup_iou: float = 0.7,
+    nms_iou: float = 0.85,
+    model_version: str = "sam3_1_track_similar",
+) -> list[dict[str, Any]]:
+    """Phase 1 of Option A: in-frame find-similar with track_similar tag.
+
+    Same SAM 3.1 visual_prompt grounding as :func:`visual_prompt`, but
+    the exemplar is read from regions tagged ``from_name="track_similar"``
+    and the returned regions also carry ``from_name="track_similar"``.
+    The tag is the correlation key Phase 2 (:func:`propagate_now`) uses
+    to know which rectangles on the canvas to propagate.
+
+    The reviewer drops or accepts the returned same-frame matches as
+    they do today; only what survives review will get propagated when
+    Phase 2 fires. False positives are isolated to this image — the
+    cross-frame predictions never appear unless the reviewer asks for
+    them, by design.
+    """
+    image_path = _get_image_path(task)
+    if not image_path:
+        return []
+    exemplars, label_hint = _exemplars_from_context(context, from_name="track_similar")
+    if not exemplars:
+        logger.info("track_similar: no exemplar bbox in context")
+        return []
+    exemplars = [
+        e for e in exemplars
+        if (e[2] - e[0]) > 1e-3 and (e[3] - e[1]) > 1e-3
+    ]
+    if not exemplars:
+        logger.info("track_similar: all exemplars degenerate")
+        return []
+    existing = canvas_rectangles(
+        task, context, include_visual_prompt=True, include_predictions=True
+    )
+
+    logger.info(
+        "track_similar: image=%s exemplars=%d label=%s threshold=%.2f existing=%d",
+        image_path, len(exemplars), label_hint, threshold, len(existing),
+    )
+    try:
+        resp = sam3_client.visual_prompt(
+            image_path=image_path,
+            exemplar_boxes_norm=exemplars,
+            threshold=threshold,
+            max_results=max_results,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("track_similar: SAM 3.1 visual_prompt failed: %s", exc)
+        return []
+
+    boxes = list(getattr(resp, "boxes_norm", []) or [])
+    scores = list(getattr(resp, "scores", []) or [])
+    label = label_hint or DEFAULT_LABEL
+    width, height = _get_image_dims(task)
+
+    proposed: list[dict[str, Any]] = []
+    for idx, bbox in enumerate(boxes):
+        bbox_norm = _bbox_to_norm_list(bbox)
+        if bbox_norm is None:
+            continue
+        score = scores[idx] if idx < len(scores) else 0.0
+        region = norm_box_to_ls_region(
+            bbox_norm,
+            label,
+            score=float(score or 0.0),
+            from_name="track_similar",
+            extra_meta={
+                "source": "track_similar",
+                "model_version": model_version,
+            },
+            original_width=width,
+            original_height=height,
+            original_rotation=0,
+        )
+        if region is not None:
+            proposed.append(region)
+
+    nmsed = nms_regions(proposed, iou=nms_iou)
+    survivors, dropped = dedup_against(nmsed, existing, iou=dedup_iou)
+    out = survivors[:max_results]
+    logger.info(
+        "track_similar: SAM=%d → NMS=%d → canvas-dedup=%d → cap=%d (label=%s)",
+        len(proposed), len(nmsed), len(survivors), len(out), label,
+    )
+    if dropped:
+        logger.debug("track_similar: dropped %d duplicate(s) vs canvas", dropped)
+    return out
+
+
+def _collect_track_similar_seeds(
+    task: dict[str, Any],
+    context: dict[str, Any] | None,
+) -> list[SeedSpec]:
+    """Walk current task's annotations + context to find track_similar
+    rectangles that survived review.
+
+    Sources, in priority order:
+
+      1. ``task["annotations"][N]["result"]`` — accepted regions.
+      2. ``context["result"]`` — current draft.
+      3. ``task["predictions"][N]["result"]`` filtered to
+         ``from_name="track_similar"`` whose ``id`` STILL appears in
+         the latest annotation (i.e. the reviewer didn't reject it).
+
+    For Option A we only need (1) + (2) — the Phase 2 trigger fires
+    after the user has accepted/rejected, so accepted regions ARE in
+    annotations, and rejected regions are simply absent. We don't
+    look at predictions because Phase 2's contract is "propagate what
+    the reviewer kept".
+
+    Each seed gets a fresh ``track_group_id`` (UUID) tagged on the
+    sibling propagations so a future cascade route can correlate.
+    """
+    import uuid
+
+    seeds: list[SeedSpec] = []
+
+    def _from_region(region: dict[str, Any]) -> SeedSpec | None:
+        if not isinstance(region, dict):
+            return None
+        if region.get("from_name") != "track_similar":
+            return None
+        rtype = (region.get("type") or "").lower()
+        if rtype not in {"rectanglelabels", "rectangle"}:
+            return None
+        value = region.get("value") or {}
+        bbox = ls_box_to_norm(value)
+        if bbox is None:
+            return None
+        if (bbox[2] - bbox[0]) < 1e-3 or (bbox[3] - bbox[1]) < 1e-3:
+            return None
+        label: str | None = None
+        for key in ("rectanglelabels", "labels"):
+            arr = value.get(key)
+            if isinstance(arr, list) and arr and isinstance(arr[0], str) and arr[0]:
+                label = arr[0]
+                break
+        return SeedSpec(
+            bbox=bbox,
+            label=snap_label(label) if label else DEFAULT_LABEL,
+            track_group_id=uuid.uuid4().hex,
+        )
+
+    seen: set[tuple[float, float, float, float]] = set()
+    for ann in task.get("annotations") or []:
+        for region in (ann or {}).get("result") or []:
+            spec = _from_region(region)
+            if spec is None:
+                continue
+            key = tuple(round(b, 4) for b in spec.bbox)
+            if key in seen:
+                continue
+            seen.add(key)
+            seeds.append(spec)
+
+    if isinstance(context, dict):
+        for region in context.get("result") or []:
+            spec = _from_region(region)
+            if spec is None:
+                continue
+            key = tuple(round(b, 4) for b in spec.bbox)
+            if key in seen:
+                continue
+            seen.add(key)
+            seeds.append(spec)
+
+    return seeds
+
+
+def propagate_now(
+    task: dict[str, Any],
+    context: dict[str, Any] | None,
+    sam3_client: TrackerLikeClient,
+    ls_rest: LSRestClient | None,
+    *,
+    score_thresh: float = 0.5,
+    motion_thresh: float = 0.05,
+    max_siblings: int = 100,
+    model_version: str = "sam3_1_track",
+) -> tuple[list[dict[str, Any]], MultiSeedPropagateResult | None]:
+    """Phase 2 of Option A: multi-seed propagate accepted track_similar regions.
+
+    Reads the current task's annotations + context for rectangles tagged
+    ``from_name="track_similar"`` (the survivors of Phase 1 review),
+    builds a multi-seed tracker call, applies the static-only filter
+    per seed, and POSTs each surviving propagation to the matching
+    sibling task via LS REST.
+
+    Returns ``([], MultiSeedPropagateResult)``: nothing seeds back into
+    the current task — the trigger keypoint stays as a draft the user
+    can delete. The result summary is logged so the user can see how
+    many siblings got propagations.
+
+    Preconditions: ``ls_rest`` configured (cross-task writes), at least
+    one ``track_similar`` rectangle present, image_id/path/project all
+    resolvable from the task. Failures degrade gracefully — return
+    ``([], None)`` and log.
+    """
+    if ls_rest is None:
+        logger.info("propagate_now: LS REST client not configured; skipping")
+        return [], None
+
+    seeds = _collect_track_similar_seeds(task, context)
+    if not seeds:
+        logger.info("propagate_now: no track_similar regions found on current task")
+        return [], None
+
+    image_path = _get_image_path(task)
+    image_id = (task.get("data") or {}).get("image_id")
+    project_id = _project_id_from_task(task)
+    if not image_path or not isinstance(image_id, str) or project_id is None:
+        logger.warning(
+            "propagate_now: missing image_path/image_id/project (path=%r id=%r proj=%r)",
+            image_path, image_id, project_id,
+        )
+        return [], None
+
+    logger.info(
+        "propagate_now: seed image=%s seeds=%d project=%s",
+        image_id, len(seeds), project_id,
+    )
+    result = propagate_multi_via_tracker(
+        sam3_client=sam3_client,
+        ls_rest=ls_rest,
+        project_id=project_id,
+        seed_image_path=image_path,
+        seed_image_id=image_id,
+        seeds=seeds,
         current_task_id=task.get("id"),
         score_thresh=score_thresh,
         motion_thresh=motion_thresh,

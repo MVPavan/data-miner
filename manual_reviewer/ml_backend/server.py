@@ -35,9 +35,11 @@ from manual_reviewer.ml_backend.ls_rest import LSRestClient, build_ls_rest_clien
 from manual_reviewer.ml_backend.routes import (
     Sam3LikeClient,
     batch_proposals,
+    propagate_now,
     smart_click,
     smart_text,
     smart_track,
+    track_similar,
     visual_prompt,
 )
 
@@ -49,6 +51,8 @@ _ROUTE_ENV_VARS = {
     "smart_click": "ENABLE_SMART_CLICK",
     "smart_text": "ENABLE_SMART_TEXT",
     "smart_track": "ENABLE_SMART_TRACK",
+    "track_similar": "ENABLE_TRACK_SIMILAR",
+    "propagate_now": "ENABLE_PROPAGATE_NOW",
     "visual_prompt": "ENABLE_VISUAL_PROMPT",
     "propagate_static": "ENABLE_PROPAGATE_STATIC",
 }
@@ -168,6 +172,43 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         )
         has_draft = isinstance(context, dict) and bool(context.get("result"))
         if has_draft:
+            # propagate_now (Option A Phase 2) — the trigger is a smart
+            # KeyPoint with ``from_name="propagate_now"``. Check first so a
+            # trigger click never falls into the generic keypoint handler
+            # (which would otherwise route to smart_click).
+            has_propagate = self._sam3_client and any(
+                isinstance(r, dict) and r.get("from_name") == "propagate_now"
+                for r in context["result"]
+            )
+            if has_propagate and _route_enabled("propagate_now"):
+                _, multi_result = propagate_now(
+                    task, context, self._sam3_client, self._ls_rest,
+                )
+                if multi_result is None:
+                    logger.info("→ propagate_now did not run (preconditions unmet)")
+                else:
+                    logger.info(
+                        "→ propagate_now: seeds=%d siblings=%d total_propagated=%d",
+                        multi_result.seeds_total,
+                        multi_result.siblings_total,
+                        multi_result.propagated,
+                    )
+                return []
+            if has_propagate:
+                logger.info("→ propagate_now disabled by env, falling through")
+            # track_similar (Option A Phase 1) — exemplar tagged with
+            # ``from_name="track_similar"``. Same shape as visual_prompt
+            # but distinct from_name so Phase 2 can correlate.
+            has_track_similar = self._sam3_client and any(
+                isinstance(r, dict) and r.get("from_name") == "track_similar"
+                for r in context["result"]
+            )
+            if has_track_similar and _route_enabled("track_similar"):
+                out = track_similar(task, context, self._sam3_client)
+                logger.info("→ track_similar returned %d region(s)", len(out))
+                return out
+            if has_track_similar:
+                logger.info("→ track_similar disabled by env, falling through")
             # smart_track is discriminated by ``from_name="smart_track"`` —
             # check it first so a smart_track draft never falls into the
             # generic rectangle handlers below.
@@ -214,12 +255,14 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
             for region in context["result"]:
                 if not isinstance(region, dict):
                     continue
-                if region.get("from_name") in {"visual_prompt", "smart_track"}:
-                    # V-tool and smart_track draft regions are handled by
-                    # their own branches above; never let them fall
-                    # through into the smart_click / smart_text dispatchers
-                    # (both produce ``type=rectanglelabels`` which would
-                    # otherwise match the generic rect path).
+                if region.get("from_name") in {
+                    "visual_prompt", "smart_track", "track_similar", "propagate_now",
+                }:
+                    # Smart tools with their own dispatch branches above —
+                    # never let them fall through into the generic
+                    # smart_click / smart_text handlers. Both produce
+                    # type=rectanglelabels (or keypoint for propagate_now)
+                    # which would otherwise match the generic paths.
                     continue
                 rtype = (region.get("type") or "").lower()
                 if rtype in {"keypointlabels", "keypoint"} and self._sam3_client:

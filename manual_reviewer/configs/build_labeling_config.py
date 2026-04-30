@@ -60,6 +60,8 @@ _TEMPLATE = """\
       <Choice value="smart_click"   hotkey="ctrl+k"/>
       <Choice value="smart_text"    hotkey="ctrl+t"/>
       <Choice value="smart_track"   hotkey="ctrl+g"/>
+      <Choice value="track_similar" hotkey="ctrl+b"/>
+      <Choice value="propagate_now" hotkey="shift+j"/>
     </Choices>
   </View>
 
@@ -93,6 +95,20 @@ _TEMPLATE = """\
                    strokeColor="#16a085" opacity="0.05" strokeWidth="2">
 {track_labels}
   </RectangleLabels>
+  </View>
+
+  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="track_similar">
+  <RectangleLabels name="track_similar" toName="image"
+                   smart="true"
+                   strokeColor="#9b59b6" opacity="0.05" strokeWidth="2">
+{similar_labels}
+  </RectangleLabels>
+  </View>
+
+  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="propagate_now">
+  <KeyPointLabels name="propagate_now" toName="image" smart="true" strokeWidth="3">
+    <Label value="propagate" background="#e74c3c" hotkey="shift+j"/>
+  </KeyPointLabels>
   </View>
 
   <View style="display: flex; gap: 16px; margin-top: 8px;">
@@ -152,6 +168,7 @@ def render(classes_path: Path) -> str:
         click_labels=block,
         visual_labels=block,
         track_labels=block,
+        similar_labels=block,
     )
 
 
