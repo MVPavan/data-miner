@@ -95,41 +95,40 @@ def test_iou_xyxy_zero_area_box_returns_zero() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_canvas_rectangles_pulls_accepted_annotations() -> None:
+def test_canvas_rectangles_ignores_task_annotations() -> None:
+    """Live-test 2026-04-30: the dedup pool must come from the live
+    canvas state in ``context.result`` only, not from server-side
+    ``task["annotations"]`` (which is stale or absent during a session)."""
     task = {
         "annotations": [
             _accepted_annotation([_region([0.10, 0.10, 0.30, 0.30], "forklift")])
         ]
     }
-    out = canvas_rectangles(task, None)
-    assert len(out) == 1
-    bbox, cls = out[0]
-    assert cls == "forklift"
-    assert bbox[0] == pytest.approx(0.10)
+    assert canvas_rectangles(task, None) == []
 
 
-def test_canvas_rectangles_skips_cancelled_annotations() -> None:
-    task = {
-        "annotations": [
-            _cancelled_annotation([_region([0.10, 0.10, 0.30, 0.30], "forklift")]),
-            _accepted_annotation([_region([0.50, 0.50, 0.70, 0.70], "person")]),
-        ]
-    }
-    out = canvas_rectangles(task, None)
-    assert len(out) == 1
-    assert out[0][1] == "person"
-
-
-def test_canvas_rectangles_includes_predictions() -> None:
-    """Phase B's old _existing_rectangles missed predictions; the new
-    canvas pool must include them so re-firing a smart route doesn't
-    re-add the seeded box."""
+def test_canvas_rectangles_excludes_task_predictions_by_default() -> None:
+    """smart_click usage: predictions are NOT in the pool, so a refine
+    click on a yellow seeded box still produces a region."""
     task = {
         "predictions": [
             _prediction([_region([0.10, 0.10, 0.30, 0.30], "forklift")])
         ]
     }
-    out = canvas_rectangles(task, None)
+    assert canvas_rectangles(task, None) == []
+
+
+def test_canvas_rectangles_includes_predictions_when_opted_in() -> None:
+    """smart_text / visual_prompt usage: predictions ARE in the pool
+    so a SAM-returned duplicate at a seeded location gets dropped.
+    LS doesn't echo task.predictions in context.result on smart-tool
+    fires, so this is the only path the dedup has to know about them."""
+    task = {
+        "predictions": [
+            _prediction([_region([0.10, 0.10, 0.30, 0.30], "forklift")])
+        ]
+    }
+    out = canvas_rectangles(task, None, include_predictions=True)
     assert len(out) == 1
     assert out[0][1] == "forklift"
 
@@ -158,7 +157,9 @@ def test_canvas_rectangles_includes_draft_context() -> None:
     assert out[0][1] == "forklift"
 
 
-def test_canvas_rectangles_merges_all_three_sources() -> None:
+def test_canvas_rectangles_pool_is_context_only() -> None:
+    """task.annotations and task.predictions are deliberately ignored;
+    the canvas pool reflects ``context.result`` exclusively."""
     task = {
         "annotations": [
             _accepted_annotation([_region([0.0, 0.0, 0.1, 0.1], "person")])
@@ -171,35 +172,42 @@ def test_canvas_rectangles_merges_all_three_sources() -> None:
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "bbox",
                 "value": {"x": 50, "y": 50, "width": 10, "height": 10,
-                          "labels": ["bicycle"]},
-            }
+                          "rectanglelabels": ["bicycle"]},
+            },
+            {
+                "type": "rectanglelabels",
+                "from_name": "visual_prompt",
+                "value": {"x": 80, "y": 80, "width": 5, "height": 5,
+                          "labels": ["car"]},
+            },
         ]
     }
-    # Default: V-tool exemplar is excluded from the canvas pool.
+    # Default: V-tool exemplar is excluded; only the bbox region survives.
     out = canvas_rectangles(task, ctx)
     classes = sorted(c for _, c in out)
-    assert classes == ["forklift", "person"]
-    # With include_visual_prompt=True: visual_prompt route's view of the pool.
+    assert classes == ["bicycle"]
+    # include_visual_prompt=True: visual_prompt route's view (exemplar in pool).
     out_v = canvas_rectangles(task, ctx, include_visual_prompt=True)
     classes_v = sorted(c for _, c in out_v)
-    assert classes_v == ["bicycle", "forklift", "person"]
+    assert classes_v == ["bicycle", "car"]
 
 
 def test_canvas_rectangles_ignores_non_rectangle_regions() -> None:
-    task = {
-        "annotations": [
-            _accepted_annotation(
-                [
-                    {"type": "keypointlabels", "value": {"x": 50, "y": 50}},
-                    _region([0.0, 0.0, 0.1, 0.1], "person"),
-                ]
-            )
+    """Keypoint regions in context don't enter the rectangle dedup pool."""
+    ctx = {
+        "result": [
+            {"type": "keypointlabels", "from_name": "click",
+             "value": {"x": 50, "y": 50}},
+            {"type": "rectanglelabels", "from_name": "bbox",
+             "value": {"x": 0, "y": 0, "width": 10, "height": 10,
+                       "rectanglelabels": ["person"]}},
         ]
     }
-    out = canvas_rectangles(task, None)
+    out = canvas_rectangles({}, ctx)
     assert len(out) == 1
+    assert out[0][1] == "person"
 
 
 def test_canvas_rectangles_handles_empty_inputs() -> None:

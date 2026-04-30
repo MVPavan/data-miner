@@ -26,6 +26,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -59,7 +60,24 @@ def main(argv: list[str] | None = None) -> int:
     tasks: list[dict[str, Any]] = []
     skipped_no_finalize = 0
     skipped_invalid = 0
-    for row in iter_survivor_images(db_path, limit=args.limit, require_finalize=True):
+
+    # Default: flat iteration (sql LIMIT in db_reader). With
+    # --per-clip-limit, we widen the SQL fetch and round-robin pick N
+    # per clip ourselves so the reviewer sees frames from many videos
+    # instead of all-from-one (clips appear contiguously in the DB
+    # because the pipeline ingested them sequentially).
+    if args.per_clip_limit is not None:
+        rows_iter = _select_per_clip(
+            db_path,
+            per_clip_limit=args.per_clip_limit,
+            total_limit=args.limit,
+        )
+    else:
+        rows_iter = iter_survivor_images(
+            db_path, limit=args.limit, require_finalize=True,
+        )
+
+    for row in rows_iter:
         image_id = row["image_id"]
         try:
             payload = read_image_payload(db_path, image_id, traces_dir=traces_dir)
@@ -236,6 +254,69 @@ def _fetch_existing_image_ids(
     return out
 
 
+_CLIP_SUFFIX = re.compile(r"_f\d+$")
+
+
+def _clip_prefix(image_id: str) -> str:
+    """Group key: image_id with the trailing ``_f<digits>`` suffix stripped.
+
+    Falls back to the full image_id when the suffix doesn't match (so
+    images that don't follow the convention still each form their own
+    one-element 'clip' instead of collapsing into a generic bucket).
+    """
+    return _CLIP_SUFFIX.sub("", image_id) or image_id
+
+
+def _select_per_clip(
+    db_path: Path,
+    *,
+    per_clip_limit: int,
+    total_limit: int | None,
+) -> list[dict[str, Any]]:
+    """Round-robin pick at most ``per_clip_limit`` survivors per clip.
+
+    Strategy:
+      1. Walk every survivor with finalize (no SQL LIMIT) — natural DB
+         order clusters by clip because ingest is per-video.
+      2. Group by ``_clip_prefix``; track full per-clip frame counts so
+         we can rank clips by size.
+      3. Sort clips by **descending frame count** (ties broken
+         alphabetically). Real multi-frame videos dominate the result;
+         loose single-image entries get pushed to the tail.
+      4. Round-robin the top clips: row 0 of every clip first, then
+         row 1, etc., until ``total_limit``.
+    """
+    by_clip: dict[str, list[dict[str, Any]]] = {}
+    full_counts: dict[str, int] = {}
+    for row in iter_survivor_images(db_path, limit=None, require_finalize=True):
+        clip = _clip_prefix(row["image_id"])
+        full_counts[clip] = full_counts.get(clip, 0) + 1
+        bucket = by_clip.setdefault(clip, [])
+        if len(bucket) < per_clip_limit:
+            bucket.append(row)
+
+    # Bigger clips first; alphabetic on tie for reproducibility.
+    clips = sorted(by_clip, key=lambda c: (-full_counts[c], c))
+
+    # Cap to the smallest clip set that can still hit total_limit at
+    # per_clip_limit depth. Without this cap, the first round-robin pass
+    # (one frame per clip) would fill total_limit before any clip got a
+    # second frame — defeating the "frames per video" intent.
+    if total_limit is not None and per_clip_limit > 0:
+        max_clips_needed = -(-total_limit // per_clip_limit)  # ceil div
+        clips = clips[:max_clips_needed]
+
+    out: list[dict[str, Any]] = []
+    for round_idx in range(per_clip_limit):
+        for clip in clips:
+            bucket = by_clip[clip]
+            if round_idx < len(bucket):
+                out.append(bucket[round_idx])
+                if total_limit is not None and len(out) >= total_limit:
+                    return out
+    return out
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Build Label Studio tasks from aa_v4 pipeline.db")
     p.add_argument("--db", type=Path, required=True, help="Path to pipeline.db")
@@ -260,6 +341,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                    help="Tasks per LS bulk-import POST; chunked to bound retry blast radius")
     p.add_argument("--skip-existing", action="store_true",
                    help="Skip tasks whose image_id already exists in the LS project")
+    p.add_argument(
+        "--per-clip-limit",
+        type=int,
+        default=None,
+        help="Spread picks across clips: take at most N frames per clip "
+             "(round-robin) until --limit is reached. Without this flag, "
+             "tasks are pulled in DB insertion order which often clusters "
+             "into one clip. Clip prefix = image_id with the trailing "
+             "'_f<digits>' suffix stripped.",
+    )
     return p.parse_args(argv)
 
 

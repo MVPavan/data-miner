@@ -301,6 +301,13 @@ def _main() -> None:
         ) from exc
 
     app = init_app(model_class=ManualReviewerMLBackend)
+
+    # Register the LS annotation backup endpoint (push-based on-disk
+    # capture; lossless audit + per-annotation snapshots). Independent
+    # of pipeline.db; configure a webhook in LS pointing at this URL.
+    from manual_reviewer.ml_backend.lswebhook import register_lswebhook_routes
+    register_lswebhook_routes(app)
+
     port = int(os.environ.get("LABEL_STUDIO_ML_PORT", "9090"))
     host = os.environ.get("LABEL_STUDIO_ML_HOST", "0.0.0.0")
     app.run(host=host, port=port, debug=False)

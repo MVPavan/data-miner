@@ -31,3 +31,4 @@
 # .mailmap
 **/validation_results*
 **/scratchpad/*
+**/.ls_backup/

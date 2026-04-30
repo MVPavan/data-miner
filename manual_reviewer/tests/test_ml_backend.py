@@ -605,19 +605,20 @@ def test_visual_prompt_drops_match_overlapping_exemplar() -> None:
     assert val["y"] == pytest.approx(50.0)
 
 
-def test_visual_prompt_drops_match_overlapping_existing_annotation() -> None:
-    """Match that lands on an already-accepted annotation is dropped.
+def test_visual_prompt_drops_match_overlapping_existing_canvas_region() -> None:
+    """Match that lands on a region already on the live canvas is dropped.
 
-    LS smart-tool predict only sends the freshly-drawn region in
-    ``context.result``; existing accepted regions live on
-    ``task["annotations"][*].result``. The route must read both.
+    Canvas state lives in ``context.result`` (live LS state), not on
+    server-side ``task["annotations"]`` which is stale during a session.
+    Live-test 2026-04-30: the dedup pool sources from context only.
     """
     client = _StubSam3Client()
     client._visual_resp = _StubResp(
         boxes_norm=[[0.50, 0.50, 0.70, 0.70], [0.80, 0.80, 0.95, 0.95]],
         scores=[0.8, 0.6],
     )
-    # Context has only the V-tool draft (the production LS shape).
+    # Context has the V-tool draft AND an existing same-class rectangle
+    # the reviewer drew earlier in the session.
     ctx = {
         "result": [
             {
@@ -626,9 +627,14 @@ def test_visual_prompt_drops_match_overlapping_existing_annotation() -> None:
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             },
+            {
+                "type": "rectanglelabels",
+                "from_name": "bbox",
+                "value": {"x": 50, "y": 50, "width": 20, "height": 20,
+                          "rectanglelabels": ["forklift"]},
+            },
         ]
     }
-    # Existing accepted region rides on task["annotations"].
     task = {
         "id": 1,
         "data": {
@@ -636,24 +642,9 @@ def test_visual_prompt_drops_match_overlapping_existing_annotation() -> None:
             "image_id": "img_a",
             "image_size": [1920, 1080],
         },
-        "annotations": [
-            {
-                "id": 99,
-                "result": [
-                    {
-                        "type": "rectanglelabels",
-                        "from_name": "bbox",
-                        "value": {
-                            "x": 50, "y": 50, "width": 20, "height": 20,
-                            "rectanglelabels": ["forklift"],
-                        },
-                    }
-                ],
-            }
-        ],
     }
     out = visual_prompt(task, ctx, client)
-    # First match overlaps the existing annotation → dropped. Only [.8, .8, .95, .95] kept.
+    # First match overlaps the existing canvas region → dropped. Only [.8, .8, .95, .95] kept.
     assert len(out) == 1
     val = out[0]["value"]
     assert val["x"] == pytest.approx(80.0)
@@ -1328,16 +1319,18 @@ def _seeded_prediction(
     }
 
 
-def test_smart_click_drops_duplicate_of_accepted_box() -> None:
-    """Click on an already-accepted same-class box → silently dropped.
+def test_smart_click_keeps_overlap_with_seeded_prediction() -> None:
+    """Click on a seeded yellow prediction → returned (not in canvas pool).
 
-    Returning the duplicate would force the reviewer to delete it by
-    hand, inverting the auto-annotation value.
+    Live test 2026-04-29 surfaced the bug: build_tasks seeds ~30
+    finalize predictions per task, and an IoU>0.7 dedup that included
+    task.predictions ate every click on an already-detected object.
+    Predictions are not on the live canvas until accepted.
     """
     client = _StubSam3Client()
     client._click_resp = _StubResp(bbox=[0.10, 0.10, 0.30, 0.30], score=0.8)
     task = _task()
-    task["annotations"] = [_accepted_box([0.10, 0.10, 0.30, 0.30], "forklift")]
+    task["predictions"] = [_seeded_prediction([0.10, 0.10, 0.30, 0.30], "forklift")]
     ctx = {
         "result": [
             {
@@ -1348,22 +1341,56 @@ def test_smart_click_drops_duplicate_of_accepted_box() -> None:
         ]
     }
     out = smart_click(task, ctx, client)
+    assert len(out) == 1
+    assert out[0]["value"]["rectanglelabels"] == ["forklift"]
+
+
+def test_smart_click_drops_duplicate_of_canvas_region() -> None:
+    """A second click whose mask matches a same-class rectangle already
+    on the live canvas (in context.result) is deduped — that's the
+    "double-click no-op" case. Stale task.annotations don't count;
+    only context.result does."""
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.10, 0.10, 0.30, 0.30], score=0.8)
+    task = _task()
+    ctx = {
+        "result": [
+            {
+                "type": "keypoint",
+                "from_name": "click",
+                "value": {"x": 50, "y": 60, "labels": ["forklift"]},
+            },
+            {
+                "type": "rectanglelabels",
+                "from_name": "bbox",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "rectanglelabels": ["forklift"]},
+            },
+        ]
+    }
+    out = smart_click(task, ctx, client)
     assert out == []
 
 
 def test_smart_click_keeps_different_class_overlap() -> None:
-    """Person clicked on top of a forklift bbox → kept. Class-aware."""
+    """Person clicked on top of a forklift bbox already on canvas →
+    kept (class-aware dedup)."""
     client = _StubSam3Client()
     client._click_resp = _StubResp(bbox=[0.10, 0.10, 0.30, 0.30], score=0.8)
     task = _task()
-    task["annotations"] = [_accepted_box([0.10, 0.10, 0.30, 0.30], "forklift")]
     ctx = {
         "result": [
             {
                 "type": "keypoint",
                 "from_name": "click",
                 "value": {"x": 50, "y": 60, "labels": ["person"]},
-            }
+            },
+            {
+                "type": "rectanglelabels",
+                "from_name": "bbox",
+                "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                          "rectanglelabels": ["forklift"]},
+            },
         ]
     }
     out = smart_click(task, ctx, client)
@@ -1407,10 +1434,15 @@ def test_smart_text_internal_nms_keeps_different_classes_at_same_spot() -> None:
 
 
 def test_smart_text_drops_match_overlapping_seeded_prediction() -> None:
-    """Re-fire smart_text after task open → don't re-add the seeded box.
+    """Re-fire smart_text after task open with a seeded yellow
+    prediction at the same coords → match is DROPPED.
 
-    Pool is annotations + predictions + draft, so the seeded forklift
-    on `task["predictions"]` suppresses the new match.
+    Live-test 2026-04-30 task 37: LS doesn't echo task.predictions in
+    context.result for smart_text fires, so the canvas-dedup pool was
+    empty and SAM=16 → kept=16. The fix re-includes
+    ``task.predictions`` in the dedup pool for smart_text/visual_prompt
+    (but not smart_click — refine clicks on a seeded box still produce
+    a region).
     """
     client = _StubSam3Client()
     client._text_resp = _StubResp(
@@ -1450,8 +1482,9 @@ def test_visual_prompt_internal_nms_collapses_near_duplicates() -> None:
 
 
 def test_visual_prompt_drops_match_overlapping_seeded_prediction() -> None:
-    """Pool now includes task.predictions — re-firing visual_prompt does
-    not re-add a seeded box even before the reviewer accepts it."""
+    """Seeded predictions ARE in the dedup pool for visual_prompt —
+    same reason as smart_text: LS doesn't echo task.predictions in
+    context.result on smart-tool fires."""
     client = _StubSam3Client()
     client._visual_resp = _StubResp(
         boxes_norm=[[0.50, 0.50, 0.70, 0.70]],

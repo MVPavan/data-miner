@@ -199,10 +199,12 @@ def smart_click(
     we always return the highest-scoring mask SAM 3.1 produces. The score
     rides along on the LS region for downstream review.
 
-    The returned region is silently dropped if it duplicates a same-class
-    rectangle already on the canvas at IoU > ``dedup_iou`` (default 0.7) —
-    a click on an already-accepted box would otherwise stack a duplicate
-    that the reviewer has to delete by hand.
+    Canvas-dedup is context-only — the live canvas state LS sends with
+    every smart-tool fire (user-drawn rectangles + accepted predictions).
+    Untouched yellow seeded predictions are NOT in this pool, so a click
+    on a seeded box still produces a region (the refine/replace use
+    case). A second click at the same spot whose result has already been
+    accepted will be deduped against that accepted region.
     """
     image_path = _get_image_path(task)
     if not image_path:
@@ -273,7 +275,7 @@ def smart_click(
         [region], canvas_rectangles(task, context), iou=dedup_iou
     )
     if dropped:
-        logger.info("smart_click: dropped duplicate at IoU > %.2f", dedup_iou)
+        logger.info("smart_click: dropped duplicate vs live canvas at IoU > %.2f", dedup_iou)
     return survivors
 
 
@@ -374,7 +376,9 @@ def visual_prompt(
     if not exemplars:
         logger.info("visual_prompt: all exemplars degenerate (zero area)")
         return []
-    existing = canvas_rectangles(task, context, include_visual_prompt=True)
+    existing = canvas_rectangles(
+        task, context, include_visual_prompt=True, include_predictions=True
+    )
 
     logger.info(
         "visual_prompt: image=%s exemplars=%d label=%s threshold=%.2f existing=%d",
@@ -524,7 +528,9 @@ def smart_text(
 
     nmsed = nms_regions(proposed, iou=nms_iou)
     survivors, dropped = dedup_against(
-        nmsed, canvas_rectangles(task, context), iou=dedup_iou
+        nmsed,
+        canvas_rectangles(task, context, include_predictions=True),
+        iou=dedup_iou,
     )
     out = survivors[:max_regions]
     logger.info(

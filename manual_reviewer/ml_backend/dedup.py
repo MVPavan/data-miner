@@ -10,11 +10,21 @@ Two layers, applied uniformly:
   * **External dedup** — ``dedup_against(emitted, existing, iou=0.7)``
     drops emitted regions that overlap rectangles already on the canvas.
     The canvas pool is built by ``canvas_rectangles(task, context)`` and
-    covers all three sources the reviewer can see at predict time:
+    sources from ``context["result"]`` only — the **live** canvas
+    state LS sends with every smart-tool fire. Sources we deliberately
+    do NOT pull from:
 
-       1. accepted ``task["annotations"][*].result`` (skipping cancelled),
-       2. seeded-but-unaccepted ``task["predictions"][*].result``,
-       3. the current draft ``context.result``.
+       * ``task["annotations"]`` — server-side submitted state. During
+         a live session this is stale (last-submitted only) or absent
+         entirely; the live state is in ``context``.
+       * ``task["predictions"]`` — original seeded predictions.
+         Untouched yellow drafts the reviewer hasn't accepted are NOT
+         "on canvas" for dedup purposes — if the reviewer deletes a
+         bad seed, it never enters the pool anyway, and propagating a
+         SAM match at a seeded location is fine because the reviewer
+         can pick whichever they prefer. Pulling predictions in pre
+         live-test 2026-04-30 caused every smart_click on a seeded
+         box to be silently dropped at IoU>0.7.
 
 Both layers use the **single** ``iou_xyxy`` IoU helper here — no per-route
 re-implementations. ``routes.py`` and ``reconcile/propagate_static.py``
@@ -143,56 +153,44 @@ def canvas_rectangles(
     context: dict[str, Any] | None,
     *,
     include_visual_prompt: bool = False,
+    include_predictions: bool = False,
 ) -> list[tuple[BboxNorm, str | None]]:
-    """All rectangle ``(bbox, class)`` pairs visible at predict time.
+    """All rectangle ``(bbox, class)`` pairs the reviewer has on canvas.
 
-    Sources, in order:
+    Two sources, controlled per-route:
 
-      1. accepted annotations (``task["annotations"][*].result``) —
-         cancelled or empty annotations are skipped;
-      2. seeded predictions (``task["predictions"][*].result``) —
-         covers the case where the reviewer re-fires a smart route on
-         a task whose finalize boxes haven't been accepted yet;
-      3. the current draft (``context.result``) — covers the
-         exemplar-self duplicate for the V-tool and any accumulated
-         in-flight regions.
+      * ``context["result"]`` — always read. This is the live LS
+        smart-tool trigger payload (clicks, V-tool drafts, user-drawn
+        rectangles when LS happens to send them). It does NOT include
+        seeded yellow predictions; LS keeps those in a separate layer
+        until accepted, and crucially it does not echo them in the
+        smart-tool fire context for ``smart_text`` / ``visual_prompt``.
+
+      * ``task["predictions"][*].result`` — read only when
+        ``include_predictions=True``. The seeded finalize boxes count
+        as "on canvas" for smart_text/visual_prompt because the
+        reviewer SEES them and would notice if a smart-tool propagation
+        added a duplicate at the same spot. The smart_click route
+        passes ``include_predictions=False`` so refine clicks on a
+        seeded yellow box still produce a region (the explicit-ask
+        semantics; live-test 2026-04-30).
+
+    Known imperfection: if the reviewer DELETED a seeded prediction
+    pre-fire, ``task["predictions"]`` still contains it (LS doesn't
+    propagate deletes through the predictions layer mid-session). A
+    SAM box at that location would then be wrongly deduped. Acceptable
+    for v1 — the corner case is rare in practice (a deleted box is
+    usually deleted because it's wrong, and SAM is unlikely to
+    re-propose the same wrong box). A LS-draft-API query could resolve
+    it precisely; deferred until reported as a real problem.
 
     The V-tool exemplar (``from_name="visual_prompt"``) is excluded
-    from the draft sweep by default so smart_text matches don't get
+    from the sweep by default so smart_text matches don't get
     suppressed by a leftover exemplar. The visual_prompt route itself
-    needs the exemplar in the pool to dedup the SAM-returned duplicate
-    at the exemplar location, so it passes ``include_visual_prompt=True``.
-
-    Order matters when a caller chooses to truncate the pool, but for
-    IoU dedup the order is irrelevant.
+    passes ``include_visual_prompt=True`` to keep the exemplar in the
+    pool for dedup against the SAM-returned duplicate at that location.
     """
     out: list[tuple[BboxNorm, str | None]] = []
-
-    annotations = task.get("annotations") or []
-    if isinstance(annotations, list):
-        for ann in annotations:
-            if not isinstance(ann, dict):
-                continue
-            if ann.get("was_cancelled") or ann.get("result_count") == 0:
-                continue
-            for region in ann.get("result") or []:
-                if not isinstance(region, dict) or not _is_rectangle(region):
-                    continue
-                bbox = _region_bbox(region)
-                if bbox is not None:
-                    out.append((bbox, _region_label(region)))
-
-    predictions = task.get("predictions") or []
-    if isinstance(predictions, list):
-        for pred in predictions:
-            if not isinstance(pred, dict):
-                continue
-            for region in pred.get("result") or []:
-                if not isinstance(region, dict) or not _is_rectangle(region):
-                    continue
-                bbox = _region_bbox(region)
-                if bbox is not None:
-                    out.append((bbox, _region_label(region)))
 
     if isinstance(context, dict):
         for region in context.get("result") or []:
@@ -206,6 +204,19 @@ def canvas_rectangles(
             bbox = _region_bbox(region)
             if bbox is not None:
                 out.append((bbox, _region_label(region)))
+
+    if include_predictions:
+        predictions = task.get("predictions") or []
+        if isinstance(predictions, list):
+            for pred in predictions:
+                if not isinstance(pred, dict):
+                    continue
+                for region in pred.get("result") or []:
+                    if not isinstance(region, dict) or not _is_rectangle(region):
+                        continue
+                    bbox = _region_bbox(region)
+                    if bbox is not None:
+                        out.append((bbox, _region_label(region)))
 
     return out
 

@@ -1,30 +1,21 @@
 <!--
   Label Studio labeling interface for the aa_v4 manual review system.
 
-  Phase A: <RectangleLabels name="bbox"> drives the rectangle tool and
-  carries the 24-class palette. <KeyPointLabels name="click"> mirrors the
-  same palette for the smart_click tool so the reviewer's hotkey class
-  rides every keypoint draft as value.keypointlabels. Class names match
-  aa_v4's class registry exactly so that exported relabels round-trip
-  back into pipeline.db without remapping.
+  GENERATED FROM /media/data_2/vlm/code/data_miner/output/auto_annotation_v4/datatang_val_detect/classes.txt. Do not hand-edit; rerun
+  ``python -m manual_reviewer.configs.build_labeling_config`` after
+  the dataset's classes.txt changes.
 
-  Wire alignment (codebase_review_2026-04-29 #1): the predictions seeded
-  by task_builder use type="rectanglelabels" / from_name="bbox", and the
-  export parser reads the same shape. Using <RectangleLabels> here means
-  LS doesn't need to auto-split predictions on display, and reviewer
-  commits round-trip in the same shape — no parentID linking required.
+  Phase A: <RectangleLabels name="bbox"> drives the rectangle tool and
+  carries the class palette. <KeyPointLabels name="click"> mirrors the
+  same palette for the smart_click tool so the reviewer's hotkey class
+  rides every keypoint draft as value.keypointlabels.
 
   KeyPoint, TextArea and the V-tool Rectangle are gated by `smart="true"`
-  so the ML backend handles those interactions. When the ML backend is
-  offline, LS still renders the rectangle tool — only the smart tools
-  become inert.
+  so the ML backend handles those interactions.
 -->
 <View>
   <Header value="aa_v4 Manual Review"/>
 
-  <!-- Auto-tool selector: visual badge mirroring the active smart tool.
-       Each Choice's hotkey matches the corresponding smart-control hotkey
-       so LS double-dispatch keeps the badge in sync. Esc → none. -->
   <View style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
     <Header value="Auto:"/>
     <Choices name="auto_tool" toName="image" choice="single" showInline="true">
@@ -39,117 +30,94 @@
          rotateControl="false" brightnessControl="false"
          maxHeight="78vh"/>
 
-  <!-- Bbox palette only shows when no Auto-tool is selected. Auto-tools
-       expose their own palette below; gating this keeps exactly one
-       label palette on screen at a time. -->
   <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="none">
-  <RectangleLabels name="bbox" toName="image">
-    <Label value="forklift"   background="#e74c3c" hotkey="1"/>
-    <Label value="palletjack" background="#3498db" hotkey="2"/>
-    <Label value="person"     background="#2ecc71" hotkey="3"/>
-    <Label value="head"       background="#9b59b6" hotkey="4"/>
-    <Label value="cellphone"  background="#e67e22" hotkey="5"/>
-    <Label value="wallet"     background="#f1c40f" hotkey="6"/>
-    <Label value="bag"        background="#1abc9c" hotkey="7"/>
-    <Label value="bicycle"    background="#34495e" hotkey="8"/>
-    <Label value="motorcycle" background="#7f8c8d" hotkey="9"/>
-    <Label value="car"        background="#c0392b" hotkey="0"/>
-    <Label value="truck"      background="#2980b9" hotkey="q"/>
-    <Label value="bus"        background="#27ae60" hotkey="w"/>
-    <Label value="van"        background="#8e44ad" hotkey="e"/>
-    <Label value="cart"       background="#d35400" hotkey="r"/>
-    <Label value="trolley"    background="#f39c12" hotkey="t"/>
-    <Label value="pallet"     background="#16a085" hotkey="y"/>
-    <Label value="box"        background="#2c3e50" hotkey="u"/>
-    <Label value="container"  background="#95a5a6" hotkey="i"/>
-    <Label value="dog"        background="#e84393" hotkey="o"/>
-    <Label value="cat"        background="#fd79a8" hotkey="p"/>
-    <Label value="sign"       background="#a29bfe" hotkey="a"/>
-    <Label value="cone"       background="#fdcb6e" hotkey="s"/>
-    <Label value="barrier"    background="#74b9ff" hotkey="d"/>
-    <Label value="other"      background="#dfe6e9" hotkey="f"/>
+  <RectangleLabels name="bbox" toName="image" opacity="0.05" strokeWidth="2">
+    <Label value="person" background="#e74c3c" hotkey="1"/>
+    <Label value="bicycle" background="#3498db" hotkey="2"/>
+    <Label value="car" background="#2ecc71" hotkey="3"/>
+    <Label value="motorcycle" background="#9b59b6" hotkey="4"/>
+    <Label value="airplane" background="#e67e22" hotkey="5"/>
+    <Label value="bus" background="#f1c40f" hotkey="6"/>
+    <Label value="train" background="#1abc9c" hotkey="7"/>
+    <Label value="truck" background="#34495e" hotkey="8"/>
+    <Label value="boat" background="#7f8c8d" hotkey="9"/>
+    <Label value="bird" background="#c0392b" hotkey="0"/>
+    <Label value="cat" background="#2980b9" hotkey="q"/>
+    <Label value="dog" background="#27ae60" hotkey="w"/>
+    <Label value="backpack" background="#8e44ad" hotkey="e"/>
+    <Label value="handbag" background="#d35400" hotkey="r"/>
+    <Label value="suitcase" background="#f39c12" hotkey="t"/>
+    <Label value="shopping cart" background="#16a085" hotkey="y"/>
+    <Label value="helicopter" background="#2c3e50" hotkey="u"/>
+    <Label value="wallet" background="#95a5a6" hotkey="i"/>
+    <Label value="forklift" background="#e84393" hotkey="o"/>
+    <Label value="palletjack" background="#fd79a8" hotkey="p"/>
+    <Label value="head" background="#a29bfe" hotkey="a"/>
+    <Label value="laptop" background="#fdcb6e" hotkey="s"/>
+    <Label value="cellphone" background="#74b9ff" hotkey="d"/>
   </RectangleLabels>
   </View>
 
-  <!-- smart_click: only visible when auto_tool=smart_click is selected.
-       Hides the redundant palette by default; reduces toolbar clutter. -->
   <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_click">
   <KeyPointLabels name="click" toName="image" smart="true" strokeWidth="3">
-    <Label value="forklift"   background="#e74c3c" hotkey="1"/>
-    <Label value="palletjack" background="#3498db" hotkey="2"/>
-    <Label value="person"     background="#2ecc71" hotkey="3"/>
-    <Label value="head"       background="#9b59b6" hotkey="4"/>
-    <Label value="cellphone"  background="#e67e22" hotkey="5"/>
-    <Label value="wallet"     background="#f1c40f" hotkey="6"/>
-    <Label value="bag"        background="#1abc9c" hotkey="7"/>
-    <Label value="bicycle"    background="#34495e" hotkey="8"/>
-    <Label value="motorcycle" background="#7f8c8d" hotkey="9"/>
-    <Label value="car"        background="#c0392b" hotkey="0"/>
-    <Label value="truck"      background="#2980b9" hotkey="q"/>
-    <Label value="bus"        background="#27ae60" hotkey="w"/>
-    <Label value="van"        background="#8e44ad" hotkey="e"/>
-    <Label value="cart"       background="#d35400" hotkey="r"/>
-    <Label value="trolley"    background="#f39c12" hotkey="t"/>
-    <Label value="pallet"     background="#16a085" hotkey="y"/>
-    <Label value="box"        background="#2c3e50" hotkey="u"/>
-    <Label value="container"  background="#95a5a6" hotkey="i"/>
-    <Label value="dog"        background="#e84393" hotkey="o"/>
-    <Label value="cat"        background="#fd79a8" hotkey="p"/>
-    <Label value="sign"       background="#a29bfe" hotkey="a"/>
-    <Label value="cone"       background="#fdcb6e" hotkey="s"/>
-    <Label value="barrier"    background="#74b9ff" hotkey="d"/>
-    <Label value="other"      background="#dfe6e9" hotkey="f"/>
+    <Label value="person" background="#e74c3c" hotkey="1"/>
+    <Label value="bicycle" background="#3498db" hotkey="2"/>
+    <Label value="car" background="#2ecc71" hotkey="3"/>
+    <Label value="motorcycle" background="#9b59b6" hotkey="4"/>
+    <Label value="airplane" background="#e67e22" hotkey="5"/>
+    <Label value="bus" background="#f1c40f" hotkey="6"/>
+    <Label value="train" background="#1abc9c" hotkey="7"/>
+    <Label value="truck" background="#34495e" hotkey="8"/>
+    <Label value="boat" background="#7f8c8d" hotkey="9"/>
+    <Label value="bird" background="#c0392b" hotkey="0"/>
+    <Label value="cat" background="#2980b9" hotkey="q"/>
+    <Label value="dog" background="#27ae60" hotkey="w"/>
+    <Label value="backpack" background="#8e44ad" hotkey="e"/>
+    <Label value="handbag" background="#d35400" hotkey="r"/>
+    <Label value="suitcase" background="#f39c12" hotkey="t"/>
+    <Label value="shopping cart" background="#16a085" hotkey="y"/>
+    <Label value="helicopter" background="#2c3e50" hotkey="u"/>
+    <Label value="wallet" background="#95a5a6" hotkey="i"/>
+    <Label value="forklift" background="#e84393" hotkey="o"/>
+    <Label value="palletjack" background="#fd79a8" hotkey="p"/>
+    <Label value="head" background="#a29bfe" hotkey="a"/>
+    <Label value="laptop" background="#fdcb6e" hotkey="s"/>
+    <Label value="cellphone" background="#74b9ff" hotkey="d"/>
   </KeyPointLabels>
   </View>
 
-  <!-- visual_prompt: the V-tool. Reviewer presses V (or picks the orange
-       rectangle in the toolbar), drags a box around an exemplar object,
-       and the ML backend's visual_prompt route runs SAM 3.1 box-prompt
-       grounding to find every matching instance in the same image. The
-       exemplar persists on the canvas; ML-returned matches that overlap
-       any existing rectangle (IoU > 0.7) are dropped server-side, so
-       the SAM-returned duplicate at the exemplar location goes away
-       automatically. The reviewer's active class rides through. -->
   <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="visual_prompt">
   <RectangleLabels name="visual_prompt" toName="image"
-                   smart="true" smartOnly="true"
-                   strokeColor="#ff7700">
-    <Label value="forklift"   background="#e74c3c" hotkey="1"/>
-    <Label value="palletjack" background="#3498db" hotkey="2"/>
-    <Label value="person"     background="#2ecc71" hotkey="3"/>
-    <Label value="head"       background="#9b59b6" hotkey="4"/>
-    <Label value="cellphone"  background="#e67e22" hotkey="5"/>
-    <Label value="wallet"     background="#f1c40f" hotkey="6"/>
-    <Label value="bag"        background="#1abc9c" hotkey="7"/>
-    <Label value="bicycle"    background="#34495e" hotkey="8"/>
-    <Label value="motorcycle" background="#7f8c8d" hotkey="9"/>
-    <Label value="car"        background="#c0392b" hotkey="0"/>
-    <Label value="truck"      background="#2980b9" hotkey="q"/>
-    <Label value="bus"        background="#27ae60" hotkey="w"/>
-    <Label value="van"        background="#8e44ad" hotkey="e"/>
-    <Label value="cart"       background="#d35400" hotkey="r"/>
-    <Label value="trolley"    background="#f39c12" hotkey="t"/>
-    <Label value="pallet"     background="#16a085" hotkey="y"/>
-    <Label value="box"        background="#2c3e50" hotkey="u"/>
-    <Label value="container"  background="#95a5a6" hotkey="i"/>
-    <Label value="dog"        background="#e84393" hotkey="o"/>
-    <Label value="cat"        background="#fd79a8" hotkey="p"/>
-    <Label value="sign"       background="#a29bfe" hotkey="a"/>
-    <Label value="cone"       background="#fdcb6e" hotkey="s"/>
-    <Label value="barrier"    background="#74b9ff" hotkey="d"/>
-    <Label value="other"      background="#dfe6e9" hotkey="f"/>
+                   smart="true"
+                   strokeColor="#ff7700" opacity="0.05" strokeWidth="2">
+    <Label value="person" background="#e74c3c" hotkey="1"/>
+    <Label value="bicycle" background="#3498db" hotkey="2"/>
+    <Label value="car" background="#2ecc71" hotkey="3"/>
+    <Label value="motorcycle" background="#9b59b6" hotkey="4"/>
+    <Label value="airplane" background="#e67e22" hotkey="5"/>
+    <Label value="bus" background="#f1c40f" hotkey="6"/>
+    <Label value="train" background="#1abc9c" hotkey="7"/>
+    <Label value="truck" background="#34495e" hotkey="8"/>
+    <Label value="boat" background="#7f8c8d" hotkey="9"/>
+    <Label value="bird" background="#c0392b" hotkey="0"/>
+    <Label value="cat" background="#2980b9" hotkey="q"/>
+    <Label value="dog" background="#27ae60" hotkey="w"/>
+    <Label value="backpack" background="#8e44ad" hotkey="e"/>
+    <Label value="handbag" background="#d35400" hotkey="r"/>
+    <Label value="suitcase" background="#f39c12" hotkey="t"/>
+    <Label value="shopping cart" background="#16a085" hotkey="y"/>
+    <Label value="helicopter" background="#2c3e50" hotkey="u"/>
+    <Label value="wallet" background="#95a5a6" hotkey="i"/>
+    <Label value="forklift" background="#e84393" hotkey="o"/>
+    <Label value="palletjack" background="#fd79a8" hotkey="p"/>
+    <Label value="head" background="#a29bfe" hotkey="a"/>
+    <Label value="laptop" background="#fdcb6e" hotkey="s"/>
+    <Label value="cellphone" background="#74b9ff" hotkey="d"/>
   </RectangleLabels>
   </View>
 
-  <!-- Footer row: per-image metadata sits below the canvas so the image
-       gets the full viewport width. Phase D-layout. -->
   <View style="display: flex; gap: 16px; margin-top: 8px;">
     <View style="flex: 0 0 50%;">
-      <!-- smart_text: typing into the TextArea fires the ML backend's
-           smart_text route (SAM 3.1 text_detect). Submit returns one
-           RectangleLabels region per match. No maxSubmissions — the
-           reviewer can iterate prompts (e.g. 'forklift', then 'pallet')
-           without first deleting the previous one. -->
       <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_text">
         <TextArea name="text_query" toName="image" smart="true"
                   editable="true"
