@@ -662,7 +662,7 @@ class SAM3OneModel(BaseDetectorModel):
         )
         if seed.bbox is not None:
             request["bounding_boxes"] = np.asarray(
-                [_denorm_xyxy(seed.bbox, w, h)], dtype=np.float32
+                [_xyxy_norm_to_xywh_norm(seed.bbox)], dtype=np.float32
             )
             request["bounding_box_labels"] = np.asarray([1], dtype=np.int32)
         if seed.text is not None:
