@@ -17,9 +17,9 @@ is fine for v1; we don't need a runtime endpoint with one reviewer.
 
   ENABLE_BATCH_PROPOSALS   task-open cached-proposals seed
   ENABLE_SMART_CLICK       KeyPoint draft → SAM 3.1 click_mask
-  ENABLE_SMART_TEXT        TextArea submit → SAM 3.1 text_detect
-  ENABLE_VISUAL_PROMPT     V-tool draft → SAM 3.1 visual_prompt
-  ENABLE_PROPAGATE_STATIC  Phase C cross-frame static propagation
+  ENABLE_SMART_SEARCH      TextArea submit → SAM 3.1 text_detect
+  ENABLE_SMART_VISUAL      smart-Rectangle draft → SAM 3.1 visual_prompt
+  ENABLE_SMART_TRACK       smart-Rectangle draft → SAM 3.1 video tracker
 """
 
 from __future__ import annotations
@@ -35,12 +35,10 @@ from manual_reviewer.ml_backend.ls_rest import LSRestClient, build_ls_rest_clien
 from manual_reviewer.ml_backend.routes import (
     Sam3LikeClient,
     batch_proposals,
-    propagate_now,
     smart_click,
-    smart_text,
+    smart_search,
     smart_track,
-    track_similar,
-    visual_prompt,
+    smart_visual,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,12 +47,9 @@ logger = logging.getLogger(__name__)
 _ROUTE_ENV_VARS = {
     "batch_proposals": "ENABLE_BATCH_PROPOSALS",
     "smart_click": "ENABLE_SMART_CLICK",
-    "smart_text": "ENABLE_SMART_TEXT",
+    "smart_search": "ENABLE_SMART_SEARCH",
     "smart_track": "ENABLE_SMART_TRACK",
-    "track_similar": "ENABLE_TRACK_SIMILAR",
-    "propagate_now": "ENABLE_PROPAGATE_NOW",
-    "visual_prompt": "ENABLE_VISUAL_PROMPT",
-    "propagate_static": "ENABLE_PROPAGATE_STATIC",
+    "smart_visual": "ENABLE_SMART_VISUAL",
 }
 
 
@@ -172,45 +167,6 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         )
         has_draft = isinstance(context, dict) and bool(context.get("result"))
         if has_draft:
-            # propagate_now (Option A Phase 2) — the trigger is a smart
-            # KeyPoint with ``from_name="propagate_now"``. Check first so a
-            # trigger click never falls into the generic keypoint handler
-            # (which would otherwise route to smart_click).
-            has_propagate = self._sam3_client and any(
-                isinstance(r, dict) and r.get("from_name") == "propagate_now"
-                for r in context["result"]
-            )
-            if has_propagate and _route_enabled("propagate_now"):
-                _, multi_result = propagate_now(
-                    task, context, self._sam3_client, self._ls_rest,
-                )
-                if multi_result is None:
-                    logger.info("→ propagate_now did not run (preconditions unmet)")
-                else:
-                    logger.info(
-                        "→ propagate_now: seeds=%d siblings=%d total_propagated=%d",
-                        multi_result.seeds_total,
-                        multi_result.siblings_total,
-                        multi_result.propagated,
-                    )
-                return []
-            if has_propagate:
-                logger.info("→ propagate_now disabled by env, falling through")
-            # track_similar (Option A Phase 1) — exemplar tagged with
-            # ``from_name="track_similar"``. Same shape as visual_prompt
-            # but distinct from_name so Phase 2 can correlate.
-            has_track_similar = self._sam3_client and any(
-                isinstance(r, dict) and r.get("from_name") == "track_similar"
-                for r in context["result"]
-            )
-            if has_track_similar and _route_enabled("track_similar"):
-                out = track_similar(
-                    task, context, self._sam3_client, self._ls_rest,
-                )
-                logger.info("→ track_similar returned %d region(s)", len(out))
-                return out
-            if has_track_similar:
-                logger.info("→ track_similar disabled by env, falling through")
             # smart_track is discriminated by ``from_name="smart_track"`` —
             # check it first so a smart_track draft never falls into the
             # generic rectangle handlers below.
@@ -236,35 +192,34 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
                 return []
             if has_track:
                 logger.info("→ smart_track disabled by env, falling through")
-            # Visual prompt is discriminated by the V-tool's from_name, not
-            # by region type — a regular bbox draw also produces type
-            # "rectanglelabels" and we don't want THAT to fire ML.
-            has_v_tool = self._sam3_client and any(
-                isinstance(r, dict) and r.get("from_name") == "visual_prompt"
+            # smart_visual is discriminated by the smart-Rectangle's
+            # from_name, not by region type — a regular bbox draw also
+            # produces type "rectanglelabels" and we don't want THAT to
+            # fire ML.
+            has_visual = self._sam3_client and any(
+                isinstance(r, dict) and r.get("from_name") == "smart_visual"
                 for r in context["result"]
             )
-            if has_v_tool and _route_enabled("visual_prompt"):
-                out = visual_prompt(task, context, self._sam3_client)
-                logger.info("→ visual_prompt returned %d region(s)", len(out))
+            if has_visual and _route_enabled("smart_visual"):
+                out = smart_visual(task, context, self._sam3_client)
+                logger.info("→ smart_visual returned %d region(s)", len(out))
                 return out
-            if has_v_tool:
-                logger.info("→ visual_prompt disabled by env, falling through")
+            if has_visual:
+                logger.info("→ smart_visual disabled by env, falling through")
             # `continue` (not `return []`) on a gated-off branch so a mixed
             # context (e.g. textarea + keypoint) with one disabled route +
             # one enabled route still reaches the enabled route below.
-            # Same applies when V-tool is gated off but a keypoint/textarea
-            # also rides on the same draft.
+            # Same applies when smart_visual is gated off but a keypoint
+            # or textarea also rides on the same draft.
             for region in context["result"]:
                 if not isinstance(region, dict):
                     continue
-                if region.get("from_name") in {
-                    "visual_prompt", "smart_track", "track_similar", "propagate_now",
-                }:
+                if region.get("from_name") in {"smart_visual", "smart_track"}:
                     # Smart tools with their own dispatch branches above —
                     # never let them fall through into the generic
-                    # smart_click / smart_text handlers. Both produce
-                    # type=rectanglelabels (or keypoint for propagate_now)
-                    # which would otherwise match the generic paths.
+                    # smart_click / smart_search handlers. Both produce
+                    # type=rectanglelabels which would otherwise match the
+                    # generic paths.
                     continue
                 rtype = (region.get("type") or "").lower()
                 if rtype in {"keypointlabels", "keypoint"} and self._sam3_client:
@@ -275,11 +230,11 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
                     logger.info("→ smart_click returned %d region(s)", len(out))
                     return out
                 if rtype == "textarea" and self._sam3_client:
-                    if not _route_enabled("smart_text"):
-                        logger.info("→ smart_text disabled by env, skipping draft")
+                    if not _route_enabled("smart_search"):
+                        logger.info("→ smart_search disabled by env, skipping draft")
                         continue
-                    out = smart_text(task, context, self._sam3_client)
-                    logger.info("→ smart_text returned %d region(s)", len(out))
+                    out = smart_search(task, context, self._sam3_client)
+                    logger.info("→ smart_search returned %d region(s)", len(out))
                     return out
             # We had a draft but no enabled smart route handled it. Don't
             # fall through to batch_proposals — that would seed the canvas
@@ -301,8 +256,8 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         result = context.get("result")
         if not isinstance(result, list):
             return f"keys={sorted(context.keys())}"
-        # Include from_name so we can tell V-tool draft (visual_prompt) from
-        # regular bbox draws when both produce type=rectanglelabels.
+        # Include from_name so we can tell smart_visual draft from regular
+        # bbox draws when both produce type=rectanglelabels.
         items = [
             f"{(r or {}).get('from_name')}:{(r or {}).get('type')}"
             for r in result if isinstance(r, dict)

@@ -152,7 +152,7 @@ def canvas_rectangles(
     task: dict[str, Any],
     context: dict[str, Any] | None,
     *,
-    include_visual_prompt: bool = False,
+    include_smart_visual: bool = False,
     include_predictions: bool = False,
 ) -> list[tuple[BboxNorm, str | None]]:
     """All rectangle ``(bbox, class)`` pairs the reviewer has on canvas.
@@ -160,15 +160,16 @@ def canvas_rectangles(
     Two sources, controlled per-route:
 
       * ``context["result"]`` — always read. This is the live LS
-        smart-tool trigger payload (clicks, V-tool drafts, user-drawn
-        rectangles when LS happens to send them). It does NOT include
-        seeded yellow predictions; LS keeps those in a separate layer
-        until accepted, and crucially it does not echo them in the
-        smart-tool fire context for ``smart_text`` / ``visual_prompt``.
+        smart-tool trigger payload (clicks, smart-Rectangle drafts,
+        user-drawn rectangles when LS happens to send them). It does
+        NOT include seeded yellow predictions; LS keeps those in a
+        separate layer until accepted, and crucially it does not echo
+        them in the smart-tool fire context for ``smart_search`` /
+        ``smart_visual``.
 
       * ``task["predictions"][*].result`` — read only when
         ``include_predictions=True``. The seeded finalize boxes count
-        as "on canvas" for smart_text/visual_prompt because the
+        as "on canvas" for smart_search/smart_visual because the
         reviewer SEES them and would notice if a smart-tool propagation
         added a duplicate at the same spot. The smart_click route
         passes ``include_predictions=False`` so refine clicks on a
@@ -184,10 +185,10 @@ def canvas_rectangles(
     re-propose the same wrong box). A LS-draft-API query could resolve
     it precisely; deferred until reported as a real problem.
 
-    The V-tool exemplar (``from_name="visual_prompt"``) is excluded
-    from the sweep by default so smart_text matches don't get
-    suppressed by a leftover exemplar. The visual_prompt route itself
-    passes ``include_visual_prompt=True`` to keep the exemplar in the
+    The smart_visual exemplar (``from_name="smart_visual"``) is excluded
+    from the sweep by default so smart_search matches don't get
+    suppressed by a leftover exemplar. The smart_visual route itself
+    passes ``include_smart_visual=True`` to keep the exemplar in the
     pool for dedup against the SAM-returned duplicate at that location.
     """
     out: list[tuple[BboxNorm, str | None]] = []
@@ -197,8 +198,8 @@ def canvas_rectangles(
             if not isinstance(region, dict) or not _is_rectangle(region):
                 continue
             if (
-                not include_visual_prompt
-                and region.get("from_name") == "visual_prompt"
+                not include_smart_visual
+                and region.get("from_name") == "smart_visual"
             ):
                 continue
             bbox = _region_bbox(region)

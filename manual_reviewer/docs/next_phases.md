@@ -113,7 +113,7 @@ default suite.
 manual_reviewer/ml_backend/
 ├── __init__.py
 ├── server.py              # LabelStudioMLBase subclass — entry point
-├── routes.py              # Mode dispatch: smart_click, smart_text, batch
+├── routes.py              # Mode dispatch: smart_click, smart_search, batch
 ├── aav4_client.py         # SAM 3.1 HTTP client (reuse Sam3OneHttpClient) + sqlite reader
 ├── ls_payload.py          # Translate LS task/context dicts ↔ aav4 wire contracts
 ├── Dockerfile             # Packaging for docker-compose
@@ -136,7 +136,7 @@ Compose update: extend [docker-compose.review.yml](../docker-compose.review.yml)
 | LS Trigger | Mode | aav4 call | LS response |
 |---|---|---|---|
 | KeyPoint draw on canvas | `smart_click` | `Sam3OneHttpClient` — currently no click endpoint; **add `click_mask` mode** (point→mask) to [models/sam3_1.py](../../data_miner/auto_annotation_v4/models/sam3_1.py) and [model_servers/sam3_1.py](../../data_miner/auto_annotation_v4/model_servers/sam3_1.py). Wire contract: new `SAM3ClickMaskRequest`/`Response` in `wire.py`. | `RectangleLabels` region (mask's tight bbox; v1 lossy until LS supports masks natively) |
-| TextArea submit (smart=true) | `smart_text` | `Sam3OneHttpClient.refine` semantics don't apply — use `text_detect` mode (already implemented). Wire: `DetectorRequest`/`DetectorResponse`. | List of `RectangleLabels` regions |
+| TextArea submit (smart=true) | `smart_search` | `Sam3OneHttpClient.refine` semantics don't apply — use `text_detect` mode (already implemented). Wire: `DetectorRequest`/`DetectorResponse`. | List of `RectangleLabels` regions |
 | Task open | `batch` | **No inference.** Read `proposals` table from pipeline.db keyed on `image_id`. Free perf — task open <500 ms. | List of `RectangleLabels` regions per cached candidate |
 
 ### Key design decisions (already made — do not relitigate)
@@ -166,7 +166,7 @@ class ManualReviewerMLBackend(LabelStudioMLBase):
 ```python
 # manual_reviewer/ml_backend/routes.py
 def smart_click(task, context, sam3_client) -> list[dict]: ...
-def smart_text(task, context, sam3_client) -> list[dict]: ...
+def smart_search(task, context, sam3_client) -> list[dict]: ...
 def batch_proposals(task, db_path) -> list[dict]: ...
 ```
 

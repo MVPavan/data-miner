@@ -34,8 +34,8 @@ from manual_reviewer.ml_backend.ls_payload import (
 from manual_reviewer.ml_backend.routes import (
     batch_proposals,
     smart_click,
-    smart_text,
-    visual_prompt,
+    smart_search,
+    smart_visual,
 )
 from manual_reviewer.ml_backend.server import ManualReviewerMLBackend
 
@@ -316,14 +316,14 @@ def test_smart_click_accepts_keypointlabels_hint() -> None:
 def test_smart_click_prefers_keypoint_label_over_unrelated_rectangle() -> None:
     """When the triggering keypoint carries its own ``keypointlabels``, that
     class wins over an unrelated rectangle that happens to ride the same
-    draft. Otherwise the V-tool palette would override the click's class."""
+    draft. Otherwise the smart_visual palette would override the click's class."""
     client = _StubSam3Client()
     client._click_resp = _StubResp(bbox=[0.1, 0.2, 0.3, 0.4], score=0.7)
     ctx = {
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 50, "y": 50, "width": 10, "height": 10,
                           "rectanglelabels": ["bicycle"]},
             },
@@ -366,18 +366,18 @@ def test_smart_click_ignores_non_keypoint_context() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. routes — smart_text
+# 3. routes — smart_search
 # ---------------------------------------------------------------------------
 
 
-def test_smart_text_returns_one_region_per_box() -> None:
+def test_smart_search_returns_one_region_per_box() -> None:
     client = _StubSam3Client()
     client._text_resp = _StubResp(
         boxes=[[0.1, 0.1, 0.4, 0.5], [0.5, 0.5, 0.9, 0.9]],
         scores=[0.9, 0.7],
         labels=["forklift", "forklift"],
     )
-    out = smart_text(_task(), _text_context(["forklift"]), client)
+    out = smart_search(_task(), _text_context(["forklift"]), client)
     assert len(out) == 2
     assert all(r["value"]["rectanglelabels"] == ["forklift"] for r in out)
     assert client.calls[0][1] == {
@@ -387,42 +387,42 @@ def test_smart_text_returns_one_region_per_box() -> None:
     }
 
 
-def test_smart_text_caps_max_regions() -> None:
+def test_smart_search_caps_max_regions() -> None:
     client = _StubSam3Client()
     client._text_resp = _StubResp(
         boxes=[[0, 0, 0.1 * (i + 1), 0.1] for i in range(10)],
         scores=[0.5] * 10,
         labels=["x"] * 10,
     )
-    out = smart_text(_task(), _text_context(["x"]), client, max_regions=3)
+    out = smart_search(_task(), _text_context(["x"]), client, max_regions=3)
     assert len(out) == 3
 
 
-def test_smart_text_skips_malformed_boxes() -> None:
+def test_smart_search_skips_malformed_boxes() -> None:
     client = _StubSam3Client()
     client._text_resp = _StubResp(
         boxes=[[0.1, 0.1, 0.4, 0.5], "garbage", [0.6, 0.6, 0.9, 0.9]],
         scores=[0.9, 0.5, 0.7],
         labels=["a", "b", "c"],
     )
-    out = smart_text(_task(), _text_context(["a"]), client)
+    out = smart_search(_task(), _text_context(["a"]), client)
     assert len(out) == 2
 
 
-def test_smart_text_no_prompts_returns_empty_no_call() -> None:
+def test_smart_search_no_prompts_returns_empty_no_call() -> None:
     client = _StubSam3Client()
-    out = smart_text(_task(), _text_context([]), client)
+    out = smart_search(_task(), _text_context([]), client)
     assert out == []
     assert client.calls == []
 
 
-def test_smart_text_swallows_client_exceptions() -> None:
+def test_smart_search_swallows_client_exceptions() -> None:
     client = _StubSam3Client()
     client._text_raises = RuntimeError("boom")
-    assert smart_text(_task(), _text_context(["forklift"]), client) == []
+    assert smart_search(_task(), _text_context(["forklift"]), client) == []
 
 
-def test_smart_text_snaps_unknown_label_to_default() -> None:
+def test_smart_search_snaps_unknown_label_to_default() -> None:
     """Free-text prompt strings that don't match the LS palette get snapped
     to ``DEFAULT_LABEL``; the raw prompt is preserved on ``meta.prompt``."""
     client = _StubSam3Client()
@@ -431,13 +431,13 @@ def test_smart_text_snaps_unknown_label_to_default() -> None:
         scores=[0.9],
         labels=["a green thing"],   # not in the 24-class palette
     )
-    out = smart_text(_task(), _text_context(["a green thing"]), client)
+    out = smart_search(_task(), _text_context(["a green thing"]), client)
     assert len(out) == 1
     assert out[0]["value"]["rectanglelabels"] == [DEFAULT_LABEL]
     assert out[0]["meta"]["prompt"] == "a green thing"
 
 
-def test_smart_text_keeps_known_palette_label() -> None:
+def test_smart_search_keeps_known_palette_label() -> None:
     """Known palette label rides through unchanged."""
     client = _StubSam3Client()
     client._text_resp = _StubResp(
@@ -445,12 +445,12 @@ def test_smart_text_keeps_known_palette_label() -> None:
         scores=[0.9],
         labels=["forklift"],
     )
-    out = smart_text(_task(), _text_context(["forklift"]), client)
+    out = smart_search(_task(), _text_context(["forklift"]), client)
     assert out[0]["value"]["rectanglelabels"] == ["forklift"]
 
 
 # ---------------------------------------------------------------------------
-# 3b. routes — visual_prompt
+# 3b. routes — smart_visual
 # ---------------------------------------------------------------------------
 
 
@@ -477,7 +477,7 @@ def _visual_context(
     return {"result": result}
 
 
-def test_visual_prompt_returns_one_region_per_match() -> None:
+def test_smart_visual_returns_one_region_per_match() -> None:
     client = _StubSam3Client()
     # Returned boxes are placed away from the exemplar so the IoU dedup
     # doesn't drop them. The exemplar-overlap case has its own test below.
@@ -485,7 +485,7 @@ def test_visual_prompt_returns_one_region_per_match() -> None:
         boxes_norm=[[0.5, 0.5, 0.7, 0.7], [0.8, 0.1, 0.95, 0.25]],
         scores=[0.9, 0.6],
     )
-    out = visual_prompt(
+    out = smart_visual(
         _task(),
         _visual_context((10, 10, 20, 20), label="forklift"),
         client,
@@ -499,12 +499,12 @@ def test_visual_prompt_returns_one_region_per_match() -> None:
     assert kwargs["threshold"] == pytest.approx(0.4)
 
 
-def test_visual_prompt_falls_back_to_default_label() -> None:
+def test_smart_visual_falls_back_to_default_label() -> None:
     """Exemplar without a class hint → propagated boxes use DEFAULT_LABEL."""
     client = _StubSam3Client()
     # Match sits away from the exemplar so it isn't deduped.
     client._visual_resp = _StubResp(boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.8])
-    out = visual_prompt(
+    out = smart_visual(
         _task(),
         _visual_context((10, 10, 20, 20), label=None),
         client,
@@ -512,10 +512,10 @@ def test_visual_prompt_falls_back_to_default_label() -> None:
     assert out[0]["value"]["rectanglelabels"] == [DEFAULT_LABEL]
 
 
-def test_visual_prompt_accepts_multiple_exemplars() -> None:
+def test_smart_visual_accepts_multiple_exemplars() -> None:
     client = _StubSam3Client()
     client._visual_resp = _StubResp(boxes_norm=[[0.1, 0.1, 0.2, 0.2]], scores=[0.7])
-    visual_prompt(
+    smart_visual(
         _task(),
         _visual_context(
             (10, 10, 20, 20),
@@ -528,13 +528,13 @@ def test_visual_prompt_accepts_multiple_exemplars() -> None:
     assert len(kwargs["exemplar_boxes_norm"]) == 2
 
 
-def test_visual_prompt_caps_max_results() -> None:
+def test_smart_visual_caps_max_results() -> None:
     client = _StubSam3Client()
     client._visual_resp = _StubResp(
         boxes_norm=[[0, 0, 0.05 + 0.01 * i, 0.05] for i in range(10)],
         scores=[0.5] * 10,
     )
-    out = visual_prompt(
+    out = smart_visual(
         _task(),
         _visual_context((10, 10, 20, 20), label="x"),
         client,
@@ -543,17 +543,17 @@ def test_visual_prompt_caps_max_results() -> None:
     assert len(out) == 3
 
 
-def test_visual_prompt_no_exemplar_returns_empty_no_call() -> None:
+def test_smart_visual_no_exemplar_returns_empty_no_call() -> None:
     client = _StubSam3Client()
-    out = visual_prompt(_task(), {"result": []}, client)
+    out = smart_visual(_task(), {"result": []}, client)
     assert out == []
     assert client.calls == []
 
 
-def test_visual_prompt_swallows_client_exceptions() -> None:
+def test_smart_visual_swallows_client_exceptions() -> None:
     client = _StubSam3Client()
     client._visual_raises = RuntimeError("boom")
-    out = visual_prompt(
+    out = smart_visual(
         _task(),
         _visual_context((10, 10, 20, 20), label="forklift"),
         client,
@@ -561,9 +561,9 @@ def test_visual_prompt_swallows_client_exceptions() -> None:
     assert out == []
 
 
-def test_visual_prompt_no_image_path_returns_empty() -> None:
+def test_smart_visual_no_image_path_returns_empty() -> None:
     client = _StubSam3Client()
-    out = visual_prompt(
+    out = smart_visual(
         {"data": {}},
         _visual_context((10, 10, 20, 20), label="forklift"),
         client,
@@ -572,19 +572,19 @@ def test_visual_prompt_no_image_path_returns_empty() -> None:
     assert client.calls == []
 
 
-def test_visual_prompt_meta_carries_source() -> None:
+def test_smart_visual_meta_carries_source() -> None:
     client = _StubSam3Client()
     # Match away from the exemplar so it survives IoU dedup.
     client._visual_resp = _StubResp(boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.9])
-    out = visual_prompt(
+    out = smart_visual(
         _task(),
         _visual_context((10, 10, 20, 20), label="forklift"),
         client,
     )
-    assert out[0]["meta"]["source"] == "visual_prompt"
+    assert out[0]["meta"]["source"] == "smart_visual"
 
 
-def test_visual_prompt_drops_match_overlapping_exemplar() -> None:
+def test_smart_visual_drops_match_overlapping_exemplar() -> None:
     """SAM almost always returns the exemplar position as a top match — that
     duplicate must be dropped via the IoU dedup."""
     client = _StubSam3Client()
@@ -593,7 +593,7 @@ def test_visual_prompt_drops_match_overlapping_exemplar() -> None:
         boxes_norm=[[0.10, 0.10, 0.30, 0.30], [0.50, 0.50, 0.70, 0.70]],
         scores=[0.95, 0.7],
     )
-    out = visual_prompt(
+    out = smart_visual(
         _task(),
         _visual_context((10, 10, 20, 20), label="forklift"),
         client,
@@ -605,7 +605,7 @@ def test_visual_prompt_drops_match_overlapping_exemplar() -> None:
     assert val["y"] == pytest.approx(50.0)
 
 
-def test_visual_prompt_drops_match_overlapping_existing_canvas_region() -> None:
+def test_smart_visual_drops_match_overlapping_existing_canvas_region() -> None:
     """Match that lands on a region already on the live canvas is dropped.
 
     Canvas state lives in ``context.result`` (live LS state), not on
@@ -617,13 +617,13 @@ def test_visual_prompt_drops_match_overlapping_existing_canvas_region() -> None:
         boxes_norm=[[0.50, 0.50, 0.70, 0.70], [0.80, 0.80, 0.95, 0.95]],
         scores=[0.8, 0.6],
     )
-    # Context has the V-tool draft AND an existing same-class rectangle
+    # Context has the smart_visual draft AND an existing same-class rectangle
     # the reviewer drew earlier in the session.
     ctx = {
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             },
@@ -643,14 +643,14 @@ def test_visual_prompt_drops_match_overlapping_existing_canvas_region() -> None:
             "image_size": [1920, 1080],
         },
     }
-    out = visual_prompt(task, ctx, client)
+    out = smart_visual(task, ctx, client)
     # First match overlaps the existing canvas region → dropped. Only [.8, .8, .95, .95] kept.
     assert len(out) == 1
     val = out[0]["value"]
     assert val["x"] == pytest.approx(80.0)
 
 
-def test_visual_prompt_skips_cancelled_annotations() -> None:
+def test_smart_visual_skips_cancelled_annotations() -> None:
     """A reviewer-cancelled annotation is not part of the dedup pool."""
     client = _StubSam3Client()
     client._visual_resp = _StubResp(
@@ -660,7 +660,7 @@ def test_visual_prompt_skips_cancelled_annotations() -> None:
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             },
@@ -686,31 +686,31 @@ def test_visual_prompt_skips_cancelled_annotations() -> None:
             }
         ],
     }
-    out = visual_prompt(task, ctx, client)
+    out = smart_visual(task, ctx, client)
     # Cancelled annotation is ignored → match at (50,50) survives.
     assert len(out) == 1
 
 
-def test_visual_prompt_drops_zero_area_exemplar() -> None:
+def test_smart_visual_drops_zero_area_exemplar() -> None:
     """Reviewer dragging exemplar to a zero-area drag → SAM gets nothing."""
     client = _StubSam3Client()
     ctx = {
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 0, "height": 0,
                           "labels": ["forklift"]},
             },
         ]
     }
-    out = visual_prompt(_task(), ctx, client)
+    out = smart_visual(_task(), ctx, client)
     assert out == []
     assert client.calls == []
 
 
-def test_visual_prompt_uses_only_visual_prompt_region_as_exemplar() -> None:
-    """Phase B-frontend dispatch: when a region with from_name=visual_prompt
+def test_smart_visual_uses_only_smart_visual_region_as_exemplar() -> None:
+    """Phase B-frontend dispatch: when a region with from_name=smart_visual
     is present, ONLY that region is sent to SAM. Other rectangles in the
     context (existing accepted boxes) must not be passed as exemplars."""
     client = _StubSam3Client()
@@ -725,15 +725,15 @@ def test_visual_prompt_uses_only_visual_prompt_region_as_exemplar() -> None:
             },
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             },
         ]
     }
-    visual_prompt(_task(), ctx, client)
+    smart_visual(_task(), ctx, client)
     kwargs = client.calls[0][1]
-    # Only the visual_prompt region is the exemplar, not the bbox region.
+    # Only the smart_visual region is the exemplar, not the bbox region.
     assert len(kwargs["exemplar_boxes_norm"]) == 1
     assert kwargs["exemplar_boxes_norm"][0] == pytest.approx([0.10, 0.10, 0.30, 0.30])
 
@@ -829,7 +829,7 @@ def test_dispatch_routes_keypoint_to_smart_click() -> None:
     assert client.calls[0][0] == "click_mask"
 
 
-def test_dispatch_routes_textarea_to_smart_text() -> None:
+def test_dispatch_routes_textarea_to_smart_search() -> None:
     client = _StubSam3Client()
     client._text_resp = _StubResp(
         boxes=[[0.1, 0.1, 0.5, 0.5]], scores=[0.7], labels=["x"]
@@ -854,8 +854,8 @@ def test_dispatch_no_context_no_db_returns_empty() -> None:
     assert dispatch(_task(), None, sam3_client=None, db_path=None) == []
 
 
-def test_dispatch_routes_v_tool_to_visual_prompt() -> None:
-    """A draft with from_name='visual_prompt' must route to visual_prompt,
+def test_dispatch_routes_v_tool_to_smart_visual() -> None:
+    """A draft with from_name='smart_visual' must route to smart_visual,
     not fall through to batch_proposals. Mirrors server._predict_one
     behaviour so callers using the pure dispatch() get the same result.
     """
@@ -867,7 +867,7 @@ def test_dispatch_routes_v_tool_to_visual_prompt() -> None:
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "rectanglelabels": ["forklift"]},
             },
@@ -879,7 +879,7 @@ def test_dispatch_routes_v_tool_to_visual_prompt() -> None:
 
 
 def test_dispatch_v_tool_does_not_fall_to_batch(seeded_pipeline_db: Path) -> None:
-    """Even with a viable db_path, a V-tool draft must NEVER fall through
+    """Even with a viable db_path, a smart_visual draft must NEVER fall through
     to batch_proposals. The reviewer drew an exemplar, not asked for the
     cached audit layer.
     """
@@ -889,7 +889,7 @@ def test_dispatch_v_tool_does_not_fall_to_batch(seeded_pipeline_db: Path) -> Non
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "rectanglelabels": ["forklift"]},
             },
@@ -936,8 +936,8 @@ def test_server_predict_smart_click_path() -> None:
     assert client.calls[0][0] == "click_mask"
 
 
-def test_server_predict_visual_prompt_path() -> None:
-    """V-tool draws fire visual_prompt, not smart_click or smart_text."""
+def test_server_predict_smart_visual_path() -> None:
+    """smart_visual draws fire smart_visual, not smart_click or smart_search."""
     client = _StubSam3Client()
     client._visual_resp = _StubResp(
         boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.9]
@@ -947,7 +947,7 @@ def test_server_predict_visual_prompt_path() -> None:
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             }
@@ -961,7 +961,7 @@ def test_server_predict_visual_prompt_path() -> None:
 
 def test_server_predict_regular_bbox_does_not_fire_ml() -> None:
     """A regular Rectangle (from_name=bbox) draw must NOT trigger ML —
-    only V-tool (from_name=visual_prompt) drafts route to visual_prompt."""
+    only smart_visual (from_name=smart_visual) drafts route to smart_visual."""
     client = _StubSam3Client()
     backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
     ctx = {
@@ -1057,16 +1057,16 @@ def test_route_enabled_default_true(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in (
         "ENABLE_BATCH_PROPOSALS",
         "ENABLE_SMART_CLICK",
-        "ENABLE_SMART_TEXT",
-        "ENABLE_VISUAL_PROMPT",
-        "ENABLE_PROPAGATE_STATIC",
+        "ENABLE_SMART_SEARCH",
+        "ENABLE_SMART_TRACK",
+        "ENABLE_SMART_VISUAL",
     ):
         monkeypatch.delenv(var, raising=False)
     assert _route_enabled("smart_click") is True
-    assert _route_enabled("smart_text") is True
-    assert _route_enabled("visual_prompt") is True
+    assert _route_enabled("smart_search") is True
+    assert _route_enabled("smart_track") is True
+    assert _route_enabled("smart_visual") is True
     assert _route_enabled("batch_proposals") is True
-    assert _route_enabled("propagate_static") is True
 
 
 @pytest.mark.parametrize("falsy", ["0", "false", "FALSE", "no", "off", "disabled", ""])
@@ -1108,10 +1108,10 @@ def test_server_smart_click_gate_off_skips_sam(
     assert client.calls == []
 
 
-def test_server_smart_text_gate_off_skips_sam(
+def test_server_smart_search_gate_off_skips_sam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ENABLE_SMART_TEXT", "false")
+    monkeypatch.setenv("ENABLE_SMART_SEARCH", "false")
     client = _StubSam3Client()
     client._text_resp = _StubResp(
         boxes=[[0.1, 0.1, 0.4, 0.4]], scores=[0.9], labels=["forklift"]
@@ -1122,10 +1122,10 @@ def test_server_smart_text_gate_off_skips_sam(
     assert client.calls == []
 
 
-def test_server_visual_prompt_gate_off_skips_sam(
+def test_server_smart_visual_gate_off_skips_sam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ENABLE_VISUAL_PROMPT", "off")
+    monkeypatch.setenv("ENABLE_SMART_VISUAL", "off")
     client = _StubSam3Client()
     client._visual_resp = _StubResp(boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.9])
     backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
@@ -1133,7 +1133,7 @@ def test_server_visual_prompt_gate_off_skips_sam(
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             }
@@ -1147,11 +1147,11 @@ def test_server_visual_prompt_gate_off_skips_sam(
 def test_server_v_tool_gate_off_falls_through_to_keypoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mixed-context: a V-tool draft + a keypoint draft on the same predict
-    call. With ENABLE_VISUAL_PROMPT off, the keypoint must still reach
+    """Mixed-context: a smart_visual draft + a keypoint draft on the same predict
+    call. With ENABLE_SMART_VISUAL off, the keypoint must still reach
     smart_click — gating one route off shouldn't suppress every other
     route on the same draft."""
-    monkeypatch.setenv("ENABLE_VISUAL_PROMPT", "off")
+    monkeypatch.setenv("ENABLE_SMART_VISUAL", "off")
     client = _StubSam3Client()
     client._click_resp = _StubResp(bbox=[0.1, 0.2, 0.3, 0.4], score=0.7)
     client._visual_resp = _StubResp(boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.9])
@@ -1160,7 +1160,7 @@ def test_server_v_tool_gate_off_falls_through_to_keypoint(
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "rectanglelabels": ["forklift"]},
             },
@@ -1173,7 +1173,7 @@ def test_server_v_tool_gate_off_falls_through_to_keypoint(
     }
     out = backend.predict([_task()], context=ctx)
     assert len(out[0]["result"]) == 1
-    # smart_click ran; visual_prompt did not.
+    # smart_click ran; smart_visual did not.
     methods = [name for name, _ in client.calls]
     assert "click_mask" in methods
     assert "visual_prompt" not in methods
@@ -1217,10 +1217,10 @@ def test_server_disabled_smart_route_does_not_fall_through_to_batch(
 def test_server_mixed_draft_disabled_route_still_runs_enabled_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mixed context with disabled smart_text + enabled smart_click must
+    """Mixed context with disabled smart_search + enabled smart_click must
     run smart_click — the disabled draft is `continue`d past, not a
     short-circuit return."""
-    monkeypatch.setenv("ENABLE_SMART_TEXT", "0")
+    monkeypatch.setenv("ENABLE_SMART_SEARCH", "0")
     monkeypatch.delenv("ENABLE_SMART_CLICK", raising=False)
     client = _StubSam3Client()
     client._click_resp = _StubResp(bbox=[0.1, 0.1, 0.5, 0.5], score=0.8)
@@ -1242,7 +1242,7 @@ def test_server_mixed_draft_disabled_route_still_runs_enabled_route(
         ]
     }
     out = backend.predict([_task()], context=ctx)
-    assert out[0]["result"], "smart_click should have fired despite disabled smart_text"
+    assert out[0]["result"], "smart_click should have fired despite disabled smart_search"
     assert any(c[0] == "click_mask" for c in client.calls)
     assert not any(c[0] == "text_detect" for c in client.calls)
 
@@ -1398,7 +1398,7 @@ def test_smart_click_keeps_different_class_overlap() -> None:
     assert out[0]["value"]["rectanglelabels"] == ["person"]
 
 
-def test_smart_text_internal_nms_collapses_near_duplicates() -> None:
+def test_smart_search_internal_nms_collapses_near_duplicates() -> None:
     """Two SAM matches at near-identical coords collapse to one (NMS).
 
     Lower-scoring duplicate is suppressed.
@@ -1412,12 +1412,12 @@ def test_smart_text_internal_nms_collapses_near_duplicates() -> None:
         scores=[0.9, 0.4],
         labels=["forklift", "forklift"],
     )
-    out = smart_text(_task(), _text_context(["forklift"]), client)
+    out = smart_search(_task(), _text_context(["forklift"]), client)
     assert len(out) == 1
     assert out[0]["score"] == pytest.approx(0.9)
 
 
-def test_smart_text_internal_nms_keeps_different_classes_at_same_spot() -> None:
+def test_smart_search_internal_nms_keeps_different_classes_at_same_spot() -> None:
     """Class-aware NMS — person and forklift at same coords both survive."""
     client = _StubSam3Client()
     client._text_resp = _StubResp(
@@ -1428,19 +1428,19 @@ def test_smart_text_internal_nms_keeps_different_classes_at_same_spot() -> None:
         scores=[0.9, 0.8],
         labels=["forklift", "person"],
     )
-    out = smart_text(_task(), _text_context(["x"]), client)
+    out = smart_search(_task(), _text_context(["x"]), client)
     assert len(out) == 2
     assert {r["value"]["rectanglelabels"][0] for r in out} == {"forklift", "person"}
 
 
-def test_smart_text_drops_match_overlapping_seeded_prediction() -> None:
-    """Re-fire smart_text after task open with a seeded yellow
+def test_smart_search_drops_match_overlapping_seeded_prediction() -> None:
+    """Re-fire smart_search after task open with a seeded yellow
     prediction at the same coords → match is DROPPED.
 
     Live-test 2026-04-30 task 37: LS doesn't echo task.predictions in
-    context.result for smart_text fires, so the canvas-dedup pool was
+    context.result for smart_search fires, so the canvas-dedup pool was
     empty and SAM=16 → kept=16. The fix re-includes
-    ``task.predictions`` in the dedup pool for smart_text/visual_prompt
+    ``task.predictions`` in the dedup pool for smart_search/smart_visual
     (but not smart_click — refine clicks on a seeded box still produce
     a region).
     """
@@ -1452,11 +1452,11 @@ def test_smart_text_drops_match_overlapping_seeded_prediction() -> None:
     )
     task = _task()
     task["predictions"] = [_seeded_prediction([0.10, 0.10, 0.30, 0.30], "forklift")]
-    out = smart_text(task, _text_context(["forklift"]), client)
+    out = smart_search(task, _text_context(["forklift"]), client)
     assert out == []
 
 
-def test_visual_prompt_internal_nms_collapses_near_duplicates() -> None:
+def test_smart_visual_internal_nms_collapses_near_duplicates() -> None:
     """SAM grounding head emitting two near-identical matches → one survives."""
     client = _StubSam3Client()
     client._visual_resp = _StubResp(
@@ -1470,20 +1470,20 @@ def test_visual_prompt_internal_nms_collapses_near_duplicates() -> None:
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             }
         ]
     }
-    out = visual_prompt(_task(), ctx, client)
+    out = smart_visual(_task(), ctx, client)
     assert len(out) == 1
     assert out[0]["score"] == pytest.approx(0.95)
 
 
-def test_visual_prompt_drops_match_overlapping_seeded_prediction() -> None:
-    """Seeded predictions ARE in the dedup pool for visual_prompt —
-    same reason as smart_text: LS doesn't echo task.predictions in
+def test_smart_visual_drops_match_overlapping_seeded_prediction() -> None:
+    """Seeded predictions ARE in the dedup pool for smart_visual —
+    same reason as smart_search: LS doesn't echo task.predictions in
     context.result on smart-tool fires."""
     client = _StubSam3Client()
     client._visual_resp = _StubResp(
@@ -1496,17 +1496,17 @@ def test_visual_prompt_drops_match_overlapping_seeded_prediction() -> None:
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             }
         ]
     }
-    out = visual_prompt(task, ctx, client)
+    out = smart_visual(task, ctx, client)
     assert out == []
 
 
-def test_visual_prompt_dedup_is_class_aware_against_canvas() -> None:
+def test_smart_visual_dedup_is_class_aware_against_canvas() -> None:
     """Different-class overlap on the canvas shouldn't suppress the match."""
     client = _StubSam3Client()
     client._visual_resp = _StubResp(
@@ -1520,13 +1520,13 @@ def test_visual_prompt_dedup_is_class_aware_against_canvas() -> None:
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             }
         ]
     }
-    out = visual_prompt(task, ctx, client)
+    out = smart_visual(task, ctx, client)
     assert len(out) == 1
     assert out[0]["value"]["rectanglelabels"] == ["forklift"]
 
@@ -1883,11 +1883,11 @@ def test_build_sam3_client_retries_once_on_timeout() -> None:
     assert calls == ["click_mask", "click_mask"]
 
 
-def test_smart_text_does_not_dedup_against_v_tool_exemplar() -> None:
-    """V-tool exemplar on canvas must NOT suppress smart_text matches.
+def test_smart_search_does_not_dedup_against_v_tool_exemplar() -> None:
+    """smart_visual exemplar on canvas must NOT suppress smart_search matches.
 
-    Without filtering visual_prompt regions out of the canvas pool, a
-    same-class smart_text match overlapping a leftover exemplar would
+    Without filtering smart_visual regions out of the canvas pool, a
+    same-class smart_search match overlapping a leftover exemplar would
     silently disappear.
     """
     client = _StubSam3Client()
@@ -1900,7 +1900,7 @@ def test_smart_text_does_not_dedup_against_v_tool_exemplar() -> None:
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             },
@@ -1911,7 +1911,7 @@ def test_smart_text_does_not_dedup_against_v_tool_exemplar() -> None:
             },
         ]
     }
-    out = smart_text(_task(), ctx, client)
+    out = smart_search(_task(), ctx, client)
     assert len(out) == 1
     assert out[0]["value"]["rectanglelabels"] == ["forklift"]
 

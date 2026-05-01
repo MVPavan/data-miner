@@ -7,11 +7,13 @@ to SAM 3.1 (port 3014), and task-open seeding is a pure sqlite SELECT against
 
 ## Routes
 
-| LS draft type            | Route             | Backend call                                  |
-|--------------------------|-------------------|-----------------------------------------------|
-| `keypointlabels`         | `smart_click`     | `Sam3OneHttpClient.click_mask` (point→mask)   |
-| `textarea`               | `smart_text`      | `Sam3OneHttpClient.text_detect` (text→detect) |
-| no context (task open)   | `batch_proposals` | sqlite SELECT on `proposals` table            |
+| LS draft type                          | Route             | Backend call                                       |
+|----------------------------------------|-------------------|----------------------------------------------------|
+| `keypointlabels`                       | `smart_click`     | `Sam3OneHttpClient.click_mask` (point→mask)        |
+| `textarea`                             | `smart_search`    | `Sam3OneHttpClient.text_detect` (text→detect)      |
+| `rectanglelabels` (`from_name="smart_visual"`) | `smart_visual` | `Sam3OneHttpClient.visual_prompt` (exemplar→similar) |
+| `rectanglelabels` (`from_name="smart_track"`)  | `smart_track`  | `Sam3OneHttpClient.track` (video tracker)            |
+| no context (task open)                 | `batch_proposals` | sqlite SELECT on `proposals` table                  |
 
 `batch_proposals` runs even when SAM 3.1 is unreachable, so reviewers always
 see the cached pipeline output as soon as a task opens.

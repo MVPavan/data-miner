@@ -72,7 +72,7 @@ def test_human_review_round_trip_via_aa_v4_reader(seeded_pipeline_db: Path) -> N
         corrections=[correction],
         deletions=["c2"],
         notes="some notes",
-        ml_modes_used=["smart_text", "click_mask"],
+        ml_modes_used=["smart_search", "click_mask"],
         ls_completion_id=9001,
         stage_timing_ms=12.0,
     )

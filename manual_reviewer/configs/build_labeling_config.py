@@ -3,10 +3,10 @@
 Single source of truth: the dataset's ``classes.txt`` (one class per line).
 Hard-coding the palette in the XML drifted on every dataset switch — this
 reads the file at build time and substitutes a 4-block label palette
-(bbox + smart_click + visual_prompt + smart_track) plus the page chrome.
+(bbox + smart_click + smart_visual + smart_track) plus the page chrome.
 
 Hotkey map: 1-0, q-w-e-r-t-y-u-i-o-p, a-s-d, **skipping "v"** (reserved
-by the visual_prompt toggle) and "f" (reserved as a future fallback).
+by the smart_visual toggle) and "f" (reserved as a future fallback).
 That's 23 keys; classes beyond that get no hotkey (UI click still works).
 
 Run::
@@ -55,13 +55,11 @@ _TEMPLATE = """\
   <View style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
     <Header value="Auto:"/>
     <Choices name="auto_tool" toName="image" choice="single" showInline="true">
-      <Choice value="none"          hotkey="escape" selected="true"/>
-      <Choice value="visual_prompt" hotkey="ctrl+v"/>
-      <Choice value="smart_click"   hotkey="ctrl+k"/>
-      <Choice value="smart_text"    hotkey="ctrl+t"/>
-      <Choice value="smart_track"   hotkey="ctrl+g"/>
-      <Choice value="track_similar" hotkey="ctrl+b"/>
-      <Choice value="propagate_now" hotkey="shift+j"/>
+      <Choice value="none"         hotkey="escape" selected="true"/>
+      <Choice value="smart_visual" hotkey="shift+v"/>
+      <Choice value="smart_click"  hotkey="shift+c"/>
+      <Choice value="smart_search" hotkey="shift+s"/>
+      <Choice value="smart_track"  hotkey="shift+t"/>
     </Choices>
   </View>
 
@@ -76,14 +74,14 @@ _TEMPLATE = """\
   </View>
 
   <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_click">
-  <KeyPointLabels name="click" toName="image" smart="true" strokeWidth="3">
+  <KeyPointLabels name="click" toName="image" smart="true" smartOnly="true" strokeWidth="3">
 {click_labels}
   </KeyPointLabels>
   </View>
 
-  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="visual_prompt">
-  <RectangleLabels name="visual_prompt" toName="image"
-                   smart="true"
+  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_visual">
+  <RectangleLabels name="smart_visual" toName="image"
+                   smart="true" smartOnly="true"
                    strokeColor="#ff7700" opacity="0.05" strokeWidth="2">
 {visual_labels}
   </RectangleLabels>
@@ -91,29 +89,15 @@ _TEMPLATE = """\
 
   <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_track">
   <RectangleLabels name="smart_track" toName="image"
-                   smart="true"
+                   smart="true" smartOnly="true"
                    strokeColor="#16a085" opacity="0.05" strokeWidth="2">
 {track_labels}
   </RectangleLabels>
   </View>
 
-  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="track_similar">
-  <RectangleLabels name="track_similar" toName="image"
-                   smart="true"
-                   strokeColor="#9b59b6" opacity="0.05" strokeWidth="2">
-{similar_labels}
-  </RectangleLabels>
-  </View>
-
-  <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="propagate_now">
-  <KeyPointLabels name="propagate_now" toName="image" smart="true" strokeWidth="3">
-    <Label value="propagate" background="#e74c3c" hotkey="shift+j"/>
-  </KeyPointLabels>
-  </View>
-
   <View style="display: flex; gap: 16px; margin-top: 8px;">
     <View style="flex: 0 0 50%;">
-      <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_text">
+      <View visibleWhen="choice-selected" whenTagName="auto_tool" whenChoiceValue="smart_search">
         <TextArea name="text_query" toName="image" smart="true"
                   editable="true"
                   placeholder="text prompt — e.g. 'forklift'"/>
@@ -168,7 +152,6 @@ def render(classes_path: Path) -> str:
         click_labels=block,
         visual_labels=block,
         track_labels=block,
-        similar_labels=block,
     )
 
 

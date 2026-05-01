@@ -165,7 +165,7 @@ class Sam3OneHttpClient(_Sam3RefineHttpBase):
       * :meth:`refine` — bbox → refined bbox + score (inherited)
       * :meth:`track` — stateless video-tracker RPC
       * :meth:`click_mask` — point → mask + tight bbox (LS smart_click)
-      * :meth:`text_detect` — text → boxes + scores (LS smart_text)
+      * :meth:`text_detect` — text → boxes + scores (LS smart_search)
 
     Same ``Sam3Client`` Protocol surface for ``refine``, so the reconciler
     treats this as a drop-in replacement for ``Sam3HttpClient``.
@@ -247,7 +247,7 @@ class Sam3OneHttpClient(_Sam3RefineHttpBase):
         prompts: list[str],
         threshold: float | None = None,
     ) -> DetectorResponse:
-        """Text → detect inference for the LS ML backend smart_text route."""
+        """Text → detect inference for the LS ML backend smart_search route."""
         req = DetectorRequest(
             image_path=image_path,
             prompts=prompts,

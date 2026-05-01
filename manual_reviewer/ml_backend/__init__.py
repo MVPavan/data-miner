@@ -14,14 +14,16 @@ from manual_reviewer.ml_backend.routes import (
     batch_proposals,
     dispatch,
     smart_click,
-    smart_text,
-    visual_prompt,
+    smart_search,
+    smart_track,
+    smart_visual,
 )
 
 __all__ = [
     "batch_proposals",
     "dispatch",
     "smart_click",
-    "smart_text",
-    "visual_prompt",
+    "smart_search",
+    "smart_track",
+    "smart_visual",
 ]

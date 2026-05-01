@@ -119,7 +119,7 @@ def test_canvas_rectangles_excludes_task_predictions_by_default() -> None:
 
 
 def test_canvas_rectangles_includes_predictions_when_opted_in() -> None:
-    """smart_text / visual_prompt usage: predictions ARE in the pool
+    """smart_search / smart_visual usage: predictions ARE in the pool
     so a SAM-returned duplicate at a seeded location gets dropped.
     LS doesn't echo task.predictions in context.result on smart-tool
     fires, so this is the only path the dedup has to know about them."""
@@ -136,23 +136,23 @@ def test_canvas_rectangles_includes_predictions_when_opted_in() -> None:
 def test_canvas_rectangles_includes_draft_context() -> None:
     """The exemplar in context.result shows up only when the caller opts in.
 
-    By default ``from_name="visual_prompt"`` regions are filtered out so a
-    leftover V-tool exemplar doesn't suppress smart_text matches. The
-    visual_prompt route itself passes ``include_visual_prompt=True`` to
+    By default ``from_name="smart_visual"`` regions are filtered out so a
+    leftover smart_visual exemplar doesn't suppress smart_search matches. The
+    smart_visual route itself passes ``include_smart_visual=True`` to
     keep the exemplar in the dedup pool.
     """
     ctx = {
         "result": [
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 10, "y": 10, "width": 20, "height": 20,
                           "labels": ["forklift"]},
             }
         ]
     }
     assert canvas_rectangles({}, ctx) == []
-    out = canvas_rectangles({}, ctx, include_visual_prompt=True)
+    out = canvas_rectangles({}, ctx, include_smart_visual=True)
     assert len(out) == 1
     assert out[0][1] == "forklift"
 
@@ -178,18 +178,18 @@ def test_canvas_rectangles_pool_is_context_only() -> None:
             },
             {
                 "type": "rectanglelabels",
-                "from_name": "visual_prompt",
+                "from_name": "smart_visual",
                 "value": {"x": 80, "y": 80, "width": 5, "height": 5,
                           "labels": ["car"]},
             },
         ]
     }
-    # Default: V-tool exemplar is excluded; only the bbox region survives.
+    # Default: smart_visual exemplar is excluded; only the bbox region survives.
     out = canvas_rectangles(task, ctx)
     classes = sorted(c for _, c in out)
     assert classes == ["bicycle"]
-    # include_visual_prompt=True: visual_prompt route's view (exemplar in pool).
-    out_v = canvas_rectangles(task, ctx, include_visual_prompt=True)
+    # include_smart_visual=True: smart_visual route's view (exemplar in pool).
+    out_v = canvas_rectangles(task, ctx, include_smart_visual=True)
     classes_v = sorted(c for _, c in out_v)
     assert classes_v == ["bicycle", "car"]
 

@@ -18,7 +18,9 @@ Implementation reference. Decisions made 2026-04-28; per-phase detail below.
 | 1 | Task open | seeded `predictions[]` from `pipeline.db` | DB read |
 | 2 | Task open via `/predict` (no context) | `batch_proposals` | DB read |
 | 3 | KeyPoint draw | `smart_click` | SAM 3.1 `Sam3Image.predict_inst` |
-| 4 | TextArea submit | `smart_text` | SAM 3.1 video predictor (text grounding) |
+| 4 | TextArea submit | `smart_search` | SAM 3.1 text grounding |
+| 5 | smart-Rectangle (`from_name="smart_visual"`) | `smart_visual` | SAM 3.1 visual prompting |
+| 6 | smart-Rectangle (`from_name="smart_track"`) | `smart_track` | SAM 3.1 video tracker |
 
 ---
 
@@ -173,10 +175,10 @@ Predictions land on each target frame's LS task `predictions[]` only — no new 
 | Env var | Gates |
 |---|---|
 | `ENABLE_BATCH_PROPOSALS` | Task-open `batch_proposals` |
-| `ENABLE_SMART_CLICK` | KeyPoint → SAM 3.1 click_mask |
-| `ENABLE_SMART_TEXT` | TextArea → SAM 3.1 text_detect |
-| `ENABLE_VISUAL_PROMPT` | Phase B route |
-| `ENABLE_PROPAGATE_STATIC` | Phase C route |
+| `ENABLE_SMART_CLICK`     | KeyPoint → SAM 3.1 `click_mask` |
+| `ENABLE_SMART_SEARCH`    | TextArea → SAM 3.1 `text_detect` |
+| `ENABLE_SMART_VISUAL`    | smart-Rectangle (`from_name="smart_visual"`) → SAM 3.1 `visual_prompt` |
+| `ENABLE_SMART_TRACK`     | smart-Rectangle (`from_name="smart_track"`) → SAM 3.1 `track` |
 
 Default all `true`. [server.py:_predict_one](../ml_backend/server.py) gets a `_route_enabled(name)` helper checked before each dispatch; disabled routes log `route=X disabled by env` and return no regions. Restart-to-toggle is fine for v1.
 

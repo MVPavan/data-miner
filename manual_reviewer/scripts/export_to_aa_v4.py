@@ -238,7 +238,7 @@ def _extract_seeded(predictions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pull the finalize-seeded region results out of LS ``predictions[]``.
 
     ``predictions[0]`` is unsafe with Phase B+ live: the ML backend stores
-    its own predictions (smart_text re-runs, etc.) which can land in front
+    its own predictions (smart_search re-runs, etc.) which can land in front
     of the finalize seed. The diff classifier in :func:`parse_ls_completion`
     needs the finalize baseline specifically to tag accepts as
     ``finalize`` / ``edited`` / ``relabeled`` (vs ``added``).

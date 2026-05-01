@@ -1,10 +1,12 @@
 """Pure routing for the LS ML backend predict() entry point.
 
-Three modes — picked by inspecting the LS ``context`` payload:
+Five modes — picked by inspecting the LS ``context`` payload:
 
-  * No context (or no draft) → :func:`batch_proposals` (cached DB lookup).
-  * Draft is a KeyPoint        → :func:`smart_click` (SAM 3.1 click→mask).
-  * Draft is a TextArea        → :func:`smart_text` (SAM 3.1 text→detect).
+  * No context (or no draft)            → :func:`batch_proposals` (cached DB lookup).
+  * Draft has from_name="smart_track"   → :func:`smart_track` (SAM 3.1 video tracker).
+  * Draft has from_name="smart_visual"  → :func:`smart_visual` (SAM 3.1 visual prompt).
+  * Draft is a KeyPoint                 → :func:`smart_click` (SAM 3.1 click→mask).
+  * Draft is a TextArea                 → :func:`smart_search` (SAM 3.1 text→detect).
 
 Each route is independently unit-testable. The server (server.py) is just
 a LabelStudioMLBase wrapper that calls :func:`dispatch`.
@@ -33,11 +35,8 @@ from manual_reviewer.ml_backend.ls_payload import (
 )
 from manual_reviewer.ml_backend.ls_rest import LSRestClient
 from manual_reviewer.ml_backend.smart_track_lib import (
-    MultiSeedPropagateResult,
     PropagateResult,
-    SeedSpec,
     TrackerLikeClient,
-    propagate_multi_via_tracker,
     propagate_via_tracker,
 )
 
@@ -54,12 +53,10 @@ __all__ = [
     "Sam3LikeClient",
     "batch_proposals",
     "dispatch",
-    "propagate_now",
     "smart_click",
-    "smart_text",
+    "smart_search",
     "smart_track",
-    "track_similar",
-    "visual_prompt",
+    "smart_visual",
 ]
 
 
@@ -294,7 +291,7 @@ def smart_click(
 def _exemplars_from_context(
     context: dict[str, Any] | None,
     *,
-    from_name: str = "visual_prompt",
+    from_name: str = "smart_visual",
 ) -> tuple[list[list[float]], str | None]:
     """Pull rectangle exemplar(s) + a class hint out of an LS context.
 
@@ -304,11 +301,10 @@ def _exemplars_from_context(
     output regions so they don't all get tagged ``other``.
 
     ``from_name`` selects which smart Rectangle is treated as the
-    exemplar source. Default ``visual_prompt`` matches the V-tool;
-    pass ``track_similar`` for the smart_track_all (Option A) flow.
-    When that smart-tool tag is found in the context, only its regions
-    are accepted as exemplars; otherwise we fall back to any rectangle
-    (covers test paths and direct route calls).
+    exemplar source. Default ``smart_visual`` matches the smart Rectangle
+    tool. When that smart-tool tag is found in the context, only its
+    regions are accepted as exemplars; otherwise we fall back to any
+    rectangle (covers test paths and direct route calls).
     """
     if not isinstance(context, dict):
         return [], None
@@ -344,7 +340,7 @@ def _exemplars_from_context(
     return boxes, label_hint
 
 
-def visual_prompt(
+def smart_visual(
     task: dict[str, Any],
     context: dict[str, Any] | None,
     sam3_client: Sam3LikeClient,
@@ -357,10 +353,11 @@ def visual_prompt(
 ) -> list[dict[str, Any]]:
     """Within-image visual prompting — exemplar bbox(es) → all matches.
 
-    The reviewer draws an exemplar bbox with the V-tool (smart Rectangle),
-    LS fires ``/predict``, SAM 3.1's geometric-prompt grounding head
-    returns every matching instance in the same image. The exemplar's
-    class label rides through onto every propagated region.
+    The reviewer draws an exemplar bbox with the smart Rectangle tool
+    (``from_name="smart_visual"``), LS fires ``/predict``, SAM 3.1's
+    geometric-prompt grounding head returns every matching instance in
+    the same image. The exemplar's class label rides through onto every
+    propagated region.
 
     Two dedup layers run on the SAM output:
 
@@ -382,7 +379,7 @@ def visual_prompt(
         return []
     exemplars, label_hint = _exemplars_from_context(context)
     if not exemplars:
-        logger.info("visual_prompt: no exemplar bbox found in context")
+        logger.info("smart_visual: no exemplar bbox found in context")
         return []
     # Drop degenerate (zero-area) exemplars — SAM grounding behavior on a
     # zero-w/h prompt is undefined.
@@ -391,14 +388,14 @@ def visual_prompt(
         if (e[2] - e[0]) > 1e-3 and (e[3] - e[1]) > 1e-3
     ]
     if not exemplars:
-        logger.info("visual_prompt: all exemplars degenerate (zero area)")
+        logger.info("smart_visual: all exemplars degenerate (zero area)")
         return []
     existing = canvas_rectangles(
-        task, context, include_visual_prompt=True, include_predictions=True
+        task, context, include_smart_visual=True, include_predictions=True
     )
 
     logger.info(
-        "visual_prompt: image=%s exemplars=%d label=%s threshold=%.2f existing=%d",
+        "smart_visual: image=%s exemplars=%d label=%s threshold=%.2f existing=%d",
         image_path,
         len(exemplars),
         label_hint,
@@ -413,7 +410,7 @@ def visual_prompt(
             max_results=max_results,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("visual_prompt: SAM 3.1 visual_prompt failed: %s", exc)
+        logger.warning("smart_visual: SAM 3.1 visual_prompt failed: %s", exc)
         return []
 
     boxes = list(getattr(resp, "boxes_norm", []) or [])
@@ -432,7 +429,7 @@ def visual_prompt(
             label,
             score=float(score or 0.0),
             extra_meta={
-                "source": "visual_prompt",
+                "source": "smart_visual",
                 "model_version": model_version,
             },
             original_width=width,
@@ -450,7 +447,7 @@ def visual_prompt(
     survivors, dropped = dedup_against(nmsed, existing, iou=dedup_iou)
     out = survivors[:max_results]
     logger.info(
-        "visual_prompt: SAM=%d → NMS=%d → canvas-dedup=%d → cap=%d (label=%s)",
+        "smart_visual: SAM=%d → NMS=%d → canvas-dedup=%d → cap=%d (label=%s)",
         len(proposed),
         len(nmsed),
         len(survivors),
@@ -458,11 +455,11 @@ def visual_prompt(
         label,
     )
     if dropped:
-        logger.debug("visual_prompt: dropped %d duplicate(s) vs canvas", dropped)
+        logger.debug("smart_visual: dropped %d duplicate(s) vs canvas", dropped)
     return out
 
 
-def smart_text(
+def smart_search(
     task: dict[str, Any],
     context: dict[str, Any] | None,
     sam3_client: Sam3LikeClient,
@@ -475,7 +472,7 @@ def smart_text(
 ) -> list[dict[str, Any]]:
     """TextArea → detect. Returns one region per matched box.
 
-    Two dedup layers, same shape as :func:`visual_prompt`:
+    Two dedup layers, same shape as :func:`smart_visual`:
 
       * **Internal NMS** at IoU > ``nms_iou`` (class-aware) collapses
         near-duplicate detections the grounding model emitted on the
@@ -511,7 +508,7 @@ def smart_text(
             threshold=threshold,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("smart_text: SAM 3.1 text_detect failed: %s", exc)
+        logger.warning("smart_search: SAM 3.1 text_detect failed: %s", exc)
         return []
 
     boxes = list(getattr(resp, "boxes", []) or [])
@@ -532,7 +529,7 @@ def smart_text(
             label,
             score=float(score or 0.0),
             extra_meta={
-                "source": "smart_text",
+                "source": "smart_search",
                 "model_version": model_version,
                 "prompt": raw_label,
             },
@@ -551,14 +548,14 @@ def smart_text(
     )
     out = survivors[:max_regions]
     logger.info(
-        "smart_text: SAM=%d → NMS=%d → canvas-dedup=%d → cap=%d",
+        "smart_search: SAM=%d → NMS=%d → canvas-dedup=%d → cap=%d",
         len(proposed),
         len(nmsed),
         len(survivors),
         len(out),
     )
     if dropped:
-        logger.debug("smart_text: dropped %d duplicate(s) vs canvas", dropped)
+        logger.debug("smart_search: dropped %d duplicate(s) vs canvas", dropped)
     return out
 
 
@@ -702,298 +699,6 @@ def smart_track(
     return [], result
 
 
-# ---------------------------------------------------------------------------
-# Option A: track_similar (Phase 1) + propagate_now (Phase 2)
-# ---------------------------------------------------------------------------
-
-
-def track_similar(
-    task: dict[str, Any],
-    context: dict[str, Any] | None,
-    sam3_client: Sam3LikeClient,
-    ls_rest: LSRestClient | None = None,
-    *,
-    threshold: float = 0.4,
-    max_results: int = 50,
-    dedup_iou: float = 0.7,
-    nms_iou: float = 0.85,
-    model_version: str = "sam3_1_track_similar",
-) -> list[dict[str, Any]]:
-    """Phase 1 of Option A: in-frame find-similar with track_similar tag.
-
-    Same SAM 3.1 visual_prompt grounding as :func:`visual_prompt`, but
-    the exemplar is read from regions tagged ``from_name="track_similar"``
-    and the returned regions also carry ``from_name="track_similar"``.
-    The tag is the correlation key Phase 2 (:func:`propagate_now`) uses
-    to know which rectangles on the canvas to propagate.
-
-    **Persistence note:** smart-tool predict responses are ephemeral
-    browser-side overlays — LS doesn't save them to ``task["predictions"]``
-    automatically. For Phase 2 to find these matches later, we POST a
-    persistent prediction record via LS REST (when ``ls_rest`` is
-    configured). The same regions also ride back in the predict
-    response so the reviewer sees immediate feedback; LS dedupes on
-    region.id so they don't show twice.
-
-    The reviewer drops or accepts the returned same-frame matches as
-    they do today; only what survives review will get propagated when
-    Phase 2 fires. False positives are isolated to this image — the
-    cross-frame predictions never appear unless the reviewer asks for
-    them, by design.
-    """
-    image_path = _get_image_path(task)
-    if not image_path:
-        return []
-    exemplars, label_hint = _exemplars_from_context(context, from_name="track_similar")
-    if not exemplars:
-        logger.info("track_similar: no exemplar bbox in context")
-        return []
-    exemplars = [
-        e for e in exemplars
-        if (e[2] - e[0]) > 1e-3 and (e[3] - e[1]) > 1e-3
-    ]
-    if not exemplars:
-        logger.info("track_similar: all exemplars degenerate")
-        return []
-    existing = canvas_rectangles(
-        task, context, include_visual_prompt=True, include_predictions=True
-    )
-
-    logger.info(
-        "track_similar: image=%s exemplars=%d label=%s threshold=%.2f existing=%d",
-        image_path, len(exemplars), label_hint, threshold, len(existing),
-    )
-    try:
-        resp = sam3_client.visual_prompt(
-            image_path=image_path,
-            exemplar_boxes_norm=exemplars,
-            threshold=threshold,
-            max_results=max_results,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("track_similar: SAM 3.1 visual_prompt failed: %s", exc)
-        return []
-
-    boxes = list(getattr(resp, "boxes_norm", []) or [])
-    scores = list(getattr(resp, "scores", []) or [])
-    label = label_hint or DEFAULT_LABEL
-    width, height = _get_image_dims(task)
-
-    proposed: list[dict[str, Any]] = []
-    for idx, bbox in enumerate(boxes):
-        bbox_norm = _bbox_to_norm_list(bbox)
-        if bbox_norm is None:
-            continue
-        score = scores[idx] if idx < len(scores) else 0.0
-        region = norm_box_to_ls_region(
-            bbox_norm,
-            label,
-            score=float(score or 0.0),
-            from_name="track_similar",
-            extra_meta={
-                "source": "track_similar",
-                "model_version": model_version,
-            },
-            original_width=width,
-            original_height=height,
-            original_rotation=0,
-        )
-        if region is not None:
-            proposed.append(region)
-
-    nmsed = nms_regions(proposed, iou=nms_iou)
-    survivors, dropped = dedup_against(nmsed, existing, iou=dedup_iou)
-    out = survivors[:max_results]
-    logger.info(
-        "track_similar: SAM=%d → NMS=%d → canvas-dedup=%d → cap=%d (label=%s)",
-        len(proposed), len(nmsed), len(survivors), len(out), label,
-    )
-    if dropped:
-        logger.debug("track_similar: dropped %d duplicate(s) vs canvas", dropped)
-
-    # Persist each match as a SEPARATE prediction record. LS's UI
-    # delete-button calls DELETE /api/predictions/<id>/ — when each
-    # match has its own prediction record, deleting a yellow draft
-    # in the canvas removes that record server-side, and Phase 2
-    # reads only the survivors. If we bundled all N matches into one
-    # prediction, LS's delete on a single region would either nuke
-    # the whole thing or leave it intact (version-dependent), and
-    # Phase 2 couldn't tell selective rejections.
-    task_id = task.get("id")
-    if out and ls_rest is not None and isinstance(task_id, int):
-        persisted = 0
-        for region in out:
-            score = float(region.get("score", 0.0) or 0.0)
-            pid = ls_rest.post_prediction(
-                task_id=task_id,
-                result=[region],
-                score=score,
-                model_version=model_version,
-            )
-            if pid is not None:
-                persisted += 1
-        logger.info(
-            "track_similar: persisted %d/%d region(s) as separate predictions",
-            persisted, len(out),
-        )
-
-    return out
-
-
-def _collect_track_similar_seeds(
-    task: dict[str, Any],
-    context: dict[str, Any] | None,
-) -> list[SeedSpec]:
-    """Walk current task's annotations + context to find track_similar
-    rectangles that survived review.
-
-    Sources, dedup'd by rounded bbox key:
-
-      1. ``task["annotations"][N]["result"]`` — accepted regions.
-         The reviewer explicitly committed these, so they're the
-         strongest signal of "propagate this".
-      2. ``context["result"]`` — current draft (typically the trigger
-         KeyPoint, but may include in-flight rectangles).
-      3. ``task["predictions"][N]["result"]`` — Phase 1 output that's
-         still on the canvas. LS Community keeps predictions in this
-         array regardless of UI-side rejection, so reading from here
-         means **all** Phase 1 matches propagate unless the reviewer
-         has accepted them into annotations (then dedup wins) or
-         explicitly DELETEd the prediction record via the LS REST API.
-
-    The reviewer's natural workflow ("draw exemplar → review same-frame
-    → Shift+J") results in matches sitting in ``predictions[]`` until
-    they accept; (3) is the path that makes Phase 2 fire usefully
-    without a separate per-match accept step.
-
-    Each seed gets a fresh ``track_group_id`` (UUID) tagged on the
-    sibling propagations so a future cascade route can correlate.
-    """
-    import uuid
-
-    seeds: list[SeedSpec] = []
-
-    def _from_region(region: dict[str, Any]) -> SeedSpec | None:
-        if not isinstance(region, dict):
-            return None
-        if region.get("from_name") != "track_similar":
-            return None
-        rtype = (region.get("type") or "").lower()
-        if rtype not in {"rectanglelabels", "rectangle"}:
-            return None
-        value = region.get("value") or {}
-        bbox = ls_box_to_norm(value)
-        if bbox is None:
-            return None
-        if (bbox[2] - bbox[0]) < 1e-3 or (bbox[3] - bbox[1]) < 1e-3:
-            return None
-        label: str | None = None
-        for key in ("rectanglelabels", "labels"):
-            arr = value.get(key)
-            if isinstance(arr, list) and arr and isinstance(arr[0], str) and arr[0]:
-                label = arr[0]
-                break
-        return SeedSpec(
-            bbox=bbox,
-            label=snap_label(label) if label else DEFAULT_LABEL,
-            track_group_id=uuid.uuid4().hex,
-        )
-
-    seen: set[tuple[float, float, float, float]] = set()
-
-    def _consider(region: Any) -> None:
-        spec = _from_region(region)
-        if spec is None:
-            return
-        key = tuple(round(b, 4) for b in spec.bbox)
-        if key in seen:
-            return
-        seen.add(key)
-        seeds.append(spec)
-
-    for ann in task.get("annotations") or []:
-        for region in (ann or {}).get("result") or []:
-            _consider(region)
-
-    if isinstance(context, dict):
-        for region in context.get("result") or []:
-            _consider(region)
-
-    for pred in task.get("predictions") or []:
-        for region in (pred or {}).get("result") or []:
-            _consider(region)
-
-    return seeds
-
-
-def propagate_now(
-    task: dict[str, Any],
-    context: dict[str, Any] | None,
-    sam3_client: TrackerLikeClient,
-    ls_rest: LSRestClient | None,
-    *,
-    score_thresh: float = 0.5,
-    motion_thresh: float = 0.05,
-    max_siblings: int = 100,
-    model_version: str = "sam3_1_track",
-) -> tuple[list[dict[str, Any]], MultiSeedPropagateResult | None]:
-    """Phase 2 of Option A: multi-seed propagate accepted track_similar regions.
-
-    Reads the current task's annotations + context for rectangles tagged
-    ``from_name="track_similar"`` (the survivors of Phase 1 review),
-    builds a multi-seed tracker call, applies the static-only filter
-    per seed, and POSTs each surviving propagation to the matching
-    sibling task via LS REST.
-
-    Returns ``([], MultiSeedPropagateResult)``: nothing seeds back into
-    the current task — the trigger keypoint stays as a draft the user
-    can delete. The result summary is logged so the user can see how
-    many siblings got propagations.
-
-    Preconditions: ``ls_rest`` configured (cross-task writes), at least
-    one ``track_similar`` rectangle present, image_id/path/project all
-    resolvable from the task. Failures degrade gracefully — return
-    ``([], None)`` and log.
-    """
-    if ls_rest is None:
-        logger.info("propagate_now: LS REST client not configured; skipping")
-        return [], None
-
-    seeds = _collect_track_similar_seeds(task, context)
-    if not seeds:
-        logger.info("propagate_now: no track_similar regions found on current task")
-        return [], None
-
-    image_path = _get_image_path(task)
-    image_id = (task.get("data") or {}).get("image_id")
-    project_id = _project_id_from_task(task)
-    if not image_path or not isinstance(image_id, str) or project_id is None:
-        logger.warning(
-            "propagate_now: missing image_path/image_id/project (path=%r id=%r proj=%r)",
-            image_path, image_id, project_id,
-        )
-        return [], None
-
-    logger.info(
-        "propagate_now: seed image=%s seeds=%d project=%s",
-        image_id, len(seeds), project_id,
-    )
-    result = propagate_multi_via_tracker(
-        sam3_client=sam3_client,
-        ls_rest=ls_rest,
-        project_id=project_id,
-        seed_image_path=image_path,
-        seed_image_id=image_id,
-        seeds=seeds,
-        current_task_id=task.get("id"),
-        score_thresh=score_thresh,
-        motion_thresh=motion_thresh,
-        max_siblings=max_siblings,
-        model_version=model_version,
-    )
-    return [], result
-
-
 def batch_proposals(
     task: dict[str, Any],
     db_path: Path | str | None,
@@ -1056,12 +761,12 @@ def dispatch(
 
     Mirrors :meth:`ManualReviewerMLBackend._predict_one` so that callers
     using this pure function (tests, scripts that bypass the LS server)
-    behave the same as the production server: a V-tool draft routes to
-    :func:`visual_prompt`; otherwise the per-region rectype fans out to
-    :func:`smart_click` / :func:`smart_text`. Drafts that don't match
-    any smart route return ``[]`` rather than falling through to
-    :func:`batch_proposals` — seeding cached proposals on top of an
-    intentional draft is never the reviewer's intent.
+    behave the same as the production server: a smart_visual draft
+    routes to :func:`smart_visual`; otherwise the per-region rectype
+    fans out to :func:`smart_click` / :func:`smart_search`. Drafts that
+    don't match any smart route return ``[]`` rather than falling
+    through to :func:`batch_proposals` — seeding cached proposals on
+    top of an intentional draft is never the reviewer's intent.
 
     Returns the LS ``result`` list (not the wrapping ``predictions`` envelope —
     callers wrap that themselves so they can attach a per-mode ``model_version``).
@@ -1069,22 +774,22 @@ def dispatch(
     if isinstance(context, dict) and context.get("result"):
         regions = context["result"]
         if sam3_client is not None and any(
-            isinstance(r, dict) and r.get("from_name") == "visual_prompt"
+            isinstance(r, dict) and r.get("from_name") == "smart_visual"
             for r in regions
         ):
-            return visual_prompt(task, context, sam3_client)
+            return smart_visual(task, context, sam3_client)
         handled = False
         for region in regions:
             if not isinstance(region, dict):
                 continue
-            if region.get("from_name") == "visual_prompt":
+            if region.get("from_name") == "smart_visual":
                 handled = True
                 continue
             rtype = (region.get("type") or "").lower()
             if rtype in {"keypointlabels", "keypoint"} and sam3_client is not None:
                 return smart_click(task, context, sam3_client)
             if rtype == "textarea" and sam3_client is not None:
-                return smart_text(task, context, sam3_client)
+                return smart_search(task, context, sam3_client)
             handled = True
         if handled:
             return []

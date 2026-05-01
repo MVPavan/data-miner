@@ -45,7 +45,7 @@ DEFAULT_LABELS: tuple[str, ...] = (
     "other",
 )
 """24-class palette mirrored from labeling_config.xml. Used to snap
-free-text class hints (e.g. smart_text prompt) to a known LS label
+free-text class hints (e.g. smart_search prompt) to a known LS label
 before they ride out as ``rectanglelabels``."""
 
 

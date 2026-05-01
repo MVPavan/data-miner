@@ -44,8 +44,8 @@ manual_reviewer/
 ├── docker-compose.review.yml        LS + Postgres + ML backend (alternative to manage_stack.sh)
 ├── ml_backend/                      LabelStudioMLBase adapter (no torch)
 │   ├── server.py                    Entry: `python -m manual_reviewer.ml_backend.server`
-│   ├── routes.py                    smart_click / smart_text / visual_prompt / smart_track / track_similar / propagate_now / batch_proposals
-│   ├── smart_track_lib.py           SAM 3.1 single + multi-seed video-tracker propagation across sibling frames
+│   ├── routes.py                    smart_click / smart_search / smart_visual / smart_track / batch_proposals
+│   ├── smart_track_lib.py           SAM 3.1 video-tracker propagation across sibling frames
 │   ├── ls_rest.py                   LS REST writer for cross-task prediction posts
 │   ├── lswebhook.py                 LS annotation webhook → .ls_backup/ (push-side, idle today)
 │   ├── aav4_client.py               Sam3OneHttpClient builder + cached-proposals reader
@@ -70,7 +70,7 @@ manual_reviewer/
 │   ├── export_to_aa_v4.py           LS export → pipeline.db
 │   ├── run_reconcile.py             cross-frame reconcile → Stage.RECONCILE
 │   └── mark_dedup.py                apply external dedup manifest
-└── tests/                           414 tests (round-trip + ML backend + reconcile + sync + smart_track + track_similar)
+└── tests/                           round-trip + ML backend + reconcile + sync + smart_track
 ```
 
 ---
@@ -211,7 +211,7 @@ Standard editing tools:
 | Type into the per-region `track_id` field | Carried through to `corrections[].track_id` |
 | Notes textarea | Carried through to `notes` |
 
-For the **smart tools** (click→mask, text→detect, V-tool exemplar) see
+For the **smart tools** (click→mask, text→detect, smart_visual exemplar) see
 the next section. Submit to commit the annotation.
 
 ### A5. Pull the corrections back
@@ -269,15 +269,13 @@ tool is active. Exactly one label palette is visible at a time, paired
 with the active tool. Hotkeys mirror the toggle so you don't need the
 mouse:
 
-| Auto: choice | Hotkey  | What's shown                                              |
-|--------------|---------|-----------------------------------------------------------|
-| `none`       | `Esc`   | Plain Rectangle tool with the bbox class palette          |
-| `smart_click`| `Ctrl+K`| KeyPoint tool — click on an object → SAM 3.1 click→mask   |
-| `smart_text` | `Ctrl+T`| TextArea — type a prompt → SAM 3.1 text→detect            |
-| `visual_prompt` (V-tool) | `Ctrl+V`| Rectangle exemplar — draw a box → SAM 3.1 visual prompting on similar instances |
-| `smart_track`| `Ctrl+G`| Rectangle seed — draw a box on a static object → SAM 3.1 video tracker propagates it across sibling clip frames |
-| `track_similar` | `Ctrl+B` | (Phase 1) Rectangle exemplar — like visual_prompt but its matches are propagation-eligible; review/reject same-frame matches before firing Phase 2 |
-| `propagate_now` | `Shift+J` | (Phase 2) KeyPoint trigger — click anywhere → SAM 3.1 multi-seed tracker propagates every kept `track_similar` rectangle across sibling clip frames |
+| Auto: choice  | Hotkey   | What's shown                                              |
+|---------------|----------|-----------------------------------------------------------|
+| `none`        | `Esc`    | Plain Rectangle tool with the bbox class palette          |
+| `smart_click` | `Shift+C`| KeyPoint tool — click on an object → SAM 3.1 click→mask   |
+| `smart_search`| `Shift+S`| TextArea — type a prompt → SAM 3.1 text→detect            |
+| `smart_visual`| `Shift+V`| Rectangle exemplar — draw a box → SAM 3.1 visual prompting on similar instances |
+| `smart_track` | `Shift+T`| Rectangle seed — draw a box on a static object → SAM 3.1 video tracker propagates it across sibling clip frames |
 
 Class hotkeys (active class for whichever tool is selected): `1` `2` `3`
 `4` `5` `6` `7` `8` `9` `0` `q` `w` `e` `r` `t` `y` `u` `i` `o` `p` `a`
@@ -297,9 +295,9 @@ reviewer can then keep whichever they prefer or delete the duplicate.
 The dedup is opt-out for this route on purpose; it's the
 "give me a region here" tool.
 
-### smart_text — text prompt → detect
+### smart_search — text prompt → detect
 
-Press `Ctrl+T` → type a class name (`forklift`, `palletjack`, ...) into
+Press `Shift+S` → type a class name (`forklift`, `palletjack`, ...) into
 the prompt box → submit. The ML backend runs SAM 3.1's `text_detect`
 and seeds one RectangleLabels region per match.
 
@@ -308,9 +306,9 @@ at IoU > 0.7 (class-aware) are dropped server-side. The pool includes
 seeded yellow predictions, so re-firing `forklift` won't stack 16 fresh
 duplicates on top of finalize boxes the pipeline already produced.
 
-### visual_prompt (V-tool) — exemplar → similar
+### smart_visual — exemplar → similar
 
-Press `Ctrl+V` → draw a tight rectangle around one good example of the
+Press `Shift+V` → draw a tight rectangle around one good example of the
 target class. SAM 3.1's visual-prompting head runs box-prompt grounding
 on the same image and returns every matching instance. The exemplar
 **persists** as a regular RectangleLabels annotation (so a freshly drawn
@@ -328,7 +326,7 @@ exemplar location gets dropped automatically.
 
 ### smart_track — propagate a static object across sibling frames
 
-Press `Ctrl+G` → draw a tight rectangle around a **static** object
+Press `Shift+T` → draw a tight rectangle around a **static** object
 (parked car, sign, fixed equipment, building corner, etc.). The ML
 backend:
 
@@ -366,46 +364,6 @@ propagations apart from human edits.
   100) live in `manual_reviewer/ml_backend/smart_track_lib.py` —
   v1 keeps them as code constants. Tighten if you see false-positive
   propagations on near-static-but-moving objects.
-
-### track_similar + propagate_now — find similar in-frame, then propagate the kept ones
-
-Two-phase workflow when you want to bulk-annotate every instance of a static
-object across a clip with one review pass:
-
-1. **Phase 1 — find:** press `Ctrl+B`, draw a rectangle around one good
-   example (e.g. one pole). The ML backend runs SAM 3.1's visual-prompt
-   grounding on the current frame and seeds every match as a draft, all
-   tagged `from_name="track_similar"`. The exemplar's class label rides
-   onto every match.
-2. **Review same-frame:** accept the good ones, delete the false positives.
-   Same UX as reviewing visual_prompt yellow drafts. Nothing has been
-   pushed to other tasks yet — this stage is local to the current image.
-3. **Phase 2 — propagate:** press `Shift+J` and click anywhere on the
-   image (the click position is ignored — it's a trigger). The ML
-   backend reads every surviving `track_similar` rectangle on the
-   current task, sends them as a multi-seed input to SAM 3.1's video
-   tracker in **one** call, applies the static-only filter (score ≥ 0.5
-   and bbox-center motion ≤ 0.05) per seed, and POSTs surviving
-   propagations to the matching sibling tasks.
-
-Each cross-frame propagation carries `meta.track_group_id` (a UUID
-shared across all sibling propagations of the same exemplar) plus
-`meta.from_image` and `meta.from_task`, so a downstream consumer can
-correlate "everything that came from this exemplar".
-
-**Why two phases instead of fused-eager:** if visual_prompt over-fires
-in the source frame (a tree mistaken for a pole), we don't want that
-mistake replicated to every sibling task. Reviewing same-frame first
-catches the false positive locally; only good seeds ever leave the
-source task. The trade-off is one extra hotkey vs. cleaning up false
-sibling predictions later. See [docs/next_phases.md](docs/next_phases.md)
-for the alternatives that were considered (eager + cascade-on-reject,
-submit-time auto-trigger).
-
-**Tunables (env vars):**
-- `ENABLE_TRACK_SIMILAR` / `ENABLE_PROPAGATE_NOW` gate each phase.
-- Score / motion thresholds and per-call sibling cap live as code
-  constants in `manual_reviewer/ml_backend/smart_track_lib.py`.
 
 ### Auto-seeded finalize predictions (yellow drafts)
 
@@ -600,8 +558,8 @@ ML backend env vars:
 - `LS_BACKUP_DIR` — propagated to the lswebhook handler. Default is
   `manual_reviewer/.ls_backup/`.
 - `ENABLE_BATCH_PROPOSALS=true|false` (default `false`) and analogous
-  per-route gates (`ENABLE_SMART_CLICK`, `ENABLE_SMART_TEXT`,
-  `ENABLE_VISUAL_PROMPT`, `ENABLE_PROPAGATE_STATIC`).
+  per-route gates (`ENABLE_SMART_CLICK`, `ENABLE_SMART_SEARCH`,
+  `ENABLE_SMART_VISUAL`, `ENABLE_SMART_TRACK`).
 
 See [ml_backend/README.md](ml_backend/README.md) for the full env list.
 
@@ -613,12 +571,12 @@ See [ml_backend/README.md](ml_backend/README.md) for the full env list.
 .venv/bin/python -m pytest manual_reviewer/tests/ -q
 ```
 
-377 tests cover: DB round-trip on a fixture pipeline.db, task_builder
+Tests cover: DB round-trip on a fixture pipeline.db, task_builder
 JSON shape, ls_export_parser correction classification, ML backend route
-dispatch (smart_click / smart_text / visual_prompt) + dedup pool
-semantics + LS payload helpers, reconcile clustering / grouping /
-propagation, the SAM 3.1 click_mask wire, the lswebhook on-disk schema,
-and the cron-driven `sync_ls_to_disk` diff.
+dispatch (smart_click / smart_search / smart_visual / smart_track) +
+dedup pool semantics + LS payload helpers, reconcile clustering /
+grouping / propagation, the SAM 3.1 click_mask wire, the lswebhook
+on-disk schema, and the cron-driven `sync_ls_to_disk` diff.
 
 ---
 
@@ -629,11 +587,11 @@ and the cron-driven `sync_ls_to_disk` diff.
 | Stack lifecycle | [`scripts/manage_stack.sh`](scripts/manage_stack.sh) — start/stop/restart/status/logs |
 | New project bootstrap | [`scripts/create_ls_project.py`](scripts/create_ls_project.py) — XML + storage + ML in one shot |
 | Class palette source | dataset's `classes.txt` (renderer: [`configs/build_labeling_config.py`](configs/build_labeling_config.py)) |
-| Auto: toggle hotkeys | `Esc` (none), `Ctrl+K` (smart_click), `Ctrl+T` (smart_text), `Ctrl+V` (visual_prompt), `Ctrl+G` (smart_track), `Ctrl+B` (track_similar), `Shift+J` (propagate_now) |
+| Auto: toggle hotkeys | `Esc` (none), `Shift+C` (smart_click), `Shift+S` (smart_search), `Shift+V` (smart_visual), `Shift+T` (smart_track) |
 | Annotation backup | [`scripts/sync_ls_to_disk.py`](scripts/sync_ls_to_disk.py) (cron, 5 min) → `.ls_backup/project_<N>/` |
 | Schema additions | `Stage.HUMAN_REVIEW`, `Stage.RECONCILE` in [enums.py](../data_miner/auto_annotation_v4/configs/enums.py); `dedup_status` / `dedup_cluster_id` columns on `image_meta` |
 | Pydantic contracts | `HumanCorrection`, `HumanReviewResult`, `ReconcileResult`, `ReconciledDetection` in [contracts.py](../data_miner/auto_annotation_v4/configs/contracts.py) |
 | LS labeling XML | [configs/labeling_config.xml](configs/labeling_config.xml) — generated, do not hand-edit |
 | LS predictions envelope | `manual_reviewer.ml_backend.ls_payload.predictions_envelope` |
-| Default SAM 3.1 endpoint | `http://localhost:3014/predict` (refine + click_mask + text_detect + visual_prompt + track all on one port; mode picked by request shape) |
+| Default SAM 3.1 endpoint | `http://localhost:3014/predict` (refine + click_mask + text_detect + visual_prompt + track all on one port — these are SAM 3.1's mode names; the LS-side smart tools that drive them are `smart_click` / `smart_search` / `smart_visual` / `smart_track`) |
 | Review trace block | last entry of `traces/<image_id>.json`, `stage="human_review"` |
