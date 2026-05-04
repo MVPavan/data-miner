@@ -393,6 +393,12 @@ def smart_visual(
     existing = canvas_rectangles(
         task, context, include_smart_visual=True, include_predictions=True
     )
+    # Same canvas pool minus the smart_visual draft itself — used to test
+    # whether an exemplar already has a real bbox at the same spot. We
+    # don't want to preserve a duplicate in that case.
+    existing_no_draft = canvas_rectangles(
+        task, context, include_smart_visual=False, include_predictions=True
+    )
 
     logger.info(
         "smart_visual: image=%s exemplars=%d label=%s threshold=%.2f existing=%d",
@@ -445,12 +451,51 @@ def smart_visual(
     # seeded prediction).
     nmsed = nms_regions(proposed, iou=nms_iou)
     survivors, dropped = dedup_against(nmsed, existing, iou=dedup_iou)
-    out = survivors[:max_results]
+
+    # Preserve the user's exemplar(s) in the response. The exemplar sits
+    # on the canvas as a smart_visual draft (smart="true" smartOnly="true"),
+    # which LS clears immediately after /predict returns — so without this
+    # the user sees their original draw vanish even when no existing bbox
+    # was nearby. Returning the exemplar as a regular ``bbox`` region
+    # makes it persist as a real prediction the reviewer can keep, edit,
+    # or delete. SAM's near-duplicate at the exemplar location is already
+    # dropped by canvas-dedup (include_smart_visual=True above), so we
+    # don't get two boxes at the same spot.
+    #
+    # Skip the exemplar prepend if a real bbox already sits at the
+    # exemplar location (overlap > dedup_iou) — the existing bbox is
+    # the user's truth; adding a near-duplicate is just noise.
+    exemplar_regions: list[dict[str, Any]] = []
+    for ex in exemplars:
+        ex_region = norm_box_to_ls_region(
+            ex,
+            label,
+            score=1.0,
+            extra_meta={
+                "source": "smart_visual_exemplar",
+                "model_version": model_version,
+            },
+            original_width=width,
+            original_height=height,
+            original_rotation=0,
+        )
+        if ex_region is None:
+            continue
+        kept, _ = dedup_against([ex_region], existing_no_draft, iou=dedup_iou)
+        if kept:
+            exemplar_regions.append(kept[0])
+
+    # max_results caps the WHOLE response (exemplars first, then top SAM
+    # survivors fill the remainder).
+    remaining = max(0, max_results - len(exemplar_regions))
+    out = exemplar_regions + survivors[:remaining]
+
     logger.info(
-        "smart_visual: SAM=%d → NMS=%d → canvas-dedup=%d → cap=%d (label=%s)",
+        "smart_visual: SAM=%d → NMS=%d → canvas-dedup=%d + %d exemplar(s) → cap=%d (label=%s)",
         len(proposed),
         len(nmsed),
         len(survivors),
+        len(exemplar_regions),
         len(out),
         label,
     )

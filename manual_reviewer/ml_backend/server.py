@@ -173,12 +173,18 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
             # sitting on the canvas) used to hijack every subsequent
             # smart_visual call because the old logic always preferred
             # smart_track when ANY smart_track region was present.
-            route = self._pick_route(context["result"])
-            if route is None:
+            candidates = self._candidate_routes(context["result"])
+            if not candidates:
                 logger.info("→ no smart route matched draft, returning empty")
                 return []
-            if not _route_enabled(route):
-                logger.info("→ %s disabled by env, returning empty", route)
+            route: str | None = None
+            for candidate in candidates:
+                if _route_enabled(candidate):
+                    route = candidate
+                    break
+                logger.info("→ %s disabled by env, falling through", candidate)
+            if route is None:
+                logger.info("→ all candidate routes disabled, returning empty")
                 return []
             if not self._sam3_client:
                 logger.info("→ %s skipped — sam3 client unavailable", route)
@@ -219,37 +225,70 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         logger.info("→ batch_proposals returned %d region(s)", len(out))
         return out
 
-    @staticmethod
-    def _pick_route(regions: list[dict[str, Any]]) -> str | None:
-        """Classify the LATEST smart-tool region in the context.
+    _ROUTE_PRIORITY: tuple[str, ...] = (
+        "smart_visual",
+        "smart_click",
+        "smart_search",
+        "smart_track",
+    )
 
-        Walks ``regions`` in reverse (newest first per LS append order)
-        and returns the route name for the first classifiable entry, or
-        ``None`` when nothing matches. The mapping:
+    @classmethod
+    def _candidate_routes(cls, regions: list[dict[str, Any]]) -> list[str]:
+        """Return the smart-tool routes present in ``regions`` in priority order.
 
-          * from_name == "smart_track"  → smart_track
+        Priority: ``smart_visual > smart_click > smart_search > smart_track``.
+        Caller picks the first one that is also enabled by env gate.
+
+        Why priority instead of "last-wins": LS does NOT order
+        ``context.result`` chronologically — drafts are bundled by group
+        (regular bboxes first, then smart-tool drafts in their own
+        ordering), so the trailing entry is not reliably the user's
+        freshest draw. Live trace from project 9 task 209 (2026-05-04):
+        user drew smart_visual but a stale smart_track region sat last
+        in the list, and the dispatcher fired smart_track on the leftover.
+
+        smart_track is intentionally bottom-ranked because it is the
+        heaviest tool (writes predictions to many sibling tasks via REST,
+        ~20-50 s for a 100-frame clip) and must require unambiguous
+        intent. To fire smart_track now, the canvas must have NO other
+        smart-tool draft on it — clear them first.
+
+        Region mapping:
           * from_name == "smart_visual" → smart_visual
           * type ∈ {keypointlabels, keypoint} → smart_click
           * type == "textarea" → smart_search
-
-        smart_track / smart_visual are checked by ``from_name`` because
-        both also have ``type=rectanglelabels`` (so a regular bbox draw
-        would otherwise look identical to a smart-tool draft).
+          * from_name == "smart_track" → smart_track
         """
-        for region in reversed(regions):
+        present: set[str] = set()
+        for region in regions:
             if not isinstance(region, dict):
                 continue
             from_name = region.get("from_name")
-            if from_name == "smart_track":
-                return "smart_track"
             if from_name == "smart_visual":
-                return "smart_visual"
+                present.add("smart_visual")
+                continue
+            if from_name == "smart_track":
+                present.add("smart_track")
+                continue
             rtype = (region.get("type") or "").lower()
             if rtype in {"keypointlabels", "keypoint"}:
-                return "smart_click"
-            if rtype == "textarea":
-                return "smart_search"
-        return None
+                present.add("smart_click")
+            elif rtype == "textarea":
+                present.add("smart_search")
+        return [r for r in cls._ROUTE_PRIORITY if r in present]
+
+    @classmethod
+    def _pick_route(cls, regions: list[dict[str, Any]]) -> str | None:
+        """Highest-priority present route, ignoring env gates.
+
+        See :meth:`_candidate_routes` for the priority rationale. The
+        dispatcher uses :meth:`_candidate_routes` directly so a gated-
+        off winner can fall through to the next-priority enabled route.
+        Kept as a thin wrapper for tests and external callers that want
+        a single route name.
+        """
+        candidates = cls._candidate_routes(regions)
+        return candidates[0] if candidates else None
 
     @staticmethod
     def _summarize_context(context: Any) -> str:

@@ -458,8 +458,14 @@ def _visual_context(
     *boxes: tuple[float, float, float, float],
     label: str | None = None,
     rtype: str = "rectanglelabels",
+    from_name: str = "smart_visual",
 ) -> dict[str, Any]:
-    """Build an LS context with one or more rectangle exemplar regions."""
+    """Build an LS context with one or more rectangle exemplar regions.
+
+    Defaults to ``from_name="smart_visual"`` to mirror real LS smart-tool
+    drafts. Tests covering the legacy "any rectangle = exemplar" fallback
+    can override via ``from_name="bbox"``.
+    """
     result: list[dict[str, Any]] = []
     for x, y, w, h in boxes:
         value: dict[str, Any] = {"x": x, "y": y, "width": w, "height": h}
@@ -470,7 +476,7 @@ def _visual_context(
             {
                 "type": rtype,
                 "value": value,
-                "from_name": "bbox",
+                "from_name": from_name,
                 "to_name": "image",
             }
         )
@@ -490,8 +496,13 @@ def test_smart_visual_returns_one_region_per_match() -> None:
         _visual_context((10, 10, 20, 20), label="forklift"),
         client,
     )
-    assert len(out) == 2
+    # exemplar (preserved) + 2 SAM matches.
+    assert len(out) == 3
     assert all(r["value"]["rectanglelabels"] == ["forklift"] for r in out)
+    # First region is the exemplar — same coords as the input draft.
+    assert out[0]["meta"]["source"] == "smart_visual_exemplar"
+    assert out[0]["value"]["x"] == pytest.approx(10.0)
+    assert out[0]["value"]["y"] == pytest.approx(10.0)
     assert client.calls[0][0] == "visual_prompt"
     kwargs = client.calls[0][1]
     assert kwargs["image_path"] == "/tmp/img.jpg"
@@ -540,7 +551,9 @@ def test_smart_visual_caps_max_results() -> None:
         client,
         max_results=3,
     )
+    # Cap covers the whole response: 1 exemplar + 2 SAM matches = 3.
     assert len(out) == 3
+    assert out[0]["meta"]["source"] == "smart_visual_exemplar"
 
 
 def test_smart_visual_no_exemplar_returns_empty_no_call() -> None:
@@ -581,7 +594,9 @@ def test_smart_visual_meta_carries_source() -> None:
         _visual_context((10, 10, 20, 20), label="forklift"),
         client,
     )
-    assert out[0]["meta"]["source"] == "smart_visual"
+    # First region is the preserved exemplar; second is the SAM match.
+    assert out[0]["meta"]["source"] == "smart_visual_exemplar"
+    assert out[1]["meta"]["source"] == "smart_visual"
 
 
 def test_smart_visual_drops_match_overlapping_exemplar() -> None:
@@ -598,11 +613,15 @@ def test_smart_visual_drops_match_overlapping_exemplar() -> None:
         _visual_context((10, 10, 20, 20), label="forklift"),
         client,
     )
-    # Exemplar duplicate dropped, only the [0.5, 0.5, 0.7, 0.7] match kept.
-    assert len(out) == 1
-    val = out[0]["value"]
-    assert val["x"] == pytest.approx(50.0)
-    assert val["y"] == pytest.approx(50.0)
+    # SAM's exemplar duplicate dropped via canvas-dedup. The preserved
+    # exemplar (prepended by routes.smart_visual) takes its slot, and the
+    # real new match comes after.
+    assert len(out) == 2
+    assert out[0]["meta"]["source"] == "smart_visual_exemplar"
+    assert out[0]["value"]["x"] == pytest.approx(10.0)
+    assert out[1]["meta"]["source"] == "smart_visual"
+    assert out[1]["value"]["x"] == pytest.approx(50.0)
+    assert out[1]["value"]["y"] == pytest.approx(50.0)
 
 
 def test_smart_visual_drops_match_overlapping_existing_canvas_region() -> None:
@@ -644,10 +663,47 @@ def test_smart_visual_drops_match_overlapping_existing_canvas_region() -> None:
         },
     }
     out = smart_visual(task, ctx, client)
-    # First match overlaps the existing canvas region → dropped. Only [.8, .8, .95, .95] kept.
+    # First SAM match overlaps the existing canvas region → dropped. The
+    # preserved exemplar still rides at the head of the response, and the
+    # surviving SAM match (.8 .8 .95 .95) comes after.
+    assert len(out) == 2
+    assert out[0]["meta"]["source"] == "smart_visual_exemplar"
+    assert out[0]["value"]["x"] == pytest.approx(10.0)
+    assert out[1]["meta"]["source"] == "smart_visual"
+    assert out[1]["value"]["x"] == pytest.approx(80.0)
+
+
+def test_smart_visual_skips_exemplar_when_existing_bbox_overlaps() -> None:
+    """If the reviewer drops a smart_visual exemplar on top of an
+    existing real bbox, don't return a duplicate of that bbox — the
+    real one is already there.
+    """
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(
+        boxes_norm=[[0.50, 0.50, 0.70, 0.70]], scores=[0.8],
+    )
+    ctx = {
+        "result": [
+            # The reviewer's smart_visual exemplar at (10, 10, 20, 20).
+            {"type": "rectanglelabels", "from_name": "smart_visual",
+             "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                       "labels": ["forklift"]}},
+            # An existing real bbox already covers the exemplar location.
+            {"type": "rectanglelabels", "from_name": "bbox",
+             "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                       "rectanglelabels": ["forklift"]}},
+        ]
+    }
+    task = {
+        "id": 1,
+        "data": {"image_path": "/tmp/img.jpg", "image_id": "img_a",
+                 "image_size": [1920, 1080]},
+    }
+    out = smart_visual(task, ctx, client)
+    # Exemplar dropped (existing bbox covers it). Only the new SAM match.
     assert len(out) == 1
-    val = out[0]["value"]
-    assert val["x"] == pytest.approx(80.0)
+    assert out[0]["meta"]["source"] == "smart_visual"
+    assert out[0]["value"]["x"] == pytest.approx(50.0)
 
 
 def test_smart_visual_skips_cancelled_annotations() -> None:
@@ -687,8 +743,12 @@ def test_smart_visual_skips_cancelled_annotations() -> None:
         ],
     }
     out = smart_visual(task, ctx, client)
-    # Cancelled annotation is ignored → match at (50,50) survives.
-    assert len(out) == 1
+    # Cancelled annotation is ignored → preserved exemplar + SAM match
+    # at (50,50) both make it through.
+    assert len(out) == 2
+    assert out[0]["meta"]["source"] == "smart_visual_exemplar"
+    assert out[1]["meta"]["source"] == "smart_visual"
+    assert out[1]["value"]["x"] == pytest.approx(50.0)
 
 
 def test_smart_visual_drops_zero_area_exemplar() -> None:
@@ -874,7 +934,8 @@ def test_dispatch_routes_v_tool_to_smart_visual() -> None:
         ]
     }
     out = dispatch(_task(), ctx, sam3_client=client, db_path=None)
-    assert len(out) == 1
+    # 1 preserved exemplar + 1 SAM match.
+    assert len(out) == 2
     assert client.calls and client.calls[0][0] == "visual_prompt"
 
 
@@ -898,7 +959,10 @@ def test_dispatch_v_tool_does_not_fall_to_batch(seeded_pipeline_db: Path) -> Non
     out = dispatch(
         _task(image_id="img_a"), ctx, sam3_client=client, db_path=seeded_pipeline_db
     )
-    assert out == []
+    # SAM returned no boxes, but the preserved exemplar still rides through
+    # — what matters is we routed to smart_visual (not batch_proposals).
+    assert len(out) == 1
+    assert out[0]["meta"]["source"] == "smart_visual_exemplar"
     assert client.calls and client.calls[0][0] == "visual_prompt"
 
 
@@ -994,6 +1058,41 @@ def test_server_pick_route_classifies_each_tool() -> None:
     assert pick([{"type": "textarea", "from_name": "text_query"}]) == "smart_search"
     assert pick([{"type": "rectanglelabels", "from_name": "bbox"}]) is None
     assert pick([]) is None
+
+
+def test_server_pick_route_priority_smart_track_is_lowest() -> None:
+    """Mirrors the live failure on project 9 task 209: smart_visual present
+    + stale smart_track present → smart_visual wins.
+    """
+    pick = ManualReviewerMLBackend._pick_route
+    ctx_209 = [
+        {"type": "rectanglelabels", "from_name": "bbox"},
+        {"type": "rectanglelabels", "from_name": "bbox"},
+        {"type": "rectanglelabels", "from_name": "bbox"},
+        {"type": "rectanglelabels", "from_name": "bbox"},
+        {"type": "rectanglelabels", "from_name": "smart_visual"},
+        {"type": "rectanglelabels", "from_name": "smart_track"},  # last but lowest priority
+    ]
+    assert pick(ctx_209) == "smart_visual"
+
+    # smart_visual > smart_click > smart_search > smart_track
+    assert pick([
+        {"type": "keypointlabels", "from_name": "click"},
+        {"type": "rectanglelabels", "from_name": "smart_visual"},
+    ]) == "smart_visual"
+    assert pick([
+        {"type": "textarea", "from_name": "text_query"},
+        {"type": "keypointlabels", "from_name": "click"},
+    ]) == "smart_click"
+    assert pick([
+        {"type": "rectanglelabels", "from_name": "smart_track"},
+        {"type": "textarea", "from_name": "text_query"},
+    ]) == "smart_search"
+    # smart_track only fires when it's the SOLE smart-tool draft.
+    assert pick([
+        {"type": "rectanglelabels", "from_name": "bbox"},
+        {"type": "rectanglelabels", "from_name": "smart_track"},
+    ]) == "smart_track"
 
 
 def test_server_predict_regular_bbox_does_not_fire_ml() -> None:
@@ -1514,8 +1613,10 @@ def test_smart_visual_internal_nms_collapses_near_duplicates() -> None:
         ]
     }
     out = smart_visual(_task(), ctx, client)
-    assert len(out) == 1
-    assert out[0]["score"] == pytest.approx(0.95)
+    # 1 exemplar (preserved) + 1 NMS survivor.
+    assert len(out) == 2
+    assert out[0]["meta"]["source"] == "smart_visual_exemplar"
+    assert out[1]["score"] == pytest.approx(0.95)
 
 
 def test_smart_visual_drops_match_overlapping_seeded_prediction() -> None:
@@ -1540,7 +1641,11 @@ def test_smart_visual_drops_match_overlapping_seeded_prediction() -> None:
         ]
     }
     out = smart_visual(task, ctx, client)
-    assert out == []
+    # SAM match deduped against the seeded prediction → drops; preserved
+    # exemplar at (10,10,20,20) doesn't overlap the seeded box at (50,50)
+    # so it survives.
+    assert len(out) == 1
+    assert out[0]["meta"]["source"] == "smart_visual_exemplar"
 
 
 def test_smart_visual_dedup_is_class_aware_against_canvas() -> None:
@@ -1564,8 +1669,10 @@ def test_smart_visual_dedup_is_class_aware_against_canvas() -> None:
         ]
     }
     out = smart_visual(task, ctx, client)
-    assert len(out) == 1
-    assert out[0]["value"]["rectanglelabels"] == ["forklift"]
+    # 1 preserved exemplar + 1 SAM match (class-aware dedup against the
+    # different-class canvas box doesn't suppress).
+    assert len(out) == 2
+    assert all(r["value"]["rectanglelabels"] == ["forklift"] for r in out)
 
 
 def test_batch_proposals_is_not_deduped(seeded_pipeline_db: Path) -> None:
