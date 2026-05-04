@@ -220,23 +220,39 @@ def smart_click(
         return []
     if not isinstance(context, dict):
         return []
+    # Walk context.result in reverse so the LATEST keypoint wins. LS
+    # doesn't always clear smart-tool drafts after dispatch (smartOnly
+    # behaviour is LSF-version-specific), so a leftover keypoint from
+    # an earlier click can sit at the head of context.result and
+    # hijack every subsequent click. Live failure observed 2026-05-04
+    # on project 9: clicking a second point fired SAM on the first.
+    # Newest keypoint wins because LSF DOES order same-type drafts
+    # chronologically (unlike cross-type ordering — see _pick_route
+    # in server.py for the priority-not-ordering rule there).
     point: list[float] | None = None
     point_label = 1
     trigger_region: dict[str, Any] | None = None
-    for region in context.get("result") or []:
+    keypoint_count = 0
+    for region in (context.get("result") or []):
         if not isinstance(region, dict):
             continue
         rtype = (region.get("type") or "").lower()
-        if rtype not in {"keypointlabels", "keypoint"}:
-            continue
-        candidate = ls_keypoint_to_norm(region.get("value") or {})
-        if candidate is not None:
-            point = candidate
-            trigger_region = region
-            break
+        if rtype in {"keypointlabels", "keypoint"}:
+            keypoint_count += 1
+            candidate = ls_keypoint_to_norm(region.get("value") or {})
+            if candidate is not None:
+                point = candidate
+                trigger_region = region
+                # Don't break — keep walking so the LAST valid keypoint wins.
     if point is None:
         logger.info("smart_click: no keypoint found in context")
         return []
+    if keypoint_count > 1:
+        logger.info(
+            "smart_click: %d keypoints in context, using the newest "
+            "(stale clicks accumulate when LSF doesn't auto-clear smart drafts)",
+            keypoint_count,
+        )
 
     logger.info(
         "smart_click: image=%s point=%s label=%d threshold=%.2f",

@@ -252,6 +252,36 @@ def test_smart_click_returns_box_when_sam_returns_bbox() -> None:
     }) in client.calls
 
 
+def test_smart_click_uses_latest_keypoint_when_multiple_present() -> None:
+    """Stale keypoints from earlier clicks accumulate when LSF doesn't
+    auto-clear smart drafts. The newest click must win — anything else
+    means a stale point hijacks every subsequent click. Live failure on
+    project 9, 2026-05-04.
+    """
+    client = _StubSam3Client()
+    client._click_resp = _StubResp(bbox=[0.1, 0.2, 0.3, 0.4], score=0.8)
+    ctx = {
+        "result": [
+            # Stale click from earlier — should be ignored.
+            {"type": "keypointlabels",
+             "from_name": "click", "to_name": "image",
+             "value": {"x": 10.0, "y": 10.0,
+                       "keypointlabels": ["person"]}},
+            # The user's just-clicked point — should drive SAM.
+            {"type": "keypointlabels",
+             "from_name": "click", "to_name": "image",
+             "value": {"x": 75.0, "y": 80.0,
+                       "keypointlabels": ["motorcycle"]}},
+        ]
+    }
+    smart_click(_task(), ctx, client)
+    # SAM should have been called with the SECOND (latest) point.
+    assert len(client.calls) == 1
+    method, kwargs = client.calls[0]
+    assert method == "click_mask"
+    assert kwargs["point"] == pytest.approx([0.75, 0.80])
+
+
 def test_smart_click_uses_picked_label_from_context() -> None:
     """Phase A: shared ``<Labels>`` palette puts the active class on
     ``value.labels`` — smart_click must honor it on the seeded box."""
