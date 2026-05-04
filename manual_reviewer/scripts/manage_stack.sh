@@ -12,6 +12,16 @@
 #   ./manage_stack.sh restart [<service>]    # restart all, or just one
 #   ./manage_stack.sh status                 # PIDs + reachability check
 #   ./manage_stack.sh logs <service>         # tail -f the log
+#   ./manage_stack.sh backup                 # snapshot LS sqlite + pipeline.db,
+#                                            # sync annotations for LS_BACKUP_PROJECTS
+#   ./manage_stack.sh install-cron           # print a 5-min crontab line for `backup`
+#   ./manage_stack.sh watch-backup [start|stop|status]
+#                                            # cron-less alternative: a managed
+#                                            # background loop that runs `backup`
+#                                            # every BACKUP_INTERVAL seconds.
+#                                            # Use this when the host has no
+#                                            # cron daemon (containers, minimal
+#                                            # base images).
 #
 # Configurable via env vars (sensible defaults shown):
 #   LS_PORT=8080   LS_HOST=127.0.0.1   LS_USER=admin@example.com
@@ -23,6 +33,8 @@
 #   SAM3_PYTHONPATH=$PROJECT_ROOT/scratchpad/DART
 #   AAV4_PIPELINE_DB=/tmp/datatang_review/pipeline.db
 #   LS_BACKUP_DIR=$PROJECT_ROOT/manual_reviewer/.ls_backup
+#   LS_BACKUP_PROJECTS=""   # comma-separated LS project IDs to sync each backup
+#   BACKUP_KEEP_SNAPSHOTS=288  # 24h × 12/hour at 5-min cadence
 #   LOG_DIR=/tmp/datatang_review
 #   PIDFILE_DIR=/tmp/datatang_review/pids
 #   ENABLE_BATCH_PROPOSALS=false
@@ -54,6 +66,9 @@ LS_BIN="$PROJECT_ROOT/.venv/bin/label-studio"
 
 : "${AAV4_PIPELINE_DB:=/tmp/datatang_review/pipeline.db}"
 : "${LS_BACKUP_DIR:=$PROJECT_ROOT/manual_reviewer/.ls_backup}"
+: "${LS_BACKUP_PROJECTS:=}"
+: "${BACKUP_KEEP_SNAPSHOTS:=288}"
+: "${BACKUP_INTERVAL:=300}"
 : "${ENABLE_BATCH_PROPOSALS:=false}"
 
 : "${LOG_DIR:=/tmp/datatang_review}"
@@ -182,9 +197,10 @@ stop_one() {
   local pidfile="$PIDFILE_DIR/$name.pid"
   local pattern
   case "$name" in
-    sam3_1)     pattern="model_servers.sam3_1" ;;
-    ls)         pattern="label-studio start" ;;
-    ml_backend) pattern="manual_reviewer.ml_backend.server" ;;
+    sam3_1)       pattern="model_servers.sam3_1" ;;
+    ls)           pattern="label-studio start" ;;
+    ml_backend)   pattern="manual_reviewer.ml_backend.server" ;;
+    backup_loop)  pattern="manage_stack.sh backup" ;;
     *) echo "${R}unknown service: $name${N}"; return 2 ;;
   esac
 
@@ -279,16 +295,158 @@ cmd_logs() {
   esac
 }
 
+# ── Backup ──
+#
+# Three layers (each captures a different failure mode):
+#   1. LS sqlite snapshot — recovers projects, users, ML backend wiring.
+#   2. pipeline.db snapshot — recovers aa_v4 stage truth.
+#   3. sync_ls_to_disk.py — appends per-annotation events for fine-grained
+#      replay (the backup we'd *use* when LS is alive but we lost a day's
+#      worth of edits to a corrupted draft).
+#
+# `sqlite3 .backup` is online-safe even with WAL writers — the engine
+# coordinates page-level snapshots, so it's the right tool here. A naive
+# `cp` of the .sqlite3 file mid-write can produce an unreadable copy.
+cmd_backup() {
+  local ts; ts="$(date +%Y%m%d-%H%M%S)"
+  local snap_dir="$LS_BACKUP_DIR/db_snapshots"
+  mkdir -p "$snap_dir"
+
+  local ls_db="$LS_DATA_DIR/label_studio.sqlite3"
+  if [ -f "$ls_db" ]; then
+    if _sqlite_backup "$ls_db" "$snap_dir/label_studio.$ts.sqlite3"; then
+      echo "${G}LS sqlite snapshot${N}      → $snap_dir/label_studio.$ts.sqlite3"
+    else
+      echo "${R}LS sqlite snapshot failed${N} (see $(log_path backup))"
+    fi
+  else
+    echo "${Y}LS sqlite missing at $ls_db — start has likely never run${N}"
+  fi
+
+  if [ -f "$AAV4_PIPELINE_DB" ]; then
+    if _sqlite_backup "$AAV4_PIPELINE_DB" "$snap_dir/pipeline.$ts.sqlite3"; then
+      echo "${G}pipeline.db snapshot${N}    → $snap_dir/pipeline.$ts.sqlite3"
+    else
+      echo "${R}pipeline.db snapshot failed${N} (see $(log_path backup))"
+    fi
+  else
+    echo "${Y}pipeline.db missing at $AAV4_PIPELINE_DB${N}"
+  fi
+
+  if [ -n "$LS_BACKUP_PROJECTS" ]; then
+    IFS=',' read -ra _projs <<< "$LS_BACKUP_PROJECTS"
+    for p in "${_projs[@]}"; do
+      p="${p// /}"
+      [ -z "$p" ] && continue
+      LS_TOKEN="$LS_TOKEN" LS_BACKUP_DIR="$LS_BACKUP_DIR" \
+      "$VENV_PY" -m manual_reviewer.scripts.sync_ls_to_disk \
+        --ls-url "http://$LS_HOST:$LS_PORT" --project "$p" \
+        >> "$(log_path backup)" 2>&1 \
+        && echo "${G}sync_ls_to_disk${N}        → project $p" \
+        || echo "${R}sync_ls_to_disk failed${N}  → project $p (see $(log_path backup))"
+    done
+  else
+    echo "${Y}LS_BACKUP_PROJECTS unset — annotation diff sync skipped${N}"
+  fi
+
+  _rotate_snapshots "$snap_dir"
+}
+
+# Online-safe sqlite snapshot via Python's Connection.backup() — equivalent
+# to the `sqlite3 .backup` CLI but doesn't need the sqlite3 binary on PATH
+# (we ship Python with sqlite3 stdlib, not the CLI tool).
+_sqlite_backup() {
+  local src="$1" dst="$2"
+  "$VENV_PY" -c "
+import sys, sqlite3
+src = sqlite3.connect(sys.argv[1])
+dst = sqlite3.connect(sys.argv[2])
+try:
+    src.backup(dst)
+finally:
+    dst.close(); src.close()
+" "$src" "$dst" 2>>"$(log_path backup)"
+}
+
+_rotate_snapshots() {
+  local snap_dir="$1"
+  local keep="$BACKUP_KEEP_SNAPSHOTS"
+  for prefix in label_studio pipeline; do
+    # ls -1t sorts newest first; tail -n +N skips the first N-1.
+    # Empty glob exits cleanly because of the 2>/dev/null + xargs -r.
+    local stale
+    stale="$(ls -1t "$snap_dir/$prefix."*.sqlite3 2>/dev/null | tail -n +"$((keep + 1))" || true)"
+    if [ -n "$stale" ]; then
+      echo "$stale" | xargs -r rm -f
+    fi
+  done
+}
+
+cmd_install_cron() {
+  local script_path; script_path="$SCRIPT_DIR/manage_stack.sh"
+  cat <<EOF
+# Add this to your crontab via \`crontab -e\`.
+# 5-minute cadence caps worst-case data loss between backups at 5 min.
+# LS_BACKUP_PROJECTS must list every LS project ID you want sync'd.
+*/5 * * * * LS_TOKEN="$LS_TOKEN" LS_BACKUP_PROJECTS="$LS_BACKUP_PROJECTS" LS_DATA_DIR="$LS_DATA_DIR" AAV4_PIPELINE_DB="$AAV4_PIPELINE_DB" LS_BACKUP_DIR="$LS_BACKUP_DIR" $script_path backup >> $LOG_DIR/backup.cron.log 2>&1
+EOF
+}
+
+# Cron-less alternative: a self-respawning background loop with the same
+# pidfile/log discipline as sam3_1/ls/ml_backend. Inherits the env vars
+# from the invoking shell, so callers must export LS_TOKEN/LS_DATA_DIR/
+# AAV4_PIPELINE_DB/LS_BACKUP_PROJECTS/LS_BACKUP_DIR before `start`.
+cmd_watch_backup() {
+  local sub="${1:-status}"
+  case "$sub" in
+    start)
+      if is_running backup_loop; then
+        echo "${Y}backup_loop already running (PID $(read_pid backup_loop))${N}"
+        return 0
+      fi
+      echo "Starting backup_loop (interval=${BACKUP_INTERVAL}s)…"
+      # Capture the env we need; child loop inherits via export.
+      export LS_TOKEN LS_BACKUP_PROJECTS LS_DATA_DIR AAV4_PIPELINE_DB LS_BACKUP_DIR
+      nohup bash -c "
+        while true; do
+          \"$SCRIPT_DIR/manage_stack.sh\" backup
+          sleep \"$BACKUP_INTERVAL\"
+        done
+      " >> "$(log_path backup_loop)" 2>&1 &
+      echo $! > "$PIDFILE_DIR/backup_loop.pid"
+      echo "${G}backup_loop spawned (PID $!)${N}"
+      echo "  → log: $(log_path backup_loop)"
+      ;;
+    stop)
+      stop_one backup_loop
+      ;;
+    status)
+      if is_running backup_loop; then
+        echo "${G}● backup_loop${N}  running (PID $(read_pid backup_loop), interval=${BACKUP_INTERVAL}s)"
+        echo "  log: $(log_path backup_loop)"
+        echo "  recent runs:"
+        tail -3 "$(log_path backup_loop)" 2>/dev/null | sed 's/^/    /'
+      else
+        echo "${R}○ backup_loop${N}  not running"
+      fi
+      ;;
+    *) echo "Usage: $0 watch-backup <start|stop|status>"; exit 2 ;;
+  esac
+}
+
 usage() {
   sed -n '2,/^# Pidfiles/p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
 }
 
 case "${1:-}" in
-  start)   shift; cmd_start "$@" ;;
-  stop)    shift; cmd_stop "$@" ;;
-  restart) shift; cmd_restart "${1:-all}" ;;
-  status)  status ;;
-  logs)    shift; cmd_logs "$@" ;;
+  start)        shift; cmd_start "$@" ;;
+  stop)         shift; cmd_stop "$@" ;;
+  restart)      shift; cmd_restart "${1:-all}" ;;
+  status)       status ;;
+  logs)         shift; cmd_logs "$@" ;;
+  backup)       cmd_backup ;;
+  install-cron) cmd_install_cron ;;
+  watch-backup) shift; cmd_watch_backup "${1:-status}" ;;
   ""|-h|--help) usage ;;
   *) echo "Unknown command: $1"; usage; exit 2 ;;
 esac

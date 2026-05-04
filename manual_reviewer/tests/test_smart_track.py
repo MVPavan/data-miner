@@ -235,6 +235,39 @@ def test_find_siblings_max_cap() -> None:
     assert len(sibs) == 5
 
 
+def test_find_siblings_filters_by_assigned_to() -> None:
+    tasks = [
+        {"id": 1, "data": {"image_id": "vid_a_f00000", "image_path": "/0.jpg",
+                           "assigned_to": "pavan"}},
+        {"id": 2, "data": {"image_id": "vid_a_f00100", "image_path": "/1.jpg",
+                           "assigned_to": "pavan"}},
+        {"id": 3, "data": {"image_id": "vid_a_f00200", "image_path": "/2.jpg",
+                           "assigned_to": "sree"}},
+        {"id": 4, "data": {"image_id": "vid_a_f00300", "image_path": "/3.jpg"}},
+    ]
+    sibs = find_siblings(
+        _StubLSRest(tasks), project_id=1, seed_image_id="vid_a_f00000",
+        assigned_to="pavan",
+    )
+    # sree's frame and the unassigned frame are both excluded.
+    assert [s.image_id for s in sibs] == ["vid_a_f00100"]
+
+
+def test_find_siblings_no_filter_returns_all_assignments() -> None:
+    tasks = [
+        {"id": 1, "data": {"image_id": "vid_a_f00000", "image_path": "/0.jpg",
+                           "assigned_to": "pavan"}},
+        {"id": 2, "data": {"image_id": "vid_a_f00100", "image_path": "/1.jpg",
+                           "assigned_to": "sree"}},
+    ]
+    sibs = find_siblings(
+        _StubLSRest(tasks), project_id=1, seed_image_id="vid_a_f00000",
+    )
+    # When assigned_to=None, the field is ignored — back-compat with
+    # projects that haven't been rebuilt with --assignees yet.
+    assert [s.image_id for s in sibs] == ["vid_a_f00100"]
+
+
 # ---------------------------------------------------------------------------
 # propagate_via_tracker (orchestrator)
 # ---------------------------------------------------------------------------
@@ -475,6 +508,38 @@ def test_smart_track_invokes_propagate(tmp_path: Path) -> None:
     assert regions == []
     assert result is not None
     assert result.propagated == 1
+    assert result.written_task_ids == [101]
+
+
+def test_smart_track_contains_to_seed_owner(tmp_path: Path) -> None:
+    """Per-user containment: pavan's smart_track must skip sree's frames."""
+    seed_path = tmp_path / "seed.jpg"
+    pavan_sib = tmp_path / "pavan_sib.jpg"
+    sree_sib = tmp_path / "sree_sib.jpg"
+    for p in (seed_path, pavan_sib, sree_sib):
+        p.write_bytes(b"jpeg")
+    ls = _StubLSRest([
+        {"id": 100, "data": {"image_id": "clip_f00000", "image_path": str(seed_path),
+                             "assigned_to": "pavan"}},
+        {"id": 101, "data": {"image_id": "clip_f00100", "image_path": str(pavan_sib),
+                             "assigned_to": "pavan"}},
+        {"id": 102, "data": {"image_id": "clip_f00200", "image_path": str(sree_sib),
+                             "assigned_to": "sree"}},
+    ])
+    seed_bbox = [0.10, 0.10, 0.20, 0.20]
+    sam3 = _StubSam3(_resp([
+        (1, [(1, seed_bbox, 0.92)]),
+        (2, [(1, seed_bbox, 0.93)]),
+    ]))
+    task = {
+        "id": 100, "project": 42,
+        "data": {"image_id": "clip_f00000", "image_path": str(seed_path),
+                 "assigned_to": "pavan"},
+    }
+    _, result = smart_track(task, _track_context(bbox=tuple(seed_bbox)), sam3, ls_rest=ls)
+    assert result is not None
+    # Only pavan's sibling got the propagation; sree's never reached the tracker.
+    assert result.siblings_total == 1
     assert result.written_task_ids == [101]
 
 

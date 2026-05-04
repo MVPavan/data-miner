@@ -142,6 +142,7 @@ def find_siblings(
     project_id: int,
     seed_image_id: str,
     max_siblings: int = 100,
+    assigned_to: str | None = None,
 ) -> list[Sibling]:
     """Iterate the project's tasks and return clip-mates of the seed.
 
@@ -149,6 +150,12 @@ def find_siblings(
     are written by ``scripts/build_tasks.py``. Self is excluded by
     ``image_id`` equality, not by task_id (defensive against duplicate
     task imports for the same image).
+
+    When ``assigned_to`` is set, only tasks whose ``data.assigned_to``
+    matches are included. This is the per-user containment filter:
+    prevents reviewer A's smart_track from writing predictions onto
+    reviewer B's frames in a shared LS project. Tasks without an
+    assignment field are skipped under this mode (no implicit fallthrough).
 
     Sorted by ``image_id`` for deterministic ordering — frame index is
     embedded in the suffix so this is also a frame-ordered sort, which
@@ -165,6 +172,8 @@ def find_siblings(
         if image_id == seed_image_id:
             continue
         if clip_prefix(image_id) != target_prefix:
+            continue
+        if assigned_to is not None and data.get("assigned_to") != assigned_to:
             continue
         task_id = task.get("id")
         if not isinstance(task_id, int):
@@ -269,18 +278,23 @@ def propagate_via_tracker(
     motion_thresh: float = 0.05,
     max_siblings: int = 100,
     model_version: str = "sam3_1_track",
+    assigned_to: str | None = None,
 ) -> PropagateResult:
     """End-to-end propagation: find siblings, track, filter, write.
 
     Returns the :class:`PropagateResult` regardless of partial failure.
     A few sibling writes failing doesn't abort the rest. Cleanup of the
     JPEG-folder is unconditional (``finally`` block).
+
+    ``assigned_to`` constrains sibling discovery to a single reviewer's
+    slice of the project (see :func:`find_siblings`).
     """
     siblings = find_siblings(
         ls_rest,
         project_id=project_id,
         seed_image_id=seed_image_id,
         max_siblings=max_siblings,
+        assigned_to=assigned_to,
     )
     result = PropagateResult(siblings_total=len(siblings))
     if not siblings:

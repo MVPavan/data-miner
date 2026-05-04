@@ -663,7 +663,8 @@ def smart_track(
         return [], None
 
     image_path = _get_image_path(task)
-    image_id = (task.get("data") or {}).get("image_id")
+    data = task.get("data") or {}
+    image_id = data.get("image_id")
     project_id = _project_id_from_task(task)
     if not image_path or not isinstance(image_id, str) or project_id is None:
         logger.warning(
@@ -673,13 +674,15 @@ def smart_track(
         return [], None
 
     seed_label = snap_label(label_hint) if label_hint else DEFAULT_LABEL
+    assigned_to = data.get("assigned_to") if isinstance(data.get("assigned_to"), str) else None
 
     logger.info(
-        "smart_track: seed image=%s bbox=%s label=%s project=%s",
+        "smart_track: seed image=%s bbox=%s label=%s project=%s assigned_to=%s",
         image_id,
         [round(b, 4) for b in seed_bbox],
         seed_label,
         project_id,
+        assigned_to,
     )
 
     result = propagate_via_tracker(
@@ -695,6 +698,7 @@ def smart_track(
         motion_thresh=motion_thresh,
         max_siblings=max_siblings,
         model_version=model_version,
+        assigned_to=assigned_to,
     )
     return [], result
 

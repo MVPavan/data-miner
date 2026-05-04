@@ -23,11 +23,13 @@ with ``--image-url-template`` when serving images via S3/HTTPS instead.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,44 @@ from manual_reviewer.pipeline_io import (
     read_image_payload,
     read_job_info,
 )
+
+
+def _stable_assignee(clip: str, assignees: list[str]) -> str:
+    """SHA1-based deterministic assignment so re-runs are stable per clip.
+
+    Whole clips go to one user — this keeps smart_track useful within
+    each user's slice (all sibling frames available) and the per-user
+    smart_track containment filter then prevents cross-user leakage.
+    """
+    h = int(hashlib.sha1(clip.encode("utf-8")).hexdigest(), 16)
+    return assignees[h % len(assignees)]
+
+
+def _parse_assignees(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    out = [u.strip() for u in raw.split(",") if u.strip()]
+    if len(out) != len(set(out)):
+        raise ValueError(f"--assignees must be unique: got {out}")
+    return out
+
+
+def assign_by_frame_count_rr(
+    clip_counts: dict[str, int], assignees: list[str],
+) -> dict[str, str]:
+    """Round-robin assign clips to ``assignees`` in descending frame-count order.
+
+    The first user listed in ``assignees`` gets the largest clip, the
+    second gets the next largest, etc., wrapping around. With a long
+    tail of singleton clips the load evens out across users; the lead
+    reviewer (typically ``assignees[0]``) ends up with the most
+    valuable single clip for smart_track propagation.
+
+    Returns a ``clip → assignee`` map. Caller stamps it onto each task.
+    """
+    # Descending by frame count; alphabetical on tie for reproducibility.
+    ordered = sorted(clip_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {clip: assignees[i % len(assignees)] for i, (clip, _) in enumerate(ordered)}
 
 logger = logging.getLogger("manual_reviewer.build_tasks")
 
@@ -50,6 +90,14 @@ def main(argv: list[str] | None = None) -> int:
     if not db_path.exists():
         logger.error("pipeline.db not found: %s", db_path)
         return 2
+
+    try:
+        assignees = _parse_assignees(args.assignees)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return 2
+    if assignees:
+        logger.info("clip-level assignment across %d users: %s", len(assignees), assignees)
 
     job_info = read_job_info(db_path) or {}
     job_id = job_info.get("job_id", "")
@@ -95,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
         if task is None:
             skipped_invalid += 1
             continue
+        if assignees and args.assignment_strategy == "hash":
+            clip = _clip_prefix(image_id)
+            task["data"]["assigned_to"] = _stable_assignee(clip, assignees)
         tasks.append(task)
 
     logger.info(
@@ -103,6 +154,15 @@ def main(argv: list[str] | None = None) -> int:
         skipped_no_finalize,
         skipped_invalid,
     )
+    if assignees and args.assignment_strategy == "frame-count-rr":
+        clip_counts = Counter(_clip_prefix(t["data"]["image_id"]) for t in tasks)
+        clip_to_user = assign_by_frame_count_rr(dict(clip_counts), assignees)
+        for t in tasks:
+            t["data"]["assigned_to"] = clip_to_user[_clip_prefix(t["data"]["image_id"])]
+    if assignees:
+        counts = Counter(t["data"].get("assigned_to") for t in tasks)
+        summary = ", ".join(f"{u}={counts.get(u, 0)}" for u in assignees)
+        logger.info("assignment counts: %s", summary)
     if not tasks:
         logger.warning("no tasks to write/post")
         return 1
@@ -337,6 +397,24 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
              "tasks are pulled in DB insertion order which often clusters "
              "into one clip. Clip prefix = image_id with the trailing "
              "'_f<digits>' suffix stripped.",
+    )
+    p.add_argument(
+        "--assignees",
+        default=None,
+        help="Comma-separated reviewer names. Sets data.assigned_to on "
+             "every task. Whole clips go to one user so smart_track "
+             "propagation stays useful inside each user's slice. "
+             "Example: --assignees pavan,sree,raj,sathish,deepak",
+    )
+    p.add_argument(
+        "--assignment-strategy",
+        choices=["hash", "frame-count-rr"],
+        default="hash",
+        help="hash (default): SHA1 of clip prefix → stable round-robin "
+             "across runs. frame-count-rr: clips sorted by descending "
+             "frame count then round-robined; the first listed assignee "
+             "gets the largest clip — useful when the lead reviewer "
+             "should own the highest-leverage video.",
     )
     return p.parse_args(argv)
 

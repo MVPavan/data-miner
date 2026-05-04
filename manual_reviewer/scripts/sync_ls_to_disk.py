@@ -144,6 +144,10 @@ def _fetch_live_annotations(
             url = f"{base_url}/api/projects/{project_id}/tasks"
             params = {"page": page, "page_size": page_size, "fields": "all"}
             resp = client.get(url, params=params)
+            # LS returns 404 (not an empty list) when paginating past the
+            # last page on totals divisible by page_size — treat as EOF.
+            if resp.status_code == 404:
+                break
             resp.raise_for_status()
             data = resp.json()
             tasks = data if isinstance(data, list) else (

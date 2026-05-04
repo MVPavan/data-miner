@@ -85,6 +85,10 @@ class LSRestClient:
                 f"/api/projects/{project_id}/tasks",
                 params={"page": page, "page_size": page_size, "fields": "all"},
             )
+            # LS returns 404 (not an empty list) when paginating past the
+            # last page on totals divisible by page_size — treat as EOF.
+            if resp.status_code == 404:
+                return
             resp.raise_for_status()
             data = resp.json()
             tasks = data if isinstance(data, list) else (
