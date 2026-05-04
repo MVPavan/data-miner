@@ -57,6 +57,53 @@ __all__ = [
 ]
 
 
+def _append_to_latest_or_post(
+    ls_rest: LSRestClient,
+    *,
+    task_id: int,
+    region: dict[str, Any],
+    score: float,
+    model_version: str,
+) -> int | None:
+    """Append ``region`` to the sibling task's latest existing prediction
+    (PATCH), or POST a fresh prediction when none exist.
+
+    Why merge instead of create-new: LS's labeler shows ONE prediction at
+    a time on the canvas (the active one in the predictions dropdown).
+    Posting a separate ``sam3_1_track`` prediction means the user opens
+    the sibling, sees only the propagated motorcycle, hits Submit, and
+    the existing YOLO regions never make it into the annotation. Live
+    failure on project 9 task 222 (2026-05-04). Merging into the latest
+    prediction puts every region — YOLO + propagated — on a single
+    canvas the user can submit in one shot.
+
+    Returns the prediction id (existing PATCHed or new POST), or None
+    on failure. The propagated region carries ``meta.source="smart_track"``
+    + ``meta.from_image`` so attribution is preserved even though the
+    container prediction's ``model_version`` may say "dataset_selection_yolo".
+    """
+    existing = ls_rest.list_predictions(task_id)
+    if existing:
+        latest = max(existing, key=lambda p: p.get("created_at") or "")
+        new_result = list(latest.get("result") or []) + [region]
+        # Take max of existing score and new region's score so the
+        # task-list summary reflects the higher confidence.
+        try:
+            new_score = max(float(latest.get("score") or 0.0), float(score))
+        except (TypeError, ValueError):
+            new_score = float(score)
+        ok = ls_rest.patch_prediction(
+            int(latest["id"]), result=new_result, score=new_score,
+        )
+        return int(latest["id"]) if ok else None
+    return ls_rest.post_prediction(
+        task_id=task_id,
+        result=[region],
+        score=score,
+        model_version=model_version,
+    )
+
+
 class TrackerLikeClient(Protocol):
     """Protocol for the SAM 3.1 client surface used by the tracker route.
 
@@ -350,9 +397,10 @@ def propagate_via_tracker(
             )
             if region is None:
                 continue
-            pid = ls_rest.post_prediction(
+            pid = _append_to_latest_or_post(
+                ls_rest,
                 task_id=sib.task_id,
-                result=[region],
+                region=region,
                 score=score,
                 model_version=model_version,
             )

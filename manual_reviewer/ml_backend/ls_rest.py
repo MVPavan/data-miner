@@ -140,6 +140,83 @@ class LSRestClient:
                 return pid
         return None
 
+    def list_predictions(self, task_id: int) -> list[dict[str, Any]]:
+        """Return every prediction attached to ``task_id``.
+
+        LS exposes predictions inline on /api/tasks/<id>/, which is the
+        single-call way to fetch them. Returns ``[]`` on any HTTP /
+        parse error so callers can default to "no existing predictions"
+        without crashing.
+        """
+        try:
+            resp = self._client.get(f"/api/tasks/{task_id}/")
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "list_predictions failed for task %s: %s", task_id, exc
+            )
+            return []
+        body = resp.json() if resp.content else {}
+        preds = body.get("predictions") if isinstance(body, dict) else None
+        return [p for p in (preds or []) if isinstance(p, dict)]
+
+    def patch_prediction(
+        self,
+        prediction_id: int,
+        *,
+        result: list[dict[str, Any]],
+        score: float | None = None,
+        model_version: str | None = None,
+    ) -> bool:
+        """PATCH ``/api/predictions/<id>/`` with a new result list.
+
+        Returns True on 2xx, False otherwise. Like ``post_prediction``,
+        never raises — partial-failure tolerance for batch propagation.
+        """
+        payload: dict[str, Any] = {"result": result}
+        if score is not None:
+            payload["score"] = float(score)
+        if model_version is not None:
+            payload["model_version"] = model_version
+        try:
+            resp = self._client.patch(
+                f"/api/predictions/{prediction_id}/", json=payload,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "patch_prediction failed for prediction %s: %s",
+                prediction_id, exc,
+            )
+            return False
+        return True
+
+    def delete_prediction(self, prediction_id: int) -> bool:
+        """DELETE ``/api/predictions/<id>/``. Returns True on success."""
+        try:
+            resp = self._client.delete(f"/api/predictions/{prediction_id}/")
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "delete_prediction failed for prediction %s: %s",
+                prediction_id, exc,
+            )
+            return False
+        return True
+
+    def delete_annotation(self, annotation_id: int) -> bool:
+        """DELETE ``/api/annotations/<id>/``. Returns True on success."""
+        try:
+            resp = self._client.delete(f"/api/annotations/{annotation_id}/")
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "delete_annotation failed for annotation %s: %s",
+                annotation_id, exc,
+            )
+            return False
+        return True
+
 
 def build_ls_rest_client(
     *,

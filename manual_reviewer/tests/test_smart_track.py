@@ -178,11 +178,23 @@ def test_filter_track_response_skips_seed_frame() -> None:
 
 
 class _StubLSRest:
-    """Mimic LSRestClient.iter_project_tasks + post_prediction."""
+    """Mimic LSRestClient surface used by smart_track_lib.
 
-    def __init__(self, tasks: list[dict[str, Any]]) -> None:
+    ``existing_predictions`` lets tests prime the per-task-id prediction
+    list so list_predictions returns realistic state. Defaults to no
+    existing predictions, in which case the new merge path falls back
+    to post_prediction (preserving existing test semantics).
+    """
+
+    def __init__(
+        self, tasks: list[dict[str, Any]],
+        *,
+        existing_predictions: dict[int, list[dict[str, Any]]] | None = None,
+    ) -> None:
         self._tasks = tasks
+        self._existing_predictions = existing_predictions or {}
         self.posted: list[dict[str, Any]] = []
+        self.patched: list[dict[str, Any]] = []
         self.next_pid = 1000
 
     def iter_project_tasks(self, project_id: int, *, page_size: int = 200):
@@ -199,6 +211,19 @@ class _StubLSRest:
         pid = self.next_pid
         self.next_pid += 1
         return pid
+
+    def list_predictions(self, task_id: int) -> list[dict[str, Any]]:
+        return list(self._existing_predictions.get(task_id, []))
+
+    def patch_prediction(self, prediction_id, *, result, score=None,
+                         model_version=None) -> bool:
+        self.patched.append({
+            "prediction_id": prediction_id,
+            "result": result,
+            "score": score,
+            "model_version": model_version,
+        })
+        return True
 
 
 def test_find_siblings_filters_by_clip_prefix() -> None:
@@ -360,6 +385,94 @@ def test_propagate_via_tracker_no_siblings_short_circuits(tmp_path: Path) -> Non
     assert result.propagated == 0
     assert sam3.calls == []  # Tracker not invoked when no siblings.
     assert ls.posted == []
+
+
+def test_propagate_via_tracker_merges_into_existing_prediction(tmp_path: Path) -> None:
+    """Sibling task has a YOLO prediction already → propagated region is
+    PATCHed onto it (not POSTed as a separate prediction). Mirrors the
+    project 9 task 222 fix from 2026-05-04: separate predictions caused
+    LS to show only one of them on the canvas, hiding the YOLO labels.
+    """
+    seed_path = tmp_path / "seed.jpg"
+    sib_path = tmp_path / "sib.jpg"
+    for p in (seed_path, sib_path):
+        p.write_bytes(b"jpeg")
+
+    yolo_region = {
+        "id": "yolo_0",
+        "type": "rectanglelabels",
+        "from_name": "bbox",
+        "value": {"x": 5, "y": 5, "width": 10, "height": 10,
+                  "rectanglelabels": ["car"]},
+    }
+    ls = _StubLSRest(
+        [
+            {"id": 100, "data": {"image_id": "clip_f00000", "image_path": str(seed_path)}},
+            {"id": 101, "data": {"image_id": "clip_f00100", "image_path": str(sib_path)}},
+        ],
+        existing_predictions={
+            101: [{
+                "id": 9000,
+                "model_version": "dataset_selection_yolo",
+                "score": 0.5,
+                "created_at": "2026-05-04T06:00:00Z",
+                "result": [yolo_region],
+            }],
+        },
+    )
+
+    seed_bbox = [0.10, 0.10, 0.20, 0.20]
+    sam3 = _StubSam3(_resp([
+        (1, [(1, [0.10, 0.10, 0.20, 0.20], 0.93)]),
+    ]))
+    propagate_via_tracker(
+        sam3_client=sam3, ls_rest=ls, project_id=42,
+        seed_image_path=str(seed_path),
+        seed_image_id="clip_f00000",
+        seed_bbox=seed_bbox,
+        seed_label="motorcycle",
+        current_task_id=100,
+    )
+    # Did NOT POST a new prediction (would have broken LS one-prediction-on-canvas UX).
+    assert ls.posted == []
+    # Did PATCH the existing YOLO prediction with both regions.
+    assert len(ls.patched) == 1
+    patched = ls.patched[0]
+    assert patched["prediction_id"] == 9000
+    # 1 original YOLO + 1 propagated.
+    assert len(patched["result"]) == 2
+    assert patched["result"][0] == yolo_region
+    propagated = patched["result"][1]
+    assert propagated["meta"]["source"] == "smart_track"
+    assert propagated["value"]["rectanglelabels"] == ["motorcycle"]
+    # Score takes the max of existing + new.
+    assert patched["score"] == pytest.approx(0.93)
+
+
+def test_propagate_via_tracker_posts_when_no_existing_prediction(tmp_path: Path) -> None:
+    """Sibling task has no predictions → fall back to POST, not PATCH."""
+    seed_path = tmp_path / "seed.jpg"
+    sib_path = tmp_path / "sib.jpg"
+    for p in (seed_path, sib_path):
+        p.write_bytes(b"jpeg")
+
+    ls = _StubLSRest([
+        {"id": 100, "data": {"image_id": "clip_f00000", "image_path": str(seed_path)}},
+        {"id": 101, "data": {"image_id": "clip_f00100", "image_path": str(sib_path)}},
+    ])  # no existing_predictions
+    sam3 = _StubSam3(_resp([
+        (1, [(1, [0.10, 0.10, 0.20, 0.20], 0.9)]),
+    ]))
+    propagate_via_tracker(
+        sam3_client=sam3, ls_rest=ls, project_id=1,
+        seed_image_path=str(seed_path),
+        seed_image_id="clip_f00000",
+        seed_bbox=[0.10, 0.10, 0.20, 0.20],
+        seed_label="motorcycle",
+    )
+    assert ls.patched == []
+    assert len(ls.posted) == 1
+    assert ls.posted[0]["task_id"] == 101
 
 
 def test_propagate_via_tracker_sam3_failure_is_swallowed(tmp_path: Path) -> None:
