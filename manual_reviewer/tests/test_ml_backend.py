@@ -959,6 +959,43 @@ def test_server_predict_smart_visual_path() -> None:
     assert client.calls[0][0] == "visual_prompt"
 
 
+def test_server_predict_dispatch_uses_latest_region() -> None:
+    """Stale smart_track exemplar in context must NOT hijack a fresh
+    smart_visual draft. Dispatch picks the LAST classifiable region.
+    """
+    client = _StubSam3Client()
+    client._visual_resp = _StubResp(boxes_norm=[[0.5, 0.5, 0.7, 0.7]], scores=[0.9])
+    backend = ManualReviewerMLBackend(sam3_client=client, db_path=None)
+    ctx = {
+        "result": [
+            # leftover smart_track exemplar from a previous tool switch
+            {"type": "rectanglelabels", "from_name": "smart_track",
+             "value": {"x": 5, "y": 5, "width": 5, "height": 5,
+                       "rectanglelabels": ["forklift"]}},
+            # fresh smart_visual draft the user just drew
+            {"type": "rectanglelabels", "from_name": "smart_visual",
+             "value": {"x": 10, "y": 10, "width": 20, "height": 20,
+                       "labels": ["forklift"]}},
+        ]
+    }
+    out = backend.predict([_task()], context=ctx)
+    assert out[0]["result"]  # smart_visual ran and produced regions
+    assert client.calls[0][0] == "visual_prompt"
+    # smart_track was NOT invoked even though one was in the context.
+    assert all(call[0] != "track" for call in client.calls)
+
+
+def test_server_pick_route_classifies_each_tool() -> None:
+    """Direct table-test of the classifier — protects the dispatch contract."""
+    pick = ManualReviewerMLBackend._pick_route
+    assert pick([{"type": "rectanglelabels", "from_name": "smart_track"}]) == "smart_track"
+    assert pick([{"type": "rectanglelabels", "from_name": "smart_visual"}]) == "smart_visual"
+    assert pick([{"type": "keypointlabels", "from_name": "click"}]) == "smart_click"
+    assert pick([{"type": "textarea", "from_name": "text_query"}]) == "smart_search"
+    assert pick([{"type": "rectanglelabels", "from_name": "bbox"}]) is None
+    assert pick([]) is None
+
+
 def test_server_predict_regular_bbox_does_not_fire_ml() -> None:
     """A regular Rectangle (from_name=bbox) draw must NOT trigger ML —
     only smart_visual (from_name=smart_visual) drafts route to smart_visual."""

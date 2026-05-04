@@ -167,14 +167,23 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         )
         has_draft = isinstance(context, dict) and bool(context.get("result"))
         if has_draft:
-            # smart_track is discriminated by ``from_name="smart_track"`` —
-            # check it first so a smart_track draft never falls into the
-            # generic rectangle handlers below.
-            has_track = self._sam3_client and any(
-                isinstance(r, dict) and r.get("from_name") == "smart_track"
-                for r in context["result"]
-            )
-            if has_track and _route_enabled("smart_track"):
+            # Dispatch on the LATEST classifiable region in ``context.result``
+            # rather than the first match by from_name. LS appends new drafts
+            # at the tail; older drafts (e.g. a smart_track exemplar still
+            # sitting on the canvas) used to hijack every subsequent
+            # smart_visual call because the old logic always preferred
+            # smart_track when ANY smart_track region was present.
+            route = self._pick_route(context["result"])
+            if route is None:
+                logger.info("→ no smart route matched draft, returning empty")
+                return []
+            if not _route_enabled(route):
+                logger.info("→ %s disabled by env, returning empty", route)
+                return []
+            if not self._sam3_client:
+                logger.info("→ %s skipped — sam3 client unavailable", route)
+                return []
+            if route == "smart_track":
                 _, propagate_result = smart_track(
                     task, context, self._sam3_client, self._ls_rest,
                 )
@@ -190,57 +199,18 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
                         propagate_result.rejected_missing,
                     )
                 return []
-            if has_track:
-                logger.info("→ smart_track disabled by env, falling through")
-            # smart_visual is discriminated by the smart-Rectangle's
-            # from_name, not by region type — a regular bbox draw also
-            # produces type "rectanglelabels" and we don't want THAT to
-            # fire ML.
-            has_visual = self._sam3_client and any(
-                isinstance(r, dict) and r.get("from_name") == "smart_visual"
-                for r in context["result"]
-            )
-            if has_visual and _route_enabled("smart_visual"):
+            if route == "smart_visual":
                 out = smart_visual(task, context, self._sam3_client)
                 logger.info("→ smart_visual returned %d region(s)", len(out))
                 return out
-            if has_visual:
-                logger.info("→ smart_visual disabled by env, falling through")
-            # `continue` (not `return []`) on a gated-off branch so a mixed
-            # context (e.g. textarea + keypoint) with one disabled route +
-            # one enabled route still reaches the enabled route below.
-            # Same applies when smart_visual is gated off but a keypoint
-            # or textarea also rides on the same draft.
-            for region in context["result"]:
-                if not isinstance(region, dict):
-                    continue
-                if region.get("from_name") in {"smart_visual", "smart_track"}:
-                    # Smart tools with their own dispatch branches above —
-                    # never let them fall through into the generic
-                    # smart_click / smart_search handlers. Both produce
-                    # type=rectanglelabels which would otherwise match the
-                    # generic paths.
-                    continue
-                rtype = (region.get("type") or "").lower()
-                if rtype in {"keypointlabels", "keypoint"} and self._sam3_client:
-                    if not _route_enabled("smart_click"):
-                        logger.info("→ smart_click disabled by env, skipping draft")
-                        continue
-                    out = smart_click(task, context, self._sam3_client)
-                    logger.info("→ smart_click returned %d region(s)", len(out))
-                    return out
-                if rtype == "textarea" and self._sam3_client:
-                    if not _route_enabled("smart_search"):
-                        logger.info("→ smart_search disabled by env, skipping draft")
-                        continue
-                    out = smart_search(task, context, self._sam3_client)
-                    logger.info("→ smart_search returned %d region(s)", len(out))
-                    return out
-            # We had a draft but no enabled smart route handled it. Don't
-            # fall through to batch_proposals — that would seed the canvas
-            # with cached proposals after a click/textarea, which the
-            # reviewer didn't ask for.
-            logger.info("→ no enabled smart route matched draft, returning empty")
+            if route == "smart_click":
+                out = smart_click(task, context, self._sam3_client)
+                logger.info("→ smart_click returned %d region(s)", len(out))
+                return out
+            if route == "smart_search":
+                out = smart_search(task, context, self._sam3_client)
+                logger.info("→ smart_search returned %d region(s)", len(out))
+                return out
             return []
         if not _route_enabled("batch_proposals"):
             logger.info("→ batch_proposals disabled by env, skipping")
@@ -248,6 +218,38 @@ class ManualReviewerMLBackend(_LSBase):  # type: ignore[misc, valid-type]
         out = batch_proposals(task, self._db_path)
         logger.info("→ batch_proposals returned %d region(s)", len(out))
         return out
+
+    @staticmethod
+    def _pick_route(regions: list[dict[str, Any]]) -> str | None:
+        """Classify the LATEST smart-tool region in the context.
+
+        Walks ``regions`` in reverse (newest first per LS append order)
+        and returns the route name for the first classifiable entry, or
+        ``None`` when nothing matches. The mapping:
+
+          * from_name == "smart_track"  → smart_track
+          * from_name == "smart_visual" → smart_visual
+          * type ∈ {keypointlabels, keypoint} → smart_click
+          * type == "textarea" → smart_search
+
+        smart_track / smart_visual are checked by ``from_name`` because
+        both also have ``type=rectanglelabels`` (so a regular bbox draw
+        would otherwise look identical to a smart-tool draft).
+        """
+        for region in reversed(regions):
+            if not isinstance(region, dict):
+                continue
+            from_name = region.get("from_name")
+            if from_name == "smart_track":
+                return "smart_track"
+            if from_name == "smart_visual":
+                return "smart_visual"
+            rtype = (region.get("type") or "").lower()
+            if rtype in {"keypointlabels", "keypoint"}:
+                return "smart_click"
+            if rtype == "textarea":
+                return "smart_search"
+        return None
 
     @staticmethod
     def _summarize_context(context: Any) -> str:

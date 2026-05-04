@@ -23,8 +23,9 @@ from manual_reviewer.scripts import sync_ls_to_disk as mod
 
 
 class _FakeResp:
-    def __init__(self, payload: Any) -> None:
+    def __init__(self, payload: Any, status_code: int = 200) -> None:
         self._payload = payload
+        self.status_code = status_code
 
     def json(self) -> Any:
         return self._payload
