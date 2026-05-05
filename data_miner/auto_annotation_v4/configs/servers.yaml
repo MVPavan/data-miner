@@ -76,7 +76,7 @@ servers:
       batch_timeout_ms: 0
       model_id: "facebook/sam3.1"
       script: "serve_sam3_1.py"
-      options:
+      options: {}
         # apply_temporal_disambiguation: true  # default in sam3 upstream
         # checkpoint_path / bpe_path: leave unset to download from HF
 
@@ -111,7 +111,7 @@ servers:
       batch_timeout_ms: 0
       model_id: "IDEA-Research/Rex-Omni"
       script: "serve_rex_omni.py"
-      options:
+      options: {}
         # backend: "transformers"   # or "vllm" if installed
         # max_new_tokens: 2048
 

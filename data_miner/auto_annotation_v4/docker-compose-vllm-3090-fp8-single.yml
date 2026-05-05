@@ -1,0 +1,81 @@
+# ============================================================================
+# Qwen3.5-27B-FP8 — single replica (TP=2 across GPUs 0,1)
+#
+# Variant of docker-compose-vllm-3090-fp8.yml trimmed to ONE replica + no
+# nginx LB. Use when running aav4 evaluate against a single dataset and the
+# LB's load-balancing across 4 replicas isn't justified (e.g. small filter
+# routing, ad-hoc evaluation).
+#
+# Pre-req: GPUs 0,1 must be free. Stop manual_reviewer's sam3_1 server first
+# (`manage_stack.sh status`) — it normally holds GPU 0.
+#
+# Bring up:
+#   docker compose -f docker-compose-vllm-3090-fp8-single.yml up -d
+#
+# Tail logs (TP=2 on Ampere takes ~3-15 min to load — start_period=900s):
+#   docker compose -f docker-compose-vllm-3090-fp8-single.yml logs -f
+#
+# Once healthy:
+#   curl http://localhost:8956/health
+#   curl http://localhost:8956/v1/models
+#
+# Tear down:
+#   docker compose -f docker-compose-vllm-3090-fp8-single.yml down
+# ============================================================================
+
+services:
+  qwen35-validator:
+    image: vllm/vllm-openai:latest
+    container_name: qwen35-validator
+    cpuset: "0-15,64-79"           # NUMA node 0 (matches GPUs 0,1)
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - NVIDIA_DISABLE_REQUIRE=1
+    volumes:
+      - ${HF_HOME:-/media/data_2/all_cache/hf_home}:/root/.cache/huggingface
+    ipc: host
+    shm_size: "16gb"
+    restart: unless-stopped
+    ports:
+      - "${VLLM_PORT:-8956}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1']
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 900s
+    command:
+      - --model
+      - ${VALIDATOR_MODEL:-Qwen/Qwen3.5-27B-FP8}
+      - --tensor-parallel-size
+      - "2"
+      - --max-model-len
+      - "${VALIDATOR_MAX_MODEL_LEN:-4096}"
+      - --gpu-memory-utilization
+      - "${VALIDATOR_GPU_MEM_UTIL:-0.90}"
+      - --max-num-seqs
+      - "${VALIDATOR_MAX_NUM_SEQS:-32}"
+      - --enable-chunked-prefill
+      - --max-num-batched-tokens
+      - "4096"
+      - --kv-cache-dtype
+      - ${VALIDATOR_KV_DTYPE:-fp8_e4m3}
+      - --reasoning-parser
+      - qwen3
+      - --enable-prefix-caching
+      - --mm-processor-cache-type
+      - shm
+      - --dtype
+      - ${VALIDATOR_DTYPE:-auto}
+      - --port
+      - "8000"
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'

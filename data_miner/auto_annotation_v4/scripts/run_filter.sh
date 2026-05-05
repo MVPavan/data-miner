@@ -18,7 +18,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-    echo "usage: $0 <loco|datatang> [OVERRIDES...]" >&2
+    echo "usage: $0 <loco|datatang|ava_sampled|animal_person|nwpu_campus> [OVERRIDES...]" >&2
     exit 2
 fi
 
@@ -32,8 +32,20 @@ case "$DATASET" in
         IMG_DIR=/media/data_2/datasets/datasets_pavan/DataTang_val
         JOB_ID=datatang_val_detect
         ;;
+    ava_sampled)
+        IMG_DIR=/media/data_2/datasets/datasets_pavan/AVA_sampled
+        JOB_ID=ava_sampled_detect
+        ;;
+    animal_person)
+        IMG_DIR=/media/data_2/datasets/datasets_pavan/animal_person_manual_verification
+        JOB_ID=animal_person_detect
+        ;;
+    nwpu_campus)
+        IMG_DIR=/media/data_2/datasets/datasets_pavan/NWPUCampus_sampled
+        JOB_ID=nwpu_campus_detect
+        ;;
     *)
-        echo "ERROR: unknown dataset '$DATASET' (expected: loco | datatang)" >&2
+        echo "ERROR: unknown dataset '$DATASET'" >&2
         exit 2
         ;;
 esac
@@ -53,12 +65,16 @@ echo "[filter] dataset=${DATASET} job=${JOB_ID} log=${LOG_FILE}"
 # filtering.allowed_source_models=[sam3_dart] is redundant with servers.yaml
 # gdino enabled, but belt-and-braces: FilterPipeline step 1 drops gdino
 # cands; merge-time filter is a no-op since detect.json already has gdino.
+# Caller args go FIRST so a leading `--config X` (argparse optional) is parsed
+# before the positional dotlist overrides — argparse with `nargs='*'`
+# positionals rejects optionals appearing in the middle of the positional list.
 python -u -m data_miner.auto_annotation_v4 \
+    "$@" \
     runtime.image_dir="${IMG_DIR}" \
     runtime.job_id="${JOB_ID}" \
     'runtime.stages=[filter]' \
     'filtering.allowed_source_models=[sam3_dart]' \
-    "$@" 2>&1 | tee -a "$LOG_FILE"
+    2>&1 | tee -a "$LOG_FILE"
 
 # ---------- post-completion backup ----------
 # WAL-safe online backup via Python sqlite3 .backup(); no sqlite3 CLI needed.
