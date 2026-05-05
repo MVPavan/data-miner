@@ -45,7 +45,7 @@ Edge cases handled:
     IDs as a defensive measure (LSF-specific bug, but cheap to mirror).
 
 Usage:
-    python -m manual_reviewer_cvat.scripts.migrate_from_ls \\
+    python -m manual_reviewer_cvat.migrations_from_LS.scripts.migrate_from_ls \\
         --ls-url http://127.0.0.1:8080 \\
         --ls-token "$LS_TOKEN" \\
         --ls-project 9 \\

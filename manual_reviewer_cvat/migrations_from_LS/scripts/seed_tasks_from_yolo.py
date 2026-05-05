@@ -16,7 +16,7 @@ Key differences from the LS version:
     upload pushes bytes per-task (slower, doubles disk).
 
 Usage:
-    python -m manual_reviewer_cvat.scripts.seed_tasks_from_yolo \\
+    python -m manual_reviewer_cvat.migrations_from_LS.scripts.seed_tasks_from_yolo \\
         --cvat-url http://127.0.0.1:8081 \\
         --admin-user admin --admin-pass <pw> \\
         --project-id 1 \\

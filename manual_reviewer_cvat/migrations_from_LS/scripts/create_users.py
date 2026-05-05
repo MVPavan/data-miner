@@ -10,13 +10,13 @@ REST call, so no Django-ORM workaround is needed. We still verify the user
 can log in afterwards as a sanity check.
 
 Usage:
-    python -m manual_reviewer_cvat.scripts.create_users \\
+    python -m manual_reviewer_cvat.migrations_from_LS.scripts.create_users \\
         --cvat-url http://127.0.0.1:8081 \\
         --admin-user admin --admin-pass <pw> \\
         --reviewers pavan,sree,raj,sathish,deepak \\
         --default-password change-me-on-first-login
 
-    python -m manual_reviewer_cvat.scripts.create_users --create-project \\
+    python -m manual_reviewer_cvat.migrations_from_LS.scripts.create_users --create-project \\
         --cvat-url http://127.0.0.1:8081 \\
         --admin-user admin --admin-pass <pw> \\
         --project-name "Datatang Diverse 1000" \\

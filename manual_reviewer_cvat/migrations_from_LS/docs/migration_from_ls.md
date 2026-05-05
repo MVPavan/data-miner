@@ -64,7 +64,7 @@ to CVAT. Cost is zero, defensive value is non-zero.
 ## Dry-run output
 
 ```
-$ python -m manual_reviewer_cvat.scripts.migrate_from_ls ... --dry-run
+$ python -m manual_reviewer_cvat.migrations_from_LS.scripts.migrate_from_ls ... --dry-run
 
 image_id,ls_task_id,cvat_task_id,ls_annotator,cvat_assignee,regions,status
 2018-10-09-06:33:57,348,42,pavan@jci.com,pavan,65,WOULD_MIGRATE
