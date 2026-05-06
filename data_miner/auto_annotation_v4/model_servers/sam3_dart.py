@@ -155,10 +155,14 @@ if __name__ == "__main__":
     api._detection_only = args.detection_only
     api._presence_threshold = args.presence_threshold
 
+    # LitServer's devices= wants int(s), not "cuda:N" strings. Accept either.
+    gpu_str = str(args.gpu)
+    device_idx = int(gpu_str.split(":", 1)[1]) if gpu_str.startswith("cuda:") else int(gpu_str)
+
     server = ls.LitServer(
         api,
         accelerator="gpu",
-        devices=[args.gpu],
+        devices=[device_idx],
         max_batch_size=args.max_batch_size,
         batch_timeout=args.batch_timeout,
     )
