@@ -90,7 +90,8 @@ the script in `manual_reviewer_cvat/.migration_state/<cvat-project-id>.lock`.
 
 ## What this script does NOT do
 
-- Does not delete LS data. LS keeps running through cutover week.
+- Does not delete LS data. LS keeps running while LS remains active for this
+  project or for any other team.
 - Does not move users (use `create_users.py` for that).
 - Does not migrate the `pipeline.db` round-trip — that's `export_to_aa_v4.py`,
   which only reads from CVAT going forward.

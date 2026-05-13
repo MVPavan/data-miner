@@ -1,0 +1,37 @@
+source:
+  package: data_miner.auto_annotation_v2
+  path: data_miner/auto_annotation_v2/fl_pj.yaml
+  reason: Forklift/pallet-jack detector prompt variants and hard negatives from the v2 FL/PJ run config.
+
+classes:
+  - name: forklift
+    synonyms:
+      - pallet jack
+      - forklift including any load on the forks
+      - pallet jack including any pallet load on the forks
+    negatives:
+      - reach truck
+      - hand truck
+      - scissor lift
+      - boom lift
+      - dolly
+      - shopping cart
+      - wheelchair
+    prompt_variants:
+      - forklift including any load on the forks
+      - pallet jack including any pallet load on the forks
+
+  - name: pallet_jack
+    status: commented_out_in_source
+    synonyms:
+      - pallet jack
+      - hand pallet truck
+      - pump truck
+    negatives:
+      - hand truck
+      - dolly
+      - shopping cart
+      - wheelchair
+    prompt_variants:
+      - pallet jack including any pallet load on the forks
+      - manual pallet jack with or without load

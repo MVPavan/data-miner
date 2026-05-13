@@ -1,12 +1,13 @@
 # migrations_from_LS
 
-One-time tooling to cut the live 5-reviewer Datatang-1000 review over
-from the Label-Studio-based [manual_reviewer/](../../manual_reviewer/)
-to the CVAT stack at [..](../).
+Tooling to seed CVAT from the Label-Studio-based
+[manual_reviewer/](../../manual_reviewer/) workflow for the Datatang-1000
+review, and to provide the first LS -> CVAT exchange path.
 
-This whole subdirectory is **transient**. Once cutover is done and the
-LS instance is decommissioned, archive it (don't delete — the audit trail
-is reproducible from these scripts).
+This subdirectory started as migration scaffolding. Do not treat it as a
+reason to decommission Label Studio globally: LS and CVAT are both maintained
+frontends. Keep reusable mapping logic available for future LS <-> CVAT task
+exchange. See [../../docs/architecture/review-frontends.md](../../docs/architecture/review-frontends.md).
 
 > Strategic context (why CVAT at all): see
 > [../docs/long_term_vision.md](../docs/long_term_vision.md). Phase plan
@@ -40,7 +41,7 @@ migrations_from_LS/
 ├── README.md                       you are here
 ├── docs/
 │   ├── migration_from_ls.md        spec for migrate_from_ls.py
-│   └── reviewer_onboarding.md      cheat sheet for the 5 reviewers (post-cutover)
+│   └── reviewer_onboarding.md      cheat sheet for the 5 reviewers (post seed run)
 ├── pipeline_io/
 │   └── (LS state reader + LS↔CVAT annotation mapper land here)
 └── scripts/
@@ -55,7 +56,7 @@ arg parser + `NotImplementedError`). Bodies get filled when Phase 5 of
 
 ---
 
-## Quickstart — what to run (Phase 5 cutover)
+## Quickstart — what to run (Phase 5 LS -> CVAT seed run)
 
 All commands assume CWD = repo root.
 
@@ -190,22 +191,21 @@ python -m manual_reviewer_cvat.scripts.export_to_aa_v4 \
 
 ---
 
-## Cutover policy
+## Parallel-operation policy
 
 - **Do not stop LS** until `export_to_aa_v4.py` has produced one full
   pass matching what LS would have produced.
-- Keep the LS 5-min cron backup running through cutover week.
-- Once 7 reviewing days have passed cleanly on CVAT, stop LS via
-  `manual_reviewer/scripts/manage_stack.sh stop ls` (ml_backend +
-  sam3_1 can stay up, untouched).
+- Keep the LS 5-min cron backup running while LS is active.
+- Keep both LS and CVAT available when different users or teams need different
+  frontends. Any project-specific decommissioning decision should be reviewed
+  with the project owner and should not happen as part of source cleanup.
 
 ---
 
-## After cutover
+## After a migration run
 
 - Tag `migrations_from_LS/` as historical, link the run report (CSV
-  output of `migrate_from_ls.py --report`) somewhere durable, and
-  archive the LS instance.
-- The 5-reviewer team continues working in CVAT; new datasets onboard
-  via [../scripts/](../scripts/) only — no further touches to this
-  directory.
+  output of `migrate_from_ls.py --report`) somewhere durable.
+- Preserve reusable LS -> CVAT mapping code for future exchange work.
+- Add CVAT -> LS exchange support in a sibling adapter rather than hard-coding
+  CVAT-only assumptions into this migration path.

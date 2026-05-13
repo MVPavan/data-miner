@@ -1,24 +1,28 @@
 ## manual_reviewer_cvat
 
-CVAT-based replacement for [manual_reviewer/](../manual_reviewer/).
+CVAT-based review frontend maintained alongside the Label-Studio-based
+[manual_reviewer/](../manual_reviewer/).
 
 > **Resuming this work?** Read [RESUME.md](RESUME.md) first — handoff
 > context for picking up on a host-Docker machine, including phase plan
 > and copy-paste resume prompts.
 
-LS keeps running on `:8080` while this stack stands up on `:8081` — they
-do not conflict. Cut over only after a smoke test passes.
+LS keeps running on `:8080` while this stack stands up on `:8081`; they
+do not conflict. The long-term direction is dual frontend operation with
+LS <-> CVAT task exchange, not mandatory LS decommissioning. See
+[../docs/architecture/review-frontends.md](../docs/architecture/review-frontends.md).
 
 ---
 
 ## Two tracks share this directory
 
-### Track A — Datatang-1000 cutover (one-off migration)
+### Track A — Datatang-1000 LS -> CVAT migration and exchange seed
 Lives entirely in [migrations_from_LS/](migrations_from_LS/). Bootstrap
 the 5 reviewers, seed tasks from YOLO, import in-flight LS work,
-hand off. Transient — archive after cutover.
+and hand off. The migration code should evolve toward reusable exchange
+adapters where possible.
 
-### Track B — Permanent multi-team review tool
+### Track B — Permanent multi-team review frontend
 The CVAT stack itself + Nuclio smart-tools layer wrapping our SAM 3.1
 service. Implementation pending, plan in
 [docs/long_term_vision.md](docs/long_term_vision.md) and
@@ -46,8 +50,8 @@ manual_reviewer_cvat/
 │   ├── manage_cvat.sh              start / stop / status / logs / backup the stack
 │   └── export_to_aa_v4.py          general CVAT → pipeline.db Stage.HUMAN_REVIEW round-trip
 ├── pipeline_io/                    (general I/O — cvat_client.py to land here)
-├── migrations_from_LS/             ── Track A (transient) ─────────────────────
-│   ├── README.md                   Datatang-1000 cutover quickstart
+├── migrations_from_LS/             ── Track A (LS -> CVAT seed/exchange) ──────
+│   ├── README.md                   Datatang-1000 LS -> CVAT seed quickstart
 │   ├── docs/
 │   │   ├── migration_from_ls.md    spec for migrate_from_ls.py
 │   │   └── reviewer_onboarding.md  cheat sheet for the 5 reviewers
@@ -61,7 +65,8 @@ manual_reviewer_cvat/
 
 The Python scripts are currently **stubs** (docstring + signature +
 `NotImplementedError`). They get filled in once you've reviewed the
-plan, on the host-Docker machine.
+plan, on the host-Docker machine. New work should preserve the dual
+LS+CVAT direction in `review-frontends.md`.
 
 ---
 
@@ -69,7 +74,7 @@ plan, on the host-Docker machine.
 
 - **Standing up CVAT** (Track A or B — same stack):
   `./scripts/manage_cvat.sh start` → http://127.0.0.1:8081
-- **Datatang-1000 cutover** (Track A): see
+- **Datatang-1000 LS -> CVAT seed run** (Track A): see
   [migrations_from_LS/README.md](migrations_from_LS/README.md).
 - **Smart-tools / Nuclio rollout** (Track B): see
   [RESUME.md](RESUME.md) Phases 2-4.

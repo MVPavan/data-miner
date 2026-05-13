@@ -20,6 +20,7 @@ Use this to point at the right doc before guessing. Repo-relative paths only.
 | [`docs/architecture/overview.md`](../../docs/architecture/overview.md) | Top-level system diagram, design decisions, component map | Always first for system-level decisions |
 | [`docs/architecture/database-models.md`](../../docs/architecture/database-models.md) | `Project`, `Video`, `ProjectVideo` schema, status enums, locking columns | Changing the DB schema or worker locking behavior |
 | [`docs/architecture/workers.md`](../../docs/architecture/workers.md) | Supervisord setup, worker lifecycle, heartbeat-locking flow | Changing worker boot, lifecycle, or claim semantics |
+| [`docs/architecture/review-frontends.md`](../../docs/architecture/review-frontends.md) | Label Studio + CVAT dual-frontend architecture and exchange boundaries | Changing review tooling, LS/CVAT migration, or shared annotation I/O |
 
 ## User guide (`docs/user-guide/`)
 
@@ -52,7 +53,7 @@ Use this to point at the right doc before guessing. Repo-relative paths only.
 | Path | Purpose | Authority | Read when |
 |------|---------|-----------|-----------|
 | [`manual_reviewer/docs/next_phases.md`](../../manual_reviewer/docs/next_phases.md) | Phase plan for the Label Studio + SAM 3.1 review tool. Phases 1/3/4/5/7/8 done; 2 and 6 pending. | canonical for manual_reviewer | Picking up the next manual_reviewer phase |
-| [`manual_reviewer_cvat/RESUME.md`](../../manual_reviewer_cvat/RESUME.md) | Resume plan for the CVAT migration. Two tracks: Datatang LS→CVAT migration, permanent Nuclio+SAM3.1 stack. | canonical for manual_reviewer_cvat | Resuming the CVAT migration |
+| [`manual_reviewer_cvat/RESUME.md`](../../manual_reviewer_cvat/RESUME.md) | Resume plan for the CVAT stack. Existing docs still contain cutover language; pair with `review-frontends.md` for the maintained LS+CVAT direction. | canonical for manual_reviewer_cvat | Resuming CVAT stack work |
 | [`manual_reviewer_cvat/docs/why_cvat.md`](../../manual_reviewer_cvat/docs/why_cvat.md) | Rationale for CVAT over Label Studio for the permanent tool | supporting | Justifying or revisiting the CVAT decision |
 | [`manual_reviewer_cvat/docs/long_term_vision.md`](../../manual_reviewer_cvat/docs/long_term_vision.md) | End-state design for the permanent multi-team review tool | supporting | Scoping new work in manual_reviewer_cvat |
 | [`manual_reviewer_cvat/docs/smart_tools_plan.md`](../../manual_reviewer_cvat/docs/smart_tools_plan.md) | Nuclio + SAM 3.1 smart-tool plan | supporting | Implementing or debugging smart tools |
@@ -63,6 +64,8 @@ Each `auto_annotation_v*` package has its own `tests/` and (for v4) `configs/`. 
 
 - [`data_miner/auto_annotation_v4/`](../../data_miner/auto_annotation_v4/) — current engine (SAM 3.1, Rex-Omni, VLM finalization).
 - [`data_miner/auto_annotation_v3/`](../../data_miner/auto_annotation_v3/) — legacy engine (kept for parity).
+
+Prompt preservation for legacy cleanup lives under [`data_miner/auto_annotation_v4/prompts/archive/legacy/`](../../data_miner/auto_annotation_v4/prompts/archive/legacy/). Review it before deleting older auto-annotation packages.
 
 ## Diagrams
 

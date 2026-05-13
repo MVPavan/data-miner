@@ -1,8 +1,12 @@
 # RESUME — manual_reviewer_cvat
 
-This file is the handoff for resuming the CVAT migration work on a host
+This file is the handoff for resuming the CVAT frontend work on a host
 machine with Docker access (the original devcontainer can't run docker
 compose against the host daemon).
+
+CVAT is maintained alongside Label Studio, not as a global replacement. Read
+[../docs/architecture/review-frontends.md](../docs/architecture/review-frontends.md)
+before changing migration, exchange, or pipeline-integration behavior.
 
 Read top-to-bottom once. Then jump to **§ Resume prompts** and paste the
 relevant one into a fresh Claude Code session on the host machine.
@@ -15,11 +19,12 @@ Two needs converged into one project:
 
 | Track | Driver | Status |
 |---|---|---|
-| **A. Datatang-1000 review migration** | LS UX is slowing the 5-reviewer team on the immediate dataset. Switch them to CVAT without losing in-flight work. | Scaffolded — see [migrations_from_LS/README.md](migrations_from_LS/README.md), [migrations_from_LS/scripts/](migrations_from_LS/scripts/), [migrations_from_LS/docs/migration_from_ls.md](migrations_from_LS/docs/migration_from_ls.md). Stub bodies, not yet runnable end-to-end. |
-| **B. Permanent multi-team annotation tool** | Long-term productivity tool. Need CVAT-grade UX **plus** our SAM 3.1 smart tools (click→mask, text→detect, visual prompt, video track). | Strategic decision made (vanilla CVAT + Nuclio, not fork). Plan documented in [docs/long_term_vision.md](docs/long_term_vision.md) and [docs/smart_tools_plan.md](docs/smart_tools_plan.md). Implementation pending. |
+| **A. Datatang-1000 LS -> CVAT seed path** | LS UX is slowing the 5-reviewer team on the immediate dataset. Seed CVAT without losing in-flight LS work. | Scaffolded — see [migrations_from_LS/README.md](migrations_from_LS/README.md), [migrations_from_LS/scripts/](migrations_from_LS/scripts/), [migrations_from_LS/docs/migration_from_ls.md](migrations_from_LS/docs/migration_from_ls.md). Stub bodies, not yet runnable end-to-end. |
+| **B. Permanent multi-team CVAT frontend** | Long-term productivity frontend. Need CVAT-grade UX **plus** our SAM 3.1 smart tools (click→mask, text→detect, visual prompt, video track). | Strategic decision made (vanilla CVAT + Nuclio, not fork). Plan documented in [docs/long_term_vision.md](docs/long_term_vision.md), [docs/smart_tools_plan.md](docs/smart_tools_plan.md), and [../docs/architecture/review-frontends.md](../docs/architecture/review-frontends.md). Implementation pending. |
 
 Track A is the urgent operational need. Track B is the architecture that
-makes A worth doing for the next 3-5 years across multiple teams.
+makes CVAT worth maintaining for the next 3-5 years across multiple teams.
+Label Studio remains a maintained frontend for teams or jobs that need it.
 
 **The two tracks share the same CVAT stack.** Track A doesn't need smart
 tools (YOLO predictions are pre-seeded). Track B layers Nuclio functions
@@ -70,7 +75,7 @@ Full rationale in [docs/long_term_vision.md](docs/long_term_vision.md).
 | **2. Nuclio + first SAM 3.1 function** | Replace bundled SAM3 with our SAM 3.1 service for `smart_click`. Live in CVAT canvas. | 1 wk | [Prompt 2](#prompt-2--phase-2-first-sam-31-nuclio-function) |
 | **3. Remaining smart tools** | `smart_search` (text), `smart_visual` (exemplar), `smart_track` (video). | 3 wks | [Prompt 3](#prompt-3--phase-3-remaining-smart-tools) |
 | **4. Pipeline integration** | Port `build_tasks.py` / `export_to_aa_v4.py` / `sync_ls_to_disk.py` to CVAT REST. | 2 wks | [Prompt 4](#prompt-4--phase-4-pipeline-integration) |
-| **5. Track A cutover** | Migrate Datatang-1000 reviewers from LS to CVAT (existing scaffolded plan). | 1 wk | [Prompt 5](#prompt-5--phase-5-datatang-cutover) |
+| **5. Track A LS -> CVAT seed run** | Seed Datatang-1000 CVAT review from LS without losing in-flight work (existing scaffolded plan). | 1 wk | [Prompt 5](#prompt-5--phase-5-datatang-ls---cvat-seed-run) |
 
 Phase gates: do not advance if the previous phase isn't validated by a
 real reviewer using a real task. The whole point of this rebuild is UX —
@@ -264,7 +269,7 @@ what the LS path produces today.
 Stop and report once all three scripts are runnable and tested.
 ```
 
-### Prompt 5 — Phase 5: Datatang cutover
+### Prompt 5 — Phase 5: Datatang LS -> CVAT seed run
 
 ```
 Read /media/data_2/vlm/code/data_miner/manual_reviewer_cvat/RESUME.md
@@ -272,7 +277,8 @@ and /media/data_2/vlm/code/data_miner/manual_reviewer_cvat/migrations_from_LS/RE
 and /media/data_2/vlm/code/data_miner/manual_reviewer_cvat/migrations_from_LS/docs/migration_from_ls.md.
 
 Phases 1-4 complete (CVAT + Nuclio + smart tools + pipeline integration
-all working). Now cut over the live Datatang-1000 review from LS to CVAT.
+all working). Now seed the Datatang-1000 CVAT review from LS without losing
+in-flight LS work. This is not a global LS decommissioning task.
 
 Existing scaffolded scripts (Track A — all stubs, fill bodies):
 - migrations_from_LS/scripts/create_users.py
@@ -281,8 +287,8 @@ Existing scaffolded scripts (Track A — all stubs, fill bodies):
 - scripts/manage_cvat.sh                         (partial — CVAT stack lifecycle)
 - scripts/export_to_aa_v4.py                     (general round-trip, not migration-specific)
 
-Goal: fill in the stub bodies, then run the cutover end-to-end on the
-production Datatang-1000 dataset.
+Goal: fill in the stub bodies, then run the LS -> CVAT seed path end-to-end
+on the production Datatang-1000 dataset.
 
 Sequence per migrations_from_LS/docs/migration_from_ls.md:
 1. Bring up CVAT stack (already up from Phase 1+).
@@ -294,8 +300,8 @@ Sequence per migrations_from_LS/docs/migration_from_ls.md:
    per CVAT task. Hand a sample to one reviewer to spot-check.
 6. migrate_from_ls.py without --dry-run — commit imports.
 7. Reviewers log in, finish their slices in CVAT.
-8. Keep the LS instance + 5-min cron backup running for 7 days post-
-   cutover as a fallback.
+8. Keep the LS instance + 5-min cron backup running while LS remains active
+  for this project or for any other team.
 
 Stop and report after dry-run preview — do NOT auto-commit imports
 without explicit human go-ahead.
@@ -308,9 +314,9 @@ without explicit human go-ahead.
 - Do not rebuild the SAM 3.1 service. It works at :3014. Nuclio functions
   are thin HTTP wrappers, not new model servers.
 - Do not fork CVAT. The strategic decision was vanilla + Nuclio.
-- Do not stop the LS stack until Phase 5 step 8.
-- Do not commit anything to `manual_reviewer/` (the LS-based system) — it
-  stays as the live production tool until cutover.
+- Do not stop the LS stack as part of CVAT source work.
+- Do not commit anything to `manual_reviewer/` (the LS-based system) unless
+  the task explicitly targets LS. It remains a maintained frontend.
 - Do not deploy this to production (multi-team users) until all 5 phases
   are green and one full Datatang cycle has run cleanly through CVAT.
 

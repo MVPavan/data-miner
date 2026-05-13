@@ -1,0 +1,33 @@
+source:
+  tool: annotation-validator
+  path: annotation-validator/validator.py
+  symbols:
+    - DEFAULT_CLASS_DESCRIPTIONS
+    - build_rating_prompt
+  reason: Strong forklift vs. pallet-jack visual distinction prompt used by the VLM annotation validator.
+
+classes: forklift,pallet_jack
+
+class_descriptions: |
+  - FORKLIFT: A powered industrial truck with a vertical MAST and two horizontal FORKS that raise and lower.
+  Key features: upright mast/lifting mechanism, counterweight body at the rear, overhead guard/cage protecting the operator,
+  large rear-steer wheels. Can be sit-down or stand-up. Always has a visible mast structure even when forks are lowered.
+  Common confusion: do NOT classify reach trucks without a counterweight body, or AGVs/robots as forklifts.
+
+  - PALLET JACK (also called pallet truck): A LOW-PROFILE wheeled device for moving pallets at GROUND LEVEL.
+  Key features: two flat forks that slide under pallets, small steer wheels at the handle end, load rollers at the fork tips,
+  a long steering handle/tiller. NO mast, NO lifting mechanism beyond a few inches of hydraulic raise.
+  Manual pallet jacks have a pump handle; electric (powered) pallet jacks have a motor housing at the handle end.
+  Common confusion: do NOT classify forklifts with lowered forks as pallet jacks; check for a mast.
+
+rating_prompt: |
+  What is the main object inside the RED box? Answer one of: {class_names}, or "other".
+
+  {class_descriptions}
+
+  Label says "{expected_class}".
+
+  JSON only:
+  {"detected_class": "your_answer", "class_match": true/false, "bbox_score": 0.0-1.0}
+
+  bbox_score: how well the box fits the object (0=bad, 1=perfect).
