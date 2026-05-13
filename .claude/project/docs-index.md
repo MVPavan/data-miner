@@ -1,51 +1,75 @@
 # Docs Index
 
-Status: adopted for v2.7 on 2026-04-07
+Status: adopted for data-miner on 2026-05-13.
 
-## Core Design Documents
+Use this to point at the right doc before guessing. Repo-relative paths only.
 
-| Path | Component | Responsibility | Risk | Authority | Read When |
-|------|-----------|----------------|------|-----------|-----------|
-| `docs/design/v_2_7/core/bodha-design-v2_7.md` | Common architecture | System-level architecture, contracts, principles, v2.7 extraction hardening, Claude-Mem adoption | high | authoritative | Always first for system-level decisions |
-| `docs/design/v_2_7/core/bodha-buddhi-v2_7.md` | Buddhi | Turn orchestration, tool gating, model tiers, Gateway, extraction model routing | high | authoritative | Changing orchestration or model-access behavior |
-| `docs/design/v_2_7/core/bodha-manas-v2_7.md` | Manas | Context packing, compression, cache breakpoints, repacking | high | authoritative | Changing prompt packing, context budgets, or repacking |
-| `docs/design/v_2_7/core/bodha-retrieval-v2_7.md` | Retrieval | Dhī intent classification and Smṛti retrieval stages | high | authoritative | Changing recall behavior, caching, or retrieval plans |
-| `docs/design/v_2_7/core/bodha-dhriti-v2_7.md` | Dhṛti | Extraction, Phase 1.5 grounding verification, evaluation, HOLD, provenance, write-gate | high | authoritative | Changing what gets stored or how memory writes are judged |
-| `docs/design/v_2_7/core/bodha-chitta-v2_7.md` | Chitta | Store authority, schemas, adapter boundaries, projections | high | authoritative | Changing schemas, stores, or write/read boundaries |
-| `docs/design/v_2_7/core/bodha-dharana-v2_7.md` | Dhāraṇā | Background integrity, consolidation, enrichment, revalidation jobs | high | authoritative | Changing async maintenance or recovery behavior |
-| `docs/design/v_2_7/core/bodha-infrastructure-v2_7.md` | Infrastructure | ProjectionEngine, overlay, adapters, Temporal, observability, config, packaging | high | authoritative | Changing infrastructure or deployment surfaces |
-| `docs/design/v_2_7/core/bodha-tools-skills-v2_7.md` | Tools and skills | Capability registries, logging, loading, graduation pipeline | high | authoritative | Changing capability discovery or skill lifecycle |
-| `docs/design/v_2_7/core/bodha-rag-v2_7.md` | Document RAG | Bookshelf model, multi-RAG routing, document provenance, `sources` behavior | high | authoritative | Changing document retrieval or document-memory interaction |
-| `docs/design/v_2_7/core/bodha-job-plan-v2_7.md` | Job plan | Job inventory, ownership, triggers, sequencing, Phase 1.5 verification flow | medium | authoritative | Mapping work to jobs, workers, or failure domains |
-| `docs/design/v_2_7/core/memory-benchmarks-v2_7.md` | Benchmarks | Benchmark selection and evaluation coverage | medium | authoritative | Defining memory-quality evaluation strategy |
+## Top-level repo docs
 
-## Supporting Documents
-
-| Path | Purpose | Authority | Read When |
+| Path | Purpose | Authority | Read when |
 |------|---------|-----------|-----------|
-| `docs/design/v_2_6/core/new_discussions/dhriti-extraction-discussions.md` | Pre-v2.7 extraction tradeoff analysis that informed the hardened extraction pipeline | supporting | Understanding why Phase 1.5 and escalation were introduced |
-| `docs/design/v_2_6/core/bodha_subscription_proxy_architecture.md` | Recommended local model-routing topology for subscription-backed access | supporting | Wiring local gateway and provider auth topology |
-| `docs/design/v_2_6/core/new_discussions/claude-mem-adoption-log.md` | Claude-Mem adoption decisions partially absorbed into v2.7 common design | supporting | Evaluating sidecar, shadow-log, and progressive-disclosure proposals |
-| `infra/dev-stack/litellm_config.yaml` | LiteLLM proxy configuration for local model routing (moved from `infra/proxy-setup/` on 2026-04-10) | supporting | Configuring or debugging model proxy setup |
+| [`README.md`](../../README.md) | Project landing page + quickstart | canonical | First read for someone new to the repo |
+| [`AGENTS.md`](../../AGENTS.md) | Agent operating guide (read order, working mode, Codex policy) | authoritative | Every new session |
+| [`CLAUDE.md`](../../CLAUDE.md) | One-liner that imports `AGENTS.md` | — | — |
+| [`pyproject.toml`](../../pyproject.toml) | Deps, Python pin, project scripts | canonical | Adding deps, debugging install |
 
-## Development Planning Documents
+## Architecture (`docs/architecture/`)
 
-| Path | Purpose | Authority | Read When |
+| Path | Component | Read when |
+|------|-----------|-----------|
+| [`docs/architecture/overview.md`](../../docs/architecture/overview.md) | Top-level system diagram, design decisions, component map | Always first for system-level decisions |
+| [`docs/architecture/database-models.md`](../../docs/architecture/database-models.md) | `Project`, `Video`, `ProjectVideo` schema, status enums, locking columns | Changing the DB schema or worker locking behavior |
+| [`docs/architecture/workers.md`](../../docs/architecture/workers.md) | Supervisord setup, worker lifecycle, heartbeat-locking flow | Changing worker boot, lifecycle, or claim semantics |
+
+## User guide (`docs/user-guide/`)
+
+| Path | Purpose | Read when |
+|------|---------|-----------|
+| [`docs/user-guide/installation.md`](../../docs/user-guide/installation.md) | uv-based environment setup, GPU optional-deps | Setting up a fresh machine |
+| [`docs/user-guide/quickstart.md`](../../docs/user-guide/quickstart.md) | Smallest viable end-to-end run | Onboarding |
+| [`docs/user-guide/configuration.md`](../../docs/user-guide/configuration.md) | Config YAML schema, OmegaConf overlay rules | Adding or tuning a stage's config |
+| [`docs/user-guide/cli-reference.md`](../../docs/user-guide/cli-reference.md) | Every `data-miner ...` subcommand | Debugging or extending the CLI |
+| [`docs/user-guide/fabric-deployment.md`](../../docs/user-guide/fabric-deployment.md) | Multi-host deployment with Fabric | Spinning up distributed workers |
+
+## Development
+
+| Path | Purpose | Read when |
+|------|---------|-----------|
+| [`docs/development/contributing.md`](../../docs/development/contributing.md) | Contribution conventions | Before a PR |
+| [`docs/updates/monthly_update_2026-03-03_to_2026-05-03.md`](../../docs/updates/monthly_update_2026-03-03_to_2026-05-03.md) | Most recent activity digest | Catching up after time away |
+
+## Infra / Kubernetes (`docs/k3s/`)
+
+| Path | Purpose | Read when |
+|------|---------|-----------|
+| [`docs/k3s/01-concepts.md`](../../docs/k3s/01-concepts.md) | k3s/k8s core concepts | Touching cluster-side deployment |
+| [`docs/k3s/01b-questions-answered.md`](../../docs/k3s/01b-questions-answered.md) | FAQ on k3s decisions | Same |
+| [`docs/k3s/02-installation.md`](../../docs/k3s/02-installation.md) | k3s install steps | Same |
+| [`docs/k3s/k8s-core-concepts.md`](../../docs/k3s/k8s-core-concepts.md), [`kubectl-commands.md`](../../docs/k3s/kubectl-commands.md) | k8s primer + kubectl cheatsheet | Reference while debugging cluster |
+
+## Subproject docs
+
+| Path | Purpose | Authority | Read when |
 |------|---------|-----------|-----------|
-| `docs/brainstorms/2026-04-07-development-roadmap-requirements.md` | Approved brainstorm: build order, test strategy, scope, Codex-informed decisions | approved | Understanding why the roadmap is structured the way it is |
-| `docs/design/v_2_7/core/new_discussions/bodha-pydanticai-temporal-litellm-integration.md` | Source brainstorm for the PydanticAI + TemporalAgent + LiteLLM integration (P0 §0 corrections, C1–C8 facts, §12 hot-path cost-benefit, §12.6 reversibility) | approved | Working on hot-path agents, capability middleware, provider factory, virtual-key flow, or the hot-path deviation |
-| `docs/roadmap.md` | Execution plan: 9 phases, deliverables, spec references, exit criteria, test focus | canonical | Starting any implementation phase; finding which design doc section to read for a task |
-| `docs/roadmap-pydanticai-integration.md` | Execution plan for the PydanticAI integration (P0–P6): phase gates, empirical C1–C8 corrections, Temporal/LiteLLM contracts, CI invariants | canonical | Touching anything in the agent middleware chain, background-agent wrapping, or the gateway factory |
-| `docs/roadmap-eval-harness.md` | Execution plan for the eval harness (E-pre through E-C2): DS-20 memory substrate benchmark, 5 evaluators, Pydantic Evals + Langfuse. 2 Codex adversarial rounds applied. | canonical | Building or modifying the eval harness, fixture schema, evaluators, quiescence engine, or reporting |
-| `docs/status.md` | Per-component status tracker with blocked-by and verified-by columns | canonical | Checking current state; finding what's ready to start next |
-| `docs/checklist.md` | Active phase task checklist (replaced per phase) | session | During implementation; tracking what's done and what's next |
-| `docs/progress.md` | Per-deliverable completion log with commit SHAs, test results, notes | durable | Resuming work across sessions; reviewing what was done |
-| `docs/design/memory-design-tests/v_2/` | Golden evaluation datasets: DS-20, DS-40, DS-80 | authoritative | Validating extraction/retrieval/system quality at phase exits |
+| [`manual_reviewer/docs/next_phases.md`](../../manual_reviewer/docs/next_phases.md) | Phase plan for the Label Studio + SAM 3.1 review tool. Phases 1/3/4/5/7/8 done; 2 and 6 pending. | canonical for manual_reviewer | Picking up the next manual_reviewer phase |
+| [`manual_reviewer_cvat/RESUME.md`](../../manual_reviewer_cvat/RESUME.md) | Resume plan for the CVAT migration. Two tracks: Datatang LS→CVAT migration, permanent Nuclio+SAM3.1 stack. | canonical for manual_reviewer_cvat | Resuming the CVAT migration |
+| [`manual_reviewer_cvat/docs/why_cvat.md`](../../manual_reviewer_cvat/docs/why_cvat.md) | Rationale for CVAT over Label Studio for the permanent tool | supporting | Justifying or revisiting the CVAT decision |
+| [`manual_reviewer_cvat/docs/long_term_vision.md`](../../manual_reviewer_cvat/docs/long_term_vision.md) | End-state design for the permanent multi-team review tool | supporting | Scoping new work in manual_reviewer_cvat |
+| [`manual_reviewer_cvat/docs/smart_tools_plan.md`](../../manual_reviewer_cvat/docs/smart_tools_plan.md) | Nuclio + SAM 3.1 smart-tool plan | supporting | Implementing or debugging smart tools |
 
-Use this file to point agents at the right docs before they guess.
+## Auto-annotation engines
 
-- List only durable docs that materially improve decisions.
-- Mark one doc as authoritative when multiple docs overlap.
-- Use repo-relative paths only.
+Each `auto_annotation_v*` package has its own `tests/` and (for v4) `configs/`. There is no central design doc; the package READMEs and tests are authoritative.
 
-Current repo reality: no Bodha source tree, manifest, or test directory yet. This table maps authoritative design components. Infrastructure setup exists under `infra/`.
+- [`data_miner/auto_annotation_v4/`](../../data_miner/auto_annotation_v4/) — current engine (SAM 3.1, Rex-Omni, VLM finalization).
+- [`data_miner/auto_annotation_v3/`](../../data_miner/auto_annotation_v3/) — legacy engine (kept for parity).
+
+## Diagrams
+
+[`docs/diagrams/`](../../docs/diagrams/) holds drawio sources + rendered PNGs (`data_miner_System_Architecture.drawio`, `data_miner_dataflow.drawio`, `video_miner.drawio`, etc.). Update the drawio when changing system shape; export PNG after.
+
+## Pointers off this index
+
+- Engineering rules: [`.claude/rules/`](../rules/).
+- Claude/Codex policy: [`AGENTS.md`](../../AGENTS.md) § Claude and Codex, [`.claude/commands/use-codex.md`](../commands/use-codex.md).
+- Parked Bodha harness (future adoption): [`.claude/_future-adoption/README.md`](../_future-adoption/README.md).

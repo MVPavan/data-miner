@@ -1,69 +1,75 @@
 # Mechanically Checkable Invariants
 
-Status: adopted for v2.7 design docs on 2026-04-07
+Status: adopted for data-miner on 2026-05-13.
 
-These are current mechanically checkable project facts for the repo as it exists today.
-Promote implementation invariants only after code, manifests, and test config exist.
+These are the current mechanically checkable project facts. Each invariant has an exact command. Promote new invariants only after the code, manifest, or schema they assert is real.
 
-## [INV-01] Common Design Is The Top Authority
+## [INV-01] CLI entry point exists
 
-- Statement: `docs/design/v_2_7/core/bodha-design-v2_7.md` is present and marked authoritative.
-- Check: `rg -n "^\\*\\*Status:\\*\\* Authoritative$" docs/design/v_2_7/core/bodha-design-v2_7.md`
-- Must return: exactly one line
-- Why it matters: this is the source of truth when component docs or historical setup files disagree.
+- Statement: `data-miner` CLI is implemented in `data_miner/cli.py` and registered as a project script in `pyproject.toml`.
+- Check: `test -f data_miner/cli.py && rg -n '^data-miner = "data_miner\.cli:main"' pyproject.toml`
+- Must return: matching line for the `[project.scripts]` entry.
+- Why it matters: the documented quickstart (`data-miner init-db`, `data-miner populate`, `data-miner workers ...`) depends on this entry point.
 
-## [INV-02] Temporal Replaced The Older Scheduler Model
+## [INV-02] Python pin is 3.12
 
-- Statement: the v2.7 design says Temporal is the sole orchestrator and replaces `async_core.Scheduler`.
-- Check: `rg -n "Temporal as sole orchestrator|replaces async_core\\.Scheduler" docs/design/v_2_7/core/bodha-design-v2_7.md docs/design/v_2_7/core/bodha-infrastructure-v2_7.md`
-- Must return: one or more matching lines
-- Why it matters: the old Bodha setup still assumes the pre-Temporal scheduler model.
+- Statement: `pyproject.toml` targets Python 3.12 only.
+- Check: `rg -n 'requires-python = ">=3\.12, <3\.13"' pyproject.toml`
+- Must return: one matching line.
+- Why it matters: several deps (PyTorch CUDA builds, SAM 3.1, DART) are wheel-pinned for 3.12. Loosening this requires reverification.
 
-## [INV-03] pydantic-settings Replaced OmegaConf
+## [INV-03] PostgreSQL is the state authority — SQLModel-backed
 
-- Statement: the v2.7 design adopts `pydantic-settings` instead of OmegaConf.
-- Check: `rg -n "pydantic-settings replaces OmegaConf" docs/design/v_2_7/core/bodha-design-v2_7.md docs/design/v_2_7/core/bodha-infrastructure-v2_7.md`
-- Must return: one or more matching lines
-- Why it matters: historical Python/config rules that still hard-code OmegaConf are stale.
+- Statement: the main pipeline state lives in SQLModel-backed tables `Project`, `Video`, `ProjectVideo` defined in `data_miner/db/models.py`.
+- Check: `rg -n '^class (Project|Video|ProjectVideo)\(SQLModel' data_miner/db/models.py`
+- Must return: three matching lines.
+- Why it matters: workers gate work on Postgres row state. Adding a new pipeline stage means a new column (or a new table) here, not a Redis key.
 
-## [INV-04] PostgreSQL Is The Authoritative Write Boundary
+## [INV-04] Workers hold heartbeat-renewed Postgres locks
 
-- Statement: Bodha treats PostgreSQL as the authoritative write boundary and source of record.
-- Check: `rg -n "Postgres.*(sole authority|source of record|Authoritative write boundary)" docs/design/v_2_7/core/bodha-design-v2_7.md docs/design/v_2_7/core/bodha-chitta-v2_7.md`
-- Must return: one or more matching lines
-- Why it matters: write-path safety, replayability, and projection discipline all depend on this boundary.
+- Statement: `Video` and `ProjectVideo` carry `locked_by`, `locked_at`, and `heartbeat_at` columns.
+- Check: `rg -n 'locked_by|locked_at|heartbeat_at' data_miner/db/models.py | wc -l`
+- Must return: at least 6 (two tables × three fields).
+- Why it matters: stale locks from crashed workers are reclaimed by checking heartbeat age. A new pipeline stage that adds a worker must carry these fields too.
 
-## [INV-05] Tools And Skills Are Registry Infrastructure
+## [INV-05] Supervisord is the worker orchestrator
 
-- Statement: tools and skills are registry infrastructure, not memory-ledger entries.
-- Check: `rg -n "Tools and skills are \\*\\*identity infrastructure\\*\\*" docs/design/v_2_7/core/bodha-tools-skills-v2_7.md`
-- Must return: exactly one line
-- Why it matters: this keeps capability identity separate from memory storage and Dhṛti write-gate logic.
+- Statement: worker setup writes a supervisord config and the worker code references supervisor.
+- Check: `rg -l 'supervisor' data_miner/cli.py data_miner/config/loader.py data_miner/config/__init__.py | wc -l`
+- Must return: at least 1.
+- Why it matters: workers are not launched ad-hoc with `nohup python ...` in production. The `data-miner workers {setup|start|stop|restart|status}` group is the only supported lifecycle path.
 
-## [INV-06] Raw Document Chunks Never Enter Citta
+## [INV-06] OmegaConf is the main pipeline's config loader
 
-- Statement: raw document chunks and verbatim passages do not enter Citta.
-- Check: `rg -n "Raw chunks and verbatim passages never enter Citta" docs/design/v_2_7/core/bodha-rag-v2_7.md`
-- Must return: exactly one line
-- Why it matters: the bookshelf model depends on keeping raw document content external while storing only internalized knowledge and provenance.
+- Statement: `data_miner/config/loader.py` uses `OmegaConf.load`.
+- Check: `rg -n 'from omegaconf import OmegaConf|OmegaConf\.load' data_miner/config/loader.py`
+- Must return: at least 2 matching lines.
+- Why it matters: the rule in [`.claude/rules/python/coding-style.md`](../rules/python/coding-style.md) keys off this fact. Replacing OmegaConf with pydantic-settings is a deliberate decision, not a drive-by change.
 
-## [INV-07] Source Quote Is Mandatory In v2.7 Extraction
+## [INV-07] manual_reviewer stack is managed by `manage_stack.sh`
 
-- Statement: every ExtractionCandidate must include a `source_quote` field in v2.7.
-- Check: `rg -n "Every ExtractionCandidate must include a .source_quote. field|source_quote mandatory" docs/design/v_2_7/core/bodha-design-v2_7.md docs/design/v_2_7/core/bodha-dhriti-v2_7.md`
-- Must return: one or more matching lines
-- Why it matters: v2.7 extraction grounding depends on verbatim evidence instead of trusting model confidence alone.
+- Statement: there is a single script that owns the lifecycle of sam3_1, ls, and ml_backend.
+- Check: `test -x manual_reviewer/scripts/manage_stack.sh && rg -n '^(start|stop|restart|status|logs)\)' manual_reviewer/scripts/manage_stack.sh`
+- Must return: file is executable and the case branches exist.
+- Why it matters: per user memory `feedback_stack_management`, launching these ad-hoc breaks pidfile + env-var consistency.
 
-## [INV-08] Phase 1.5 Mechanical Verification Is Non-LLM
+## [INV-08] Labeling XML is generated from `classes.txt`
 
-- Statement: Phase 1.5 grounding verification uses mechanical checks, not LLM calls.
-- Check: `rg -n "Phase 1\\.5.*non-LLM|No LLM calls|mechanical verification is non-LLM" docs/design/v_2_7/core/bodha-design-v2_7.md docs/design/v_2_7/core/bodha-dhriti-v2_7.md docs/design/v_2_7/core/bodha-job-plan-v2_7.md`
-- Must return: one or more matching lines
-- Why it matters: the v2.7 hardening story depends on adding verifiable guardrails rather than another opaque reasoning step.
+- Statement: `manual_reviewer/configs/build_labeling_config.py` exists and is the source of truth for the Label-Studio labeling config XML.
+- Check: `test -f manual_reviewer/configs/build_labeling_config.py`
+- Must return: file exists.
+- Why it matters: per user memory `feedback_labeling_xml_classes_source`, the `<Label>` palette in `labeling_config.xml` must not be hand-edited.
 
-## [INV-09] Fabricated Candidates Are Rejected Before Phase 2
+## [INV-09] `.env` is gitignored
 
-- Statement: if grounding fails badly enough, the candidate is rejected before escalation or Phase 2.
-- Check: `rg -n "Fabricated candidates are rejected before Phase 2|grounding_score < 0\\.5.*REJECT|automatic \\*\\*REJECT\\*\\*" docs/design/v_2_7/core/bodha-design-v2_7.md docs/design/v_2_7/core/bodha-dhriti-v2_7.md`
-- Must return: one or more matching lines
-- Why it matters: this is the strongest new v2.7 safeguard against fabricated memories entering the write path.
+- Statement: `.env` is ignored by git; only `.env.example` is committed.
+- Check: `git check-ignore .env && test -f .env.example && ! git ls-files --error-unmatch .env 2>/dev/null`
+- Must return: `.env` is ignored (first cmd exits 0), `.env.example` is present, and `.env` is not tracked (the `!` inverts an expected non-zero from `ls-files`).
+- Why it matters: secrets-via-env-var convention. Committing `.env` leaks credentials. The current `.gitignore` matches via `*.env` (line 20), not a literal `.env` line — `git check-ignore` is the authoritative way to confirm.
+
+## [INV-10] No Bodha-coded skills are auto-discoverable
+
+- Statement: `.claude/skills/` contains only the generic skills kept after the 2026-05-13 adoption pass; Bodha-coded skills are parked under `_future-adoption/`.
+- Check: `! ls .claude/skills/ 2>/dev/null | rg -q '^(architecture-trace|bodha-memory-eval|component-review|design-evolve|phase-execution)$'`
+- Must return: success (no matches).
+- Why it matters: the parking is deliberate; an accidental `mv` back into `.claude/skills/` would re-expose Bodha-tuned skills that assume directory trees data-miner does not have.

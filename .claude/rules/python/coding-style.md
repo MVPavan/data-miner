@@ -1,40 +1,40 @@
-# Python Coding Style — Bodha
+# Python Coding Style — data-miner
 
 ## Formatting & Linting
 
 - **Formatter:** `ruff format`
-- **Linter:** `ruff check` with strict rules
-- **Type checker:** `mypy --strict`
-- All public functions and methods MUST have type annotations.
-- All return types MUST be annotated (no implicit `-> None`).
+- **Linter:** `ruff check`
+- **Type checker:** `mypy` where types are present. Do not retrofit `--strict` across legacy modules in one pass — annotate at module boundaries first.
+- Public functions and methods at module boundaries should have type annotations.
+- Annotate return types on new code (no implicit `-> None`).
 
 ## Data Modeling
 
-- Use Pydantic `BaseModel` for all data structures (invariant 21). Prefer over dataclasses.
-- All Pydantic models: `model_config = ConfigDict(frozen=True)`.
-- Default to `arbitrary_types_allowed=False`. **Documented exception (2026-04-10):** `src/bodha/infrastructure/gateway/model_spec.py` may set `arbitrary_types_allowed=True` to wrap `pydantic_ai.models.openai.OpenAIChatModel` and `pydantic_ai.settings.ModelSettings`, which are framework-owned types that are not Pydantic models. The exception is scoped to that one file and those two types only; no other file may widen this. `ModelSpec` is process-local and never crosses a serialization boundary (Temporal, Redis, Postgres), so the config-level type check being relaxed has no runtime impact beyond the intended one.
+- Prefer Pydantic `BaseModel` for new boundary data (configs, API payloads, worker job records, ML I/O contracts). Existing `dataclass` / `SQLModel` code stays as it is — match the surrounding module's pattern.
+- For new Pydantic models, prefer `model_config = ConfigDict(frozen=True)` when the model is immutable by intent.
+- `arbitrary_types_allowed=True` is acceptable when wrapping framework-owned types that are not Pydantic models (torch tensors, ML model handles, opencv arrays). Keep these wrappers process-local; never cross a serialization boundary (Redis broker payload, Postgres column, on-disk job JSON) with them.
 - No mutable default arguments — use `field(default_factory=list)`.
-- Use enums for every fixed set of values (config options, status codes, types, categories).
-- Use `Protocol` for duck typing over ABC.
+- Use enums for fixed sets of values (status codes, stages, sources). The codebase already does this for `VideoStatus`, `ProjectVideoStatus`, `ProjectStatus`, `SourceType` — match that pattern.
+- Use `Protocol` for duck typing over `ABC`.
 
 ## Strings & Constants
 
-- No loose string literals scattered in code. All user-facing strings, log messages with domain meaning, config keys, and identifiers must be declared as constants or enum values in a central location per component.
-- `UPPER_SNAKE_CASE` for constants.
-- Exception: format strings in structlog calls may inline field names.
+- Avoid loose string literals for protocol values (DB status strings, Redis channel names, supervisor program names, config keys). Declare them as enum values or module-level constants.
+- `UPPER_SNAKE_CASE` for module-level constants.
+- Format-string field names inside logger calls are fine (`logger.info("frame_extracted", video_id=v.id)`).
 
 ## Configuration
 
-- All configuration via `pydantic-settings` loaded from YAML files.
-- Config injection at construction time — see `safety.md` for boundary rules.
+- The main pipeline uses `OmegaConf` (YAML merging) + Pydantic `BaseModel` validators in [`data_miner/config/`](../../../data_miner/config/). Match that pattern for new modules inside `data_miner/`.
+- `pydantic-settings` is acceptable for new self-contained subprojects (e.g. `manual_reviewer/`, `manual_reviewer_cvat/`) when the subproject's existing config code already uses it. Do not migrate the main `data_miner/` pipeline away from OmegaConf without explicit user approval.
+- Inject config at construction time — see `safety.md` for env-var rules.
 
 ## File Organization
 
 - 200–500 lines per file typical, 800 max.
 - One class per file for core components.
 - Maintain strict file separation among core components — do not mix functionalities.
-- No circular imports — dependency flows downward: `api` → `core` → `infrastructure`.
-- If a dependency feels backwards, extract the shared type into `contracts/`.
+- No circular imports — dependency flows downward: CLI/workers → modules → db/models. If a dependency feels backwards, extract the shared type into a `contracts.py` or `types.py` near the lower layer.
 
 ## DRY Principle
 
@@ -66,10 +66,10 @@
 
 - Standard library → third-party → local (isort order, enforced by ruff).
 - Prefer explicit imports over `from module import *`.
-- Relative imports within `bodha/` package.
+- Absolute imports rooted at the top-level package (e.g. `from data_miner.workers.base import ...`, `from manual_reviewer.ml_backend.smart_click import ...`) are the convention. Relative imports are acceptable for closely-coupled siblings inside the same subpackage.
 
 ## Error Handling
 
 - No bare `except:` — always specify exception type.
-- No `print()` — use `structlog` with context (scope_id, session_id, component).
-- Keep logging concise — every log line should have diagnostic value.
+- In long-running workers and library code, prefer a configured logger (`logging` or `structlog` if the module already uses it) over `print()`. `print()` is fine in CLI scripts whose output the user reads directly.
+- Keep logging concise — every log line should carry diagnostic context (job id, video id, stage).

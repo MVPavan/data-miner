@@ -14,7 +14,7 @@ Codex will review your output once you are done at any task.
 
 1. `AGENTS.md`
 2. `.claude/project/brief.md`, `docs-index.md`, `verification.md`, `invariants.md`
-3. `docs/roadmap.md`, `docs/status.md` (when doing implementation work)
+3. The subproject's own roadmap/status doc when working there (e.g. `manual_reviewer/docs/next_phases.md`, `manual_reviewer_cvat/RESUME.md`)
 4. Relevant rules under `.claude/rules/`
 
 ## Working Mode
@@ -41,7 +41,7 @@ If the user already supplied a clear, approved plan, do not re-run brainstorming
 
 ## Phase Execution
 
-For implementation work, use `/phase-execution N` to drive the full cycle. It delegates to planning, subagent-driven-development, TDD, debugging, and verification skills automatically. See `docs/roadmap.md` for the phase inventory.
+Data-miner does **not** yet have a repo-wide roadmap + status cascade. Phase-style work happens per subproject (see `manual_reviewer/docs/next_phases.md`, `manual_reviewer_cvat/RESUME.md`). The Bodha-style `/phase-execution`, `/run-phases`, `/prepare-phases` commands are parked in [`.claude/_future-adoption/`](.claude/_future-adoption/README.md) until that cascade exists. Until then, drive implementation work directly through the `planning`, `subagent-driven-development`, `test-driven-development`, `systematic-debugging`, and `verification-before-completion` skills.
 
 ## Claude and Codex
 

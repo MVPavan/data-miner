@@ -423,24 +423,19 @@ Returns: facts, recommendation, tradeoffs, open questions.
 
 ---
 
-## Using Codex with Bodha Skills
+## Using Codex with Project Skills
 
-**`bodha-memory-eval` cross-validation** — multi-model diversity (Opus + GPT-5.4 agree → high confidence):
+**Design / plan document review** (after a brainstorm or planning skill produces a doc):
 ```
-/codex:rescue --effort high --wait Review these scenario evaluation findings for accuracy.
-Check whether cited design doc sections actually support the claims.
-Scenario: [paste]. Findings: [paste].
+/codex:adversarial-review --background --base main "design consistency, missing edge cases, scope drift"
 ```
 
-**Design document review** (after `design-evolve`):
+**Code implementation review** (data-miner pipeline / workers / ML backends):
 ```
-/codex:adversarial-review --background --base main "design consistency and invariant violations"
+/codex:adversarial-review --wait "race conditions in worker locking, partial-failure handling, GPU memory leaks"
 ```
 
-**Code implementation review** (Bodha components):
-```
-/codex:adversarial-review --wait "race conditions, data loss, temporal consistency"
-```
+The Bodha-era `bodha-memory-eval` / `design-evolve` cross-validation examples have moved with their parent skills to [`.claude/_future-adoption/`](../_future-adoption/README.md).
 
 ---
 
