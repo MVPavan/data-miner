@@ -76,6 +76,8 @@ than frontend migration details.
   contracts and conversion helpers into v4 `HumanReviewResult`.
 - `manual_reviewer/pipeline_io/` contains the production Label Studio parser
   and v4 writeback behavior.
+- `manual_reviewer_cvat/pipeline_io/datumaro_parser.py` contains the CVAT
+  Datumaro bbox parser into the same neutral exchange result model.
 - `manual_reviewer_cvat/migrations_from_LS/` already has LS -> CVAT migration
   scaffolding, but it should no longer be treated as one-way decommissioning
   infrastructure.

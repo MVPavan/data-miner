@@ -49,7 +49,7 @@ manual_reviewer_cvat/
 ├── scripts/
 │   ├── manage_cvat.sh              start / stop / status / logs / backup the stack
 │   └── export_to_aa_v4.py          general CVAT → pipeline.db Stage.HUMAN_REVIEW round-trip
-├── pipeline_io/                    (general I/O — cvat_client.py to land here)
+├── pipeline_io/                    Datumaro parser + future cvat_client.py
 ├── migrations_from_LS/             ── Track A (LS -> CVAT seed/exchange) ──────
 │   ├── README.md                   Datatang-1000 LS -> CVAT seed quickstart
 │   ├── docs/
@@ -63,10 +63,11 @@ manual_reviewer_cvat/
 └── tests/
 ```
 
-The Python scripts are currently **stubs** (docstring + signature +
-`NotImplementedError`). They get filled in once you've reviewed the
-plan, on the host-Docker machine. New work should preserve the dual
-LS+CVAT direction in `review-frontends.md`.
+The live CVAT API scripts are currently **stubs** (docstring + signature +
+`NotImplementedError`). Pure parser code can still land here: `pipeline_io/`
+already contains the Datumaro bbox export parser used as the CVAT side of the
+shared LS/CVAT exchange model. New work should preserve the dual LS+CVAT
+direction in `review-frontends.md`.
 
 ---
 

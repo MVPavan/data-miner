@@ -123,6 +123,9 @@ class ReviewExchangeResult(BaseModel):
     reviewed_at: float
     duration_seconds: float = 0.0
     frame_state: FrameState = "clean"
+    media_uri: str | None = None
+    image_width: int | None = Field(default=None, gt=0)
+    image_height: int | None = Field(default=None, gt=0)
     clip_id: str | None = None
     frame_index: int | None = Field(default=None, ge=0)
     class_list_version: str | None = None
