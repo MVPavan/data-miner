@@ -1,0 +1,17 @@
+{
+  "skill_name": "bodha-memory-eval",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run the DS-15 memory eval against v_2_5 core design docs. Use eval version v_1.",
+      "expected_output": "A structured evaluation report at docs/design/memory-design-tests/v_1/results/v_2_5-ds15-results.md with: report header, scenario index table, per-scenario pipeline traces and findings, cross-scenario synthesis, and aggregate metrics. Should also generate a checklist at docs/design/memory-design-tests/v_1/checklists/checklist-v_2_5.md.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Evaluate scenarios DS20-16 through DS20-20 from the v_1 eval dataset against v_2_5 design. These are the gap-area scenarios testing multi-party attribution, observation memory, multi-source, implicit feedback, and motivation inference.",
+      "expected_output": "A structured evaluation report covering only 5 scenarios (DS20-16 to DS20-20) with deep pipeline traces for each. Should reuse the existing checklist if one was generated, otherwise create one. Report should highlight gap-area findings since these scenarios test edge capabilities.",
+      "files": []
+    }
+  ]
+}

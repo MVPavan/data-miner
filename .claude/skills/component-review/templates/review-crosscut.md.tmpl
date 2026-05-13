@@ -1,0 +1,47 @@
+# Review — <topic> (<version>) · cross-cutting
+
+> **Sources read for this review** (prune to what you actually opened):
+> - `docs/architecture-trace/at-claude/<version>/02-<topic>.md`
+> - `docs/architecture-trace/at-codex/<version>/02-<topic>.md` (if exists)
+> - Other `02-*.md` files cross-referenced
+> - Source code touched by the topic (e.g. `src/bodha/contracts/` for `contracts-and-protocols`)
+
+Cross-cutting topics describe relationships *across* components rather than the internals of one. The shape below reflects that.
+
+---
+
+## 1. Scope
+
+What does this topic cover? Which components/contracts/flows fall under it? What's deliberately out of scope?
+
+## 2. What the trace documents
+
+A faithful summary of what `02-<topic>.md` (Claude's version) actually says — the diagrams, the matrices, the flows. Quote or paraphrase; cite anchors where useful.
+
+## 3. Cross-trace contradictions
+
+Diff Claude's `02-<topic>.md` against Codex's. List every disagreement side by side. If Codex's version is missing, say so and skip the diff.
+
+## 4. Code-vs-trace alignment
+
+Spot-check the trace against the actual code. For each major claim (a flow step, a contract, a workflow): does the cited code still match? Note any drift with `file:line`.
+
+## 5. Gaps and open questions
+
+- What does the trace miss? (components/flows that exist in code but aren't in the diagram, or vice versa)
+- What's ambiguous?
+- What would you want to clarify with the design author?
+
+## 6. Codex critique log
+
+> _Filled by the skill after `/codex:rescue --wait --fresh` runs against this review. If Codex was skipped (capacity error), note the reason here._
+
+For each Codex finding:
+
+- **Finding**: <verbatim or summary>
+- **Disposition**: accepted / dismissed
+- **Action**: <how the review was updated, or why it wasn't>
+
+---
+
+_Last updated: <YYYY-MM-DD> · Reviewer: Claude · Critic: Codex (`/codex:rescue`)_
