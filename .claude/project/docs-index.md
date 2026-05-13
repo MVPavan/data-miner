@@ -37,6 +37,7 @@ Use this to point at the right doc before guessing. Repo-relative paths only.
 | Path | Purpose | Read when |
 |------|---------|-----------|
 | [`docs/development/contributing.md`](../../docs/development/contributing.md) | Contribution conventions | Before a PR |
+| [`docs/development/legacy-auto-annotation-cleanup.md`](../../docs/development/legacy-auto-annotation-cleanup.md) | Tracked-reference audit and deletion order for old auto-annotation packages | Before deleting `auto_annotation`, `auto_annotation_v2`, or `auto_annotation_v3` |
 | [`docs/updates/monthly_update_2026-03-03_to_2026-05-03.md`](../../docs/updates/monthly_update_2026-03-03_to_2026-05-03.md) | Most recent activity digest | Catching up after time away |
 
 ## Infra / Kubernetes (`docs/k3s/`)
