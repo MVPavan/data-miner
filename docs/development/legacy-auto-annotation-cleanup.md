@@ -1,6 +1,6 @@
 # Legacy Auto-Annotation Cleanup Audit
 
-Status: started 2026-05-13.
+Status: in progress 2026-05-13.
 
 This audit gates removal of older auto-annotation implementations. It covers
 tracked source and docs only. Gitignored runtime data, outputs, logs, exports,
@@ -42,7 +42,7 @@ git grep -n 'auto_annotation_v3' \
 
 ### `data_miner/auto_annotation/`
 
-Decision: safe first removal candidate.
+Decision: removed after prompt preservation and external-reference audit.
 
 External tracked references: none found outside the package itself, excluding
 the prompt archive provenance notes.
@@ -50,8 +50,8 @@ the prompt archive provenance notes.
 Prompt preservation: `data_miner/auto_annotation/prompts.py` contributed
 `v0_verification_prompt.yaml` to the v4 legacy prompt archive.
 
-Removal rule: delete only tracked package files. Do not touch any ignored
-outputs or historical run directories.
+Removal result: the tracked package directory was deleted. No ignored outputs,
+logs, exports, scratchpad files, run directories, or datasets were touched.
 
 ### `data_miner/auto_annotation_v2/`
 
@@ -86,13 +86,9 @@ only after the project no longer needs v3 as a benchmark/reference.
 
 ## Next Safe Step
 
-The next atomic implementation step is removing `data_miner/auto_annotation/`
-only. That step should include:
+Do not remove v2 or v3 yet. The next cleanup phase should either:
 
-1. Delete the tracked package directory.
-2. Re-run the external-reference grep for `data_miner.auto_annotation` and
-   `data_miner/auto_annotation`.
-3. Run `git diff --check`.
-4. Run a lightweight import check for the active package, for example
-   `python -c "import data_miner.auto_annotation_v4 as aav4; print(aav4.__name__)"`.
-5. Commit the removal separately.
+1. Migrate or retire `scripts/compare_proposals.py` and the v3
+  `compare_litserve.py` dependencies on v2, then re-audit v2; or
+2. Leave v2/v3 in place and move to non-destructive consolidation work such as
+  shared annotation exchange models for LS/CVAT.
