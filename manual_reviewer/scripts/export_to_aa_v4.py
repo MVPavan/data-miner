@@ -173,7 +173,9 @@ def _walk_export_file(raw: Any) -> list[tuple[dict[str, Any], dict[str, Any], li
                 continue
             if ann.get("was_cancelled"):
                 continue
-            out.append((ann, data, predictions))
+            completion = dict(ann)
+            completion.setdefault("task", task.get("id"))
+            out.append((completion, data, predictions))
     return out
 
 

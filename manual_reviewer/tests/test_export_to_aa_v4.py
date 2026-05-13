@@ -250,6 +250,30 @@ def test_parser_classifies_finalize_relabeled_edited_added(patch_httpx) -> None:
     assert "deleted" in result.deletions
 
 
+def test_parser_can_return_exchange_result(patch_httpx) -> None:
+    """LS parsing should expose the neutral exchange model without changing v4 output."""
+    seeds = [_seeded_region(region_id="kept", cls="truck")]
+    regions = [_annotation_region(region_id="kept", cls="truck")]
+    page = [_make_task("img1", seeds=seeds, regions=regions)]
+    patch_httpx([page, []])
+    completion, task_data, predictions = mod._fetch_from_ls(_args())[0]
+
+    from data_miner.annotation_io import FrontendName, ReviewRegionOrigin
+    from manual_reviewer.pipeline_io import parse_ls_completion_to_exchange_result
+
+    exchange = parse_ls_completion_to_exchange_result(
+        completion,
+        image_id=task_data["image_id"],
+        seeded_predictions=mod._extract_seeded(predictions),
+    )
+
+    assert exchange.source_frontend is FrontendName.LABEL_STUDIO
+    assert exchange.source_task_id == "1"
+    assert exchange.source_completion_id == "7"
+    assert exchange.boxes[0].origin is ReviewRegionOrigin.PREDICTION
+    assert exchange.to_human_review_result().corrections[0].source == "finalize"
+
+
 def test_fetch_filters_by_since(patch_httpx, monkeypatch: pytest.MonkeyPatch) -> None:
     page = [
         _make_task("old", seeds=[_seeded_region(region_id="r", cls="dog")],

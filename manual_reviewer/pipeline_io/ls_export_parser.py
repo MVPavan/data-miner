@@ -41,20 +41,19 @@ import time
 from datetime import datetime
 from typing import Any, Iterable
 
+from data_miner.annotation_io import (
+    FrontendName,
+    ReviewBox,
+    ReviewBoxSource,
+    ReviewExchangeResult,
+    ReviewRegionOrigin,
+)
 from data_miner.auto_annotation_v4.configs.contracts import (
     BoundingBox,
-    HumanCorrection,
     HumanReviewResult,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def parse_ls_completion(
@@ -75,6 +74,24 @@ def parse_ls_completion(
     the task ``data`` blob. If the reviewer promoted one (drew a regular
     rectangle whose id matches), it is tagged ``kept_dropped``.
     """
+    return parse_ls_completion_to_exchange_result(
+        completion,
+        image_id=image_id,
+        seeded_predictions=seeded_predictions,
+        ghost_drop_ids=ghost_drop_ids,
+        reviewer_id=reviewer_id,
+    ).to_human_review_result()
+
+
+def parse_ls_completion_to_exchange_result(
+    completion: dict[str, Any],
+    *,
+    image_id: str,
+    seeded_predictions: list[dict[str, Any]] | None = None,
+    ghost_drop_ids: Iterable[str] | None = None,
+    reviewer_id: str | None = None,
+) -> ReviewExchangeResult:
+    """Convert one LS completion to the frontend-neutral exchange result."""
     seeded_by_id: dict[str, dict[str, Any]] = {
         pred["id"]: pred
         for pred in (seeded_predictions or [])
@@ -89,7 +106,7 @@ def parse_ls_completion(
     ]
     track_ids = _extract_track_ids(raw_results)
     seen_ids: set[str] = set()
-    corrections: list[HumanCorrection] = []
+    boxes: list[ReviewBox] = []
 
     for region in rectangles:
         region_id = region.get("id") or ""
@@ -106,10 +123,14 @@ def parse_ls_completion(
         seed = seeded_by_id.get(region_id)
         original_class: str | None = None
         original_bbox: BoundingBox | None = None
-        source: str
+        source: ReviewBoxSource
 
         if seed is None:
-            source = "kept_dropped" if region_id in ghost_ids else "added"
+            source = (
+                ReviewBoxSource.KEPT_DROPPED
+                if region_id in ghost_ids
+                else ReviewBoxSource.ADDED
+            )
         else:
             seen_ids.add(region_id)
             seed_value = seed.get("value") or {}
@@ -119,25 +140,26 @@ def parse_ls_completion(
             class_changed = bool(seed_class) and seed_class != class_name
             bbox_changed = not _bbox_equal(seed_bbox, bbox)
             if class_changed and bbox_changed:
-                source = "relabeled"
+                source = ReviewBoxSource.RELABELED
                 original_class = seed_class
                 original_bbox = seed_bbox
             elif class_changed:
-                source = "relabeled"
+                source = ReviewBoxSource.RELABELED
                 original_class = seed_class
             elif bbox_changed:
-                source = "edited"
+                source = ReviewBoxSource.EDITED
                 original_bbox = seed_bbox
             else:
-                source = "finalize"
+                source = ReviewBoxSource.FINALIZE
 
-        corrections.append(
-            HumanCorrection(
-                candidate_id=region_id or None,
+        boxes.append(
+            ReviewBox(
+                region_id=region_id or None,
                 class_name=class_name,
                 bbox=bbox,
                 track_id=track_ids.get(region_id) if region_id else None,
                 source=source,
+                origin=_ls_region_origin(region, seeded=seed is not None),
                 original_class=original_class,
                 original_bbox=original_bbox,
             )
@@ -160,18 +182,37 @@ def parse_ls_completion(
     duration = float(completion.get("lead_time") or 0.0)
     rid = reviewer_id or _resolve_reviewer_id(completion)
 
-    return HumanReviewResult(
+    return ReviewExchangeResult(
         image_id=image_id,
+        source_frontend=FrontendName.LABEL_STUDIO,
+        source_task_id=_optional_str(completion.get("task")),
         reviewer_id=rid,
         reviewed_at=reviewed_at,
         duration_seconds=duration,
         frame_state=frame_state,
-        corrections=corrections,
+        boxes=boxes,
         deletions=deletions,
         notes=notes,
         ml_modes_used=[],
-        ls_completion_id=_safe_int(completion.get("id"), 0),
+        source_completion_id=_optional_str(completion.get("id")),
     )
+
+
+def _ls_region_origin(region: dict[str, Any], *, seeded: bool) -> ReviewRegionOrigin:
+    """Map LS region origin strings into the exchange origin vocabulary."""
+    raw_origin = str(region.get("origin") or "").lower()
+    if raw_origin in {"prediction", "model", "preannotation"}:
+        return ReviewRegionOrigin.PREDICTION
+    if raw_origin in {"manual", "human"}:
+        return ReviewRegionOrigin.HUMAN
+    return ReviewRegionOrigin.PREDICTION if seeded else ReviewRegionOrigin.HUMAN
+
+
+def _optional_str(value: Any) -> str | None:
+    """Convert optional frontend identifiers to strings without inventing values."""
+    if value is None:
+        return None
+    return str(value)
 
 
 def _ls_value_to_bbox(value: dict[str, Any]) -> BoundingBox:
