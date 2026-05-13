@@ -108,6 +108,53 @@ def test_main_dry_run_skips_write(
     assert rc == 0
 
 
+def test_main_writes_trace_and_yolo_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CVAT writeback should share trace and YOLO side outputs with LS."""
+    datumaro_path = tmp_path / "default.json"
+    datumaro_path.write_text(json.dumps(_datumaro_doc()), encoding="utf-8")
+    db_path = tmp_path / "pipeline.db"
+    db_path.write_text("", encoding="utf-8")
+    traces_dir = tmp_path / "traces"
+    labels_dir = tmp_path / "labels"
+    classes_file = tmp_path / "classes.txt"
+    classes_file.write_text("forklift\npalletjack\n", encoding="utf-8")
+
+    def _fake_write(path: Path, result: Any, *, config_hash: str = "") -> None:
+        assert path == db_path.resolve()
+        assert result.image_id == "img_a"
+
+    monkeypatch.setattr(mod, "write_human_review", _fake_write)
+
+    rc = mod.main(
+        [
+            "--datumaro-json",
+            str(datumaro_path),
+            "--pipeline-db",
+            str(db_path),
+            "--reviewer-id",
+            "reviewer@example.com",
+            "--reviewed-at",
+            "2026-05-04T12:00:00Z",
+            "--traces-dir",
+            str(traces_dir),
+            "--labels-dir",
+            str(labels_dir),
+            "--classes-file",
+            str(classes_file),
+            "--rewrite-yolo",
+        ]
+    )
+
+    assert rc == 0
+    trace = json.loads((traces_dir / "img_a.json").read_text(encoding="utf-8"))
+    assert trace[0]["data"]["image_id"] == "img_a"
+    assert (labels_dir / "img_a.txt").read_text(encoding="utf-8") == (
+        "0 0.200000 0.200000 0.200000 0.200000\n"
+    )
+
+
 def test_argparse_requires_reviewer_for_datumaro(tmp_path: Path) -> None:
     """Offline Datumaro mode needs an explicit reviewer id."""
     datumaro_path = tmp_path / "default.json"
@@ -122,6 +169,30 @@ def test_argparse_requires_reviewer_for_datumaro(tmp_path: Path) -> None:
                 str(tmp_path / "pipeline.db"),
             ]
         )
+
+
+def test_rewrite_yolo_requires_classes_file(tmp_path: Path) -> None:
+    """CVAT exporter should fail fast before writing class id 0 for everything."""
+    datumaro_path = tmp_path / "default.json"
+    datumaro_path.write_text(json.dumps(_datumaro_doc()), encoding="utf-8")
+    db_path = tmp_path / "pipeline.db"
+    db_path.write_text("", encoding="utf-8")
+
+    rc = mod.main(
+        [
+            "--datumaro-json",
+            str(datumaro_path),
+            "--pipeline-db",
+            str(db_path),
+            "--reviewer-id",
+            "reviewer@example.com",
+            "--labels-dir",
+            str(tmp_path / "labels"),
+            "--rewrite-yolo",
+        ]
+    )
+
+    assert rc == 2
 
 
 def test_live_cvat_mode_is_explicitly_pending(tmp_path: Path) -> None:

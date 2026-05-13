@@ -154,7 +154,9 @@ def _region_id(annotation: Mapping[str, Any], attrs: Mapping[str, Any]) -> str |
     )
 
 
-def _bbox(annotation: Mapping[str, Any], image_width: int, image_height: int) -> BoundingBox:
+def _bbox(
+    annotation: Mapping[str, Any], image_width: int, image_height: int
+) -> BoundingBox:
     """Normalize one Datumaro absolute-pixel bbox into a v4 BoundingBox."""
     x = _number(annotation.get("x"), "bbox x")
     y = _number(annotation.get("y"), "bbox y")
@@ -239,7 +241,9 @@ def _media_uri(image: Mapping[str, Any]) -> str | None:
     return _optional_str(image.get("path"))
 
 
-def _frame_state(attrs: Mapping[str, Any], default_frame_state: FrameState) -> FrameState:
+def _frame_state(
+    attrs: Mapping[str, Any], default_frame_state: FrameState
+) -> FrameState:
     """Resolve the frame state from item attributes."""
     raw_state = attrs.get("frame_state")
     if raw_state in {"clean", "needs_more_review", "ambiguous_skip"}:

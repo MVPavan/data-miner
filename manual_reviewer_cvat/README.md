@@ -79,6 +79,8 @@ direction in `review-frontends.md`.
   [migrations_from_LS/README.md](migrations_from_LS/README.md).
 - **Offline CVAT export writeback**: export a task as Datumaro 1.0, then run
   `python -m manual_reviewer_cvat.scripts.export_to_aa_v4 --datumaro-json annotations/default.json --pipeline-db /path/to/pipeline.db --reviewer-id reviewer@example.com`.
+  Add `--traces-dir`, `--rewrite-yolo`, `--labels-dir`, and `--classes-file`
+  when you want the same side outputs as the Label Studio exporter.
 - **Smart-tools / Nuclio rollout** (Track B): see
   [RESUME.md](RESUME.md) Phases 2-4.
 

@@ -63,9 +63,12 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-from data_miner.annotation_io import ReviewExchangeResult
+from data_miner.annotation_io import (
+    ReviewExchangeResult,
+    append_human_review_trace,
+    rewrite_yolo_label,
+)
 from manual_reviewer.pipeline_io import write_human_review
 from manual_reviewer_cvat.pipeline_io import parse_datumaro_review_results
 
@@ -83,6 +86,13 @@ def main(argv: list[str] | None = None) -> int:
     db_path = args.pipeline_db.resolve()
     if not db_path.exists():
         logger.error("pipeline.db not found: %s", db_path)
+        return 2
+
+    if args.rewrite_yolo and args.labels_dir and not args.classes_file:
+        logger.error(
+            "--rewrite-yolo requires --classes-file; without a class registry "
+            "every label would silently collapse to class 0"
+        )
         return 2
 
     if args.cvat_url:
@@ -124,6 +134,41 @@ def main(argv: list[str] | None = None) -> int:
             continue
         written += 1
 
+        if args.traces_dir:
+            try:
+                append_human_review_trace(
+                    args.traces_dir,
+                    human_review.image_id,
+                    human_review,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "append_trace failed for %s (DB write already done)",
+                    human_review.image_id,
+                )
+                errors += 1
+        if args.rewrite_yolo and args.labels_dir:
+            if human_review.frame_state == "ambiguous_skip":
+                logger.info(
+                    "skip YOLO rewrite for %s: frame_state=ambiguous_skip",
+                    human_review.image_id,
+                )
+            else:
+                try:
+                    rewrite_yolo_label(
+                        args.labels_dir,
+                        human_review.image_id,
+                        human_review,
+                        args.classes_file,
+                        dry_run=args.dry_run,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "rewrite_yolo failed for %s (DB+trace already done)",
+                        human_review.image_id,
+                    )
+                    errors += 1
+
     logger.info("wrote %d CVAT human_review rows (errors=%d)", written, errors)
     if errors:
         return 1
@@ -158,7 +203,9 @@ def _parse_timestamp(value: str) -> float:
             ) from exc
 
 
-def _require_live_cvat_args(p: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+def _require_live_cvat_args(
+    p: argparse.ArgumentParser, args: argparse.Namespace
+) -> None:
     """Validate arguments needed for the future live CVAT source."""
     if args.cvat_url and (
         not args.cvat_user or not args.cvat_pass or args.cvat_project is None
@@ -166,7 +213,9 @@ def _require_live_cvat_args(p: argparse.ArgumentParser, args: argparse.Namespace
         p.error("--cvat-url requires --cvat-user, --cvat-pass, and --cvat-project")
 
 
-def _require_datumaro_args(p: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+def _require_datumaro_args(
+    p: argparse.ArgumentParser, args: argparse.Namespace
+) -> None:
     """Validate arguments needed for local Datumaro JSON source."""
     if args.datumaro_json and not args.reviewer_id:
         p.error("--datumaro-json requires --reviewer-id")
@@ -186,6 +235,29 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--source-task-id", default=None)
     p.add_argument("--source-job-id", default=None)
     p.add_argument(
+        "--traces-dir",
+        type=Path,
+        default=None,
+        help="Append human_review block to traces/{id}.json",
+    )
+    p.add_argument(
+        "--labels-dir",
+        type=Path,
+        default=None,
+        help="Path to YOLO labels dir for --rewrite-yolo",
+    )
+    p.add_argument(
+        "--classes-file",
+        type=Path,
+        default=None,
+        help="classes.txt for --rewrite-yolo class id lookup",
+    )
+    p.add_argument(
+        "--rewrite-yolo",
+        action="store_true",
+        help="Rewrite YOLO labels/{id}.txt from corrections",
+    )
+    p.add_argument(
         "--default-frame-state",
         choices=["clean", "needs_more_review", "ambiguous_skip"],
         default="clean",
@@ -195,7 +267,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--cvat-user", default=None)
     p.add_argument("--cvat-pass", default=None)
     p.add_argument("--cvat-project", type=int, default=None)
-    p.add_argument("--since", help="ISO-8601 timestamp; only export tasks updated after")
+    p.add_argument(
+        "--since", help="ISO-8601 timestamp; only export tasks updated after"
+    )
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
     _require_datumaro_args(p, args)

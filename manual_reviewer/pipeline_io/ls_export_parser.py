@@ -101,7 +101,8 @@ def parse_ls_completion_to_exchange_result(
 
     raw_results = completion.get("result") or []
     rectangles: list[dict[str, Any]] = [
-        r for r in raw_results
+        r
+        for r in raw_results
         if isinstance(r, dict) and r.get("type") == "rectanglelabels"
     ]
     track_ids = _extract_track_ids(raw_results)

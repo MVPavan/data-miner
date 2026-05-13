@@ -36,12 +36,11 @@ import json
 import logging
 import os
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
+from data_miner.annotation_io import append_human_review_trace, rewrite_yolo_label
 from data_miner.auto_annotation_v4.configs.contracts import HumanReviewResult
-
 from manual_reviewer import FINALIZE_MODEL_VERSION
 from manual_reviewer.pipeline_io import parse_ls_completion, write_human_review
 
@@ -50,7 +49,9 @@ logger = logging.getLogger("manual_reviewer.export_to_aa_v4")
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
 
     db_path = args.db.resolve()
     if not db_path.exists():
@@ -77,7 +78,10 @@ def main(argv: list[str] | None = None) -> int:
     for ls_completion, task_data, predictions in completions:
         image_id = (task_data or {}).get("image_id")
         if not image_id:
-            logger.warning("skipping completion %s: no image_id in task data", ls_completion.get("id"))
+            logger.warning(
+                "skipping completion %s: no image_id in task data",
+                ls_completion.get("id"),
+            )
             continue
         seeded = _extract_seeded(predictions)
         ghost_ids = _extract_ghost_ids(task_data)
@@ -102,9 +106,11 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.traces_dir:
             try:
-                _append_trace(args.traces_dir, image_id, result)
+                append_human_review_trace(args.traces_dir, image_id, result)
             except Exception:  # noqa: BLE001
-                logger.exception("append_trace failed for %s (DB write already done)", image_id)
+                logger.exception(
+                    "append_trace failed for %s (DB write already done)", image_id
+                )
                 errors += 1
         if args.rewrite_yolo and args.labels_dir:
             if result.frame_state == "ambiguous_skip":
@@ -114,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             else:
                 try:
-                    _rewrite_yolo_label(
+                    rewrite_yolo_label(
                         args.labels_dir,
                         image_id,
                         result,
@@ -134,7 +140,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if written else 1
 
 
-def _load_completions(args: argparse.Namespace) -> list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]]:
+def _load_completions(
+    args: argparse.Namespace,
+) -> list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]]:
     """Return [(ls_completion, task_data, seeded_predictions), ...] tuples."""
     if args.in_file:
         raw = json.loads(args.in_file.read_text(encoding="utf-8"))
@@ -150,7 +158,9 @@ def _redact_token(s: str, token: str | None) -> str:
     return s.replace(token, "<redacted>")
 
 
-def _walk_export_file(raw: Any) -> list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]]:
+def _walk_export_file(
+    raw: Any,
+) -> list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]]:
     """Iterate LS-format JSON export.
 
     Standard export: ``[{ "id": ..., "data": {...},
@@ -179,7 +189,9 @@ def _walk_export_file(raw: Any) -> list[tuple[dict[str, Any], dict[str, Any], li
     return out
 
 
-def _fetch_from_ls(args: argparse.Namespace) -> list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]]:
+def _fetch_from_ls(
+    args: argparse.Namespace,
+) -> list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]]:
     """Page through ``/api/projects/{id}/tasks`` for tasks with annotations.
 
     The ``/api/projects/{id}/export`` endpoint returns predictions truncated to
@@ -211,7 +223,9 @@ def _fetch_from_ls(args: argparse.Namespace) -> list[tuple[dict[str, Any], dict[
             tasks = payload if isinstance(payload, list) else payload.get("tasks") or []
             if not tasks:
                 break
-            raw.extend(t for t in tasks if isinstance(t, dict) and (t.get("annotations") or []))
+            raw.extend(
+                t for t in tasks if isinstance(t, dict) and (t.get("annotations") or [])
+            )
             if len(tasks) < page_size:
                 break
             page += 1
@@ -228,6 +242,7 @@ def _task_after(task: dict[str, Any], cutoff: float) -> bool:
         if isinstance(ts, str):
             try:
                 from datetime import datetime
+
                 t = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
             except ValueError:
                 continue
@@ -278,84 +293,8 @@ def _extract_ghost_ids(task_data: dict[str, Any]) -> set[str]:
 
 
 def _append_trace(traces_dir: Path, image_id: str, result: HumanReviewResult) -> None:
-    """Append a ``human_review`` block to ``traces/{image_id}.json``.
-
-    Idempotent on ``ls_completion_id`` — re-running the export after a
-    partial crash won't duplicate trace entries (DB writes are already
-    idempotent via ``INSERT OR REPLACE``; the trace file is the human-
-    readable mirror so its history must match).
-
-    Atomic: stages to a tmp file then ``os.replace`` so a mid-write crash
-    leaves the previous trace file intact rather than truncated.
-    """
-    traces_dir.mkdir(parents=True, exist_ok=True)
-    trace_path = traces_dir / f"{image_id}.json"
-    block = {
-        "stage": "human_review",
-        "ts": time.time(),
-        "data": json.loads(result.model_dump_json()),
-    }
-    new_completion_id = result.ls_completion_id
-    new_reviewed_at = getattr(result, "reviewed_at", None)
-
-    existing: Any = None
-    if trace_path.exists():
-        try:
-            existing = json.loads(trace_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            existing = None
-
-    if not new_completion_id and not new_reviewed_at:
-        logger.warning(
-            "refusing trace append for %s: both ls_completion_id and reviewed_at are missing",
-            image_id,
-        )
-        return
-
-    def _already_recorded(history: list[Any]) -> bool:
-        for entry in history:
-            if not isinstance(entry, dict):
-                continue
-            data = entry.get("data") or {}
-            if new_completion_id:
-                if data.get("ls_completion_id") == new_completion_id:
-                    return True
-            else:
-                if (
-                    data.get("image_id") == image_id
-                    and data.get("reviewed_at") == new_reviewed_at
-                ):
-                    return True
-        return False
-
-    if isinstance(existing, list):
-        if _already_recorded(existing):
-            logger.info(
-                "skip trace append for %s: completion %s already recorded",
-                image_id,
-                new_completion_id,
-            )
-            return
-        existing.append(block)
-        payload = existing
-    elif isinstance(existing, dict):
-        history = existing.setdefault("history", [])
-        if isinstance(history, list) and _already_recorded(history):
-            logger.info(
-                "skip trace append for %s: completion %s already recorded",
-                image_id,
-                new_completion_id,
-            )
-            return
-        if isinstance(history, list):
-            history.append(block)
-        payload = existing
-    else:
-        payload = [block]
-
-    tmp = trace_path.with_suffix(trace_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(tmp, trace_path)
+    """Compatibility wrapper for the shared human-review trace writer."""
+    append_human_review_trace(traces_dir, image_id, result)
 
 
 def _rewrite_yolo_label(
@@ -366,68 +305,46 @@ def _rewrite_yolo_label(
     *,
     dry_run: bool = False,
 ) -> None:
-    """Rewrite ``labels/{image_id}.txt`` from corrections.
-
-    Class id resolution: read names from ``classes_file`` (one name per line).
-    Unknown class names raise ``ValueError`` rather than silently collapsing
-    to id 0 — startup already guarantees ``classes_file`` is present when
-    rewrite is enabled, so the only way to hit "class not in registry" here
-    is a typo or missing entry the operator should fix before continuing.
-
-    Writes are atomic via tmp file + ``os.replace`` so a mid-script crash
-    leaves the previous label file intact rather than half-rewritten.
-    """
-    class_to_id: dict[str, int] = {}
-    if classes_file and classes_file.exists():
-        text = classes_file.read_text(encoding="utf-8")
-        if text.startswith("﻿"):
-            text = text.lstrip("﻿")
-        for i, ln in enumerate(text.splitlines()):
-            name = ln.strip()
-            if name:
-                class_to_id[name] = i
-        if not class_to_id:
-            raise ValueError(
-                f"classes file is empty or malformed: {classes_file} — "
-                "without entries every box would silently collapse to class 0"
-            )
-
-    lines: list[str] = []
-    for c in result.corrections:
-        if class_to_id and c.class_name not in class_to_id:
-            raise ValueError(
-                f"class {c.class_name!r} not in {classes_file}; "
-                "fix the registry or the reviewer's label before retrying"
-            )
-        cls_id = class_to_id.get(c.class_name, 0)
-        cx = (c.bbox.x1 + c.bbox.x2) / 2.0
-        cy = (c.bbox.y1 + c.bbox.y2) / 2.0
-        w = c.bbox.x2 - c.bbox.x1
-        h = c.bbox.y2 - c.bbox.y1
-        lines.append(f"{cls_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}")
-
-    target = labels_dir / f"{image_id}.txt"
-    payload = "\n".join(lines) + ("\n" if lines else "")
-    if dry_run:
-        logger.info("[dry-run] would write %d line(s) to %s", len(lines), target)
-        return
-
-    labels_dir.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, target)
+    """Compatibility wrapper for the shared YOLO label writer."""
+    rewrite_yolo_label(labels_dir, image_id, result, classes_file, dry_run=dry_run)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Write LS completions to aa_v4 pipeline.db as human_review")
+    p = argparse.ArgumentParser(
+        description="Write LS completions to aa_v4 pipeline.db as human_review"
+    )
     p.add_argument("--db", type=Path, required=True)
-    p.add_argument("--traces-dir", type=Path, default=None, help="Append human_review block to traces/{id}.json")
-    p.add_argument("--labels-dir", type=Path, default=None, help="Path to YOLO labels dir for --rewrite-yolo")
-    p.add_argument("--classes-file", type=Path, default=None, help="classes.txt for --rewrite-yolo class id lookup")
-    p.add_argument("--rewrite-yolo", action="store_true", help="Rewrite YOLO labels/{id}.txt from corrections")
-    p.add_argument("--dry-run", action="store_true",
-                   help="Log YOLO rewrites without touching disk; DB and trace writes still occur")
-    p.add_argument("--config-hash", default="", help="config_hash to record in stages row")
+    p.add_argument(
+        "--traces-dir",
+        type=Path,
+        default=None,
+        help="Append human_review block to traces/{id}.json",
+    )
+    p.add_argument(
+        "--labels-dir",
+        type=Path,
+        default=None,
+        help="Path to YOLO labels dir for --rewrite-yolo",
+    )
+    p.add_argument(
+        "--classes-file",
+        type=Path,
+        default=None,
+        help="classes.txt for --rewrite-yolo class id lookup",
+    )
+    p.add_argument(
+        "--rewrite-yolo",
+        action="store_true",
+        help="Rewrite YOLO labels/{id}.txt from corrections",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Log YOLO rewrites without touching disk; DB and trace writes still occur",
+    )
+    p.add_argument(
+        "--config-hash", default="", help="config_hash to record in stages row"
+    )
 
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("--in-file", type=Path, default=None)
@@ -440,12 +357,18 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     p.add_argument("--ls-project", type=int, default=None)
     p.add_argument("--ls-timeout", type=float, default=60.0)
-    p.add_argument("--since", type=float, default=None,
-                   help="Unix timestamp; only fetch completions updated at/after this. "
-                        "Mutually exclusive with --in-file (file mode reads everything)")
+    p.add_argument(
+        "--since",
+        type=float,
+        default=None,
+        help="Unix timestamp; only fetch completions updated at/after this. "
+        "Mutually exclusive with --in-file (file mode reads everything)",
+    )
     args = p.parse_args(argv)
     if args.in_file and args.since is not None:
-        p.error("--since is incompatible with --in-file (file mode reads the export wholesale)")
+        p.error(
+            "--since is incompatible with --in-file (file mode reads the export wholesale)"
+        )
     return args
 
 

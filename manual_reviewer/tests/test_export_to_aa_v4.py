@@ -20,7 +20,6 @@ import pytest
 
 from manual_reviewer.scripts import export_to_aa_v4 as mod
 
-
 # ---------------------------------------------------------------------------
 # fakes
 # ---------------------------------------------------------------------------
@@ -101,9 +100,16 @@ def _seeded_region(
     }
 
 
-def _annotation_region(*, region_id: str, cls: str, x: float = 10.0,
-                       y: float = 20.0, w: float = 30.0, h: float = 40.0,
-                       origin: str = "prediction") -> dict[str, Any]:
+def _annotation_region(
+    *,
+    region_id: str,
+    cls: str,
+    x: float = 10.0,
+    y: float = 20.0,
+    w: float = 30.0,
+    h: float = 40.0,
+    origin: str = "prediction",
+) -> dict[str, Any]:
     return {
         "id": region_id,
         "type": "rectanglelabels",
@@ -111,14 +117,19 @@ def _annotation_region(*, region_id: str, cls: str, x: float = 10.0,
         "to_name": "image",
         "origin": origin,
         "value": {
-            "x": x, "y": y, "width": w, "height": h,
-            "rotation": 0, "rectanglelabels": [cls],
+            "x": x,
+            "y": y,
+            "width": w,
+            "height": h,
+            "rotation": 0,
+            "rectanglelabels": [cls],
         },
     }
 
 
-def _make_task(image_id: str, *, seeds: list[dict[str, Any]],
-               regions: list[dict[str, Any]]) -> dict[str, Any]:
+def _make_task(
+    image_id: str, *, seeds: list[dict[str, Any]], regions: list[dict[str, Any]]
+) -> dict[str, Any]:
     return {
         "id": 1,
         "data": {"image_id": image_id},
@@ -167,13 +178,19 @@ def test_fetch_uses_tasks_endpoint_not_export(patch_httpx) -> None:
 
 def test_fetch_pages_through_results(patch_httpx) -> None:
     page1 = [
-        _make_task("img_a", seeds=[_seeded_region(region_id="r1", cls="truck")],
-                   regions=[_annotation_region(region_id="r1", cls="truck")])
+        _make_task(
+            "img_a",
+            seeds=[_seeded_region(region_id="r1", cls="truck")],
+            regions=[_annotation_region(region_id="r1", cls="truck")],
+        )
         for _ in range(100)
     ]
     page2 = [
-        _make_task("img_b", seeds=[_seeded_region(region_id="r2", cls="car")],
-                   regions=[_annotation_region(region_id="r2", cls="car")])
+        _make_task(
+            "img_b",
+            seeds=[_seeded_region(region_id="r2", cls="car")],
+            regions=[_annotation_region(region_id="r2", cls="car")],
+        )
     ]
     fake = patch_httpx([page1, page2, []])
     out = mod._fetch_from_ls(_args())
@@ -186,8 +203,11 @@ def test_fetch_pages_through_results(patch_httpx) -> None:
 def test_fetch_skips_tasks_without_annotations(patch_httpx) -> None:
     page = [
         {"id": 1, "data": {"image_id": "no_ann"}, "annotations": []},
-        _make_task("with_ann", seeds=[_seeded_region(region_id="r", cls="dog")],
-                   regions=[_annotation_region(region_id="r", cls="dog")]),
+        _make_task(
+            "with_ann",
+            seeds=[_seeded_region(region_id="r", cls="dog")],
+            regions=[_annotation_region(region_id="r", cls="dog")],
+        ),
     ]
     patch_httpx([page, []])
     out = mod._fetch_from_ls(_args())
@@ -206,19 +226,28 @@ def test_parser_classifies_finalize_relabeled_edited_added(patch_httpx) -> None:
     / ``added``. Walks the same tuple shape ``main()`` consumes.
     """
     seeds = [
-        _seeded_region(region_id="kept",      cls="truck"),
+        _seeded_region(region_id="kept", cls="truck"),
         _seeded_region(region_id="relabeled", cls="motorcycle", x=50.0, y=50.0),
-        _seeded_region(region_id="edited",    cls="person",     x=10.0, y=10.0,
-                       w=20.0, h=20.0),
-        _seeded_region(region_id="deleted",   cls="head",       x=70.0, y=70.0),
+        _seeded_region(
+            region_id="edited", cls="person", x=10.0, y=10.0, w=20.0, h=20.0
+        ),
+        _seeded_region(region_id="deleted", cls="head", x=70.0, y=70.0),
     ]
     regions = [
-        _annotation_region(region_id="kept",      cls="truck"),
+        _annotation_region(region_id="kept", cls="truck"),
         _annotation_region(region_id="relabeled", cls="bicycle", x=50.0, y=50.0),
-        _annotation_region(region_id="edited",    cls="person",  x=15.0, y=15.0,
-                           w=25.0, h=25.0),
-        _annotation_region(region_id="brand_new", cls="dog", x=5.0, y=5.0,
-                           w=10.0, h=10.0, origin="manual"),
+        _annotation_region(
+            region_id="edited", cls="person", x=15.0, y=15.0, w=25.0, h=25.0
+        ),
+        _annotation_region(
+            region_id="brand_new",
+            cls="dog",
+            x=5.0,
+            y=5.0,
+            w=10.0,
+            h=10.0,
+            origin="manual",
+        ),
     ]
     page = [_make_task("img1", seeds=seeds, regions=regions)]
     patch_httpx([page, []])
@@ -276,10 +305,16 @@ def test_parser_can_return_exchange_result(patch_httpx) -> None:
 
 def test_fetch_filters_by_since(patch_httpx, monkeypatch: pytest.MonkeyPatch) -> None:
     page = [
-        _make_task("old", seeds=[_seeded_region(region_id="r", cls="dog")],
-                   regions=[_annotation_region(region_id="r", cls="dog")]),
-        _make_task("new", seeds=[_seeded_region(region_id="r", cls="cat")],
-                   regions=[_annotation_region(region_id="r", cls="cat")]),
+        _make_task(
+            "old",
+            seeds=[_seeded_region(region_id="r", cls="dog")],
+            regions=[_annotation_region(region_id="r", cls="dog")],
+        ),
+        _make_task(
+            "new",
+            seeds=[_seeded_region(region_id="r", cls="cat")],
+            regions=[_annotation_region(region_id="r", cls="cat")],
+        ),
     ]
     page[0]["annotations"][0]["updated_at"] = "2026-01-01T00:00:00Z"
     page[1]["annotations"][0]["updated_at"] = "2026-06-01T00:00:00Z"
@@ -287,6 +322,7 @@ def test_fetch_filters_by_since(patch_httpx, monkeypatch: pytest.MonkeyPatch) ->
 
     # Cutoff between the two annotation timestamps → only ``new`` passes.
     from datetime import datetime, timezone
+
     cutoff = datetime(2026, 3, 1, tzinfo=timezone.utc).timestamp()
     out = mod._fetch_from_ls(_args(since=cutoff))
     image_ids = [data.get("image_id") for _ann, data, _seed in out]
@@ -313,6 +349,7 @@ def test_argparse_in_file_with_since_rejected(tmp_path) -> None:
 
 def test_argparse_ls_token_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     import importlib
+
     monkeypatch.setenv("LS_TOKEN", "env_tok")
     importlib.reload(mod)
     args = mod._parse_args(
@@ -328,12 +365,14 @@ def test_argparse_ls_token_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_fetch_redacts_token_in_error(patch_httpx) -> None:
     fake = patch_httpx([])
+
     # Override get to return 5xx with token in body
     def _bad_get(url, params=None):
         fake.calls.append({"url": url, "params": dict(params or {})})
         r = _FakeResponse([], status_code=500)
         r.text = "internal error: token=secret_t in headers"
         return r
+
     fake.get = _bad_get  # type: ignore[assignment]
     with pytest.raises(RuntimeError) as ei:
         mod._fetch_from_ls(_args(ls_token="secret_t"))
@@ -348,6 +387,7 @@ def test_fetch_redacts_token_in_error(patch_httpx) -> None:
 
 def test_rewrite_yolo_empty_classes_file_raises(tmp_path) -> None:
     from manual_reviewer.scripts.export_to_aa_v4 import _rewrite_yolo_label
+
     classes = tmp_path / "classes.txt"
     classes.write_text("\n  \n\n", encoding="utf-8")
     labels_dir = tmp_path / "labels"
@@ -383,6 +423,7 @@ def test_trace_dedup_fallback_uses_reviewed_at(tmp_path) -> None:
     mod._append_trace(traces_dir, "img_a", result)
 
     import json
+
     payload = json.loads((traces_dir / "img_a.json").read_text())
     assert isinstance(payload, list)
     assert len(payload) == 1, "duplicate trace blocks were not dedup'd"
@@ -393,7 +434,9 @@ def test_trace_refuses_when_no_id_and_no_reviewed_at(tmp_path, caplog) -> None:
 
     traces_dir = tmp_path / "traces"
     result = HumanReviewResult(
-        image_id="img_a", reviewer_id="r", reviewed_at=0.0,
+        image_id="img_a",
+        reviewer_id="r",
+        reviewed_at=0.0,
         ls_completion_id=0,
     )
     with caplog.at_level("WARNING"):
@@ -404,6 +447,7 @@ def test_trace_refuses_when_no_id_and_no_reviewed_at(tmp_path, caplog) -> None:
 
 def test_rewrite_yolo_strips_bom(tmp_path) -> None:
     from manual_reviewer.scripts.export_to_aa_v4 import _rewrite_yolo_label
+
     classes = tmp_path / "classes.txt"
     classes.write_text("﻿cat\ndog\n", encoding="utf-8")
     labels_dir = tmp_path / "labels"

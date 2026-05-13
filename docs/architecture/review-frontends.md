@@ -74,6 +74,8 @@ than frontend migration details.
 
 - `data_miner/annotation_io/` contains the frontend-neutral box/task/result
   contracts and conversion helpers into v4 `HumanReviewResult`.
+- `data_miner/annotation_io/writeback.py` contains shared human-review trace
+  append and YOLO label rewrite helpers used by both review frontends.
 - `manual_reviewer/pipeline_io/` contains the production Label Studio parser
   and v4 writeback behavior.
 - `manual_reviewer_cvat/pipeline_io/datumaro_parser.py` contains the CVAT
