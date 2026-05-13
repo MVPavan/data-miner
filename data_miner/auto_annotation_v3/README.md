@@ -37,9 +37,8 @@ python -m data_miner.auto_annotation_v3 \
     runtime.job_id=my_job \
     'detect_classes=[forklift,palletjack,person]'
 
-# 4. Browse results
-python -m data_miner.auto_annotation_v3.viewer \
-    --job-dir output/auto_annotation_v3/my_job --port 8998
+# 4. Inspect JSON outputs under output/auto_annotation_v3/my_job
+# Maintained visual review now lives in auto_annotation_v4/manual_reviewer.
 ```
 
 CLI overrides use OmegaConf dotlist syntax (override any config key).

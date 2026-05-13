@@ -69,6 +69,11 @@ variants are already copied into the v4 legacy prompt archive.
 
 Removal rule: migrate or retire the comparison scripts before deleting v2.
 
+Partial cleanup: v2-specific viewer and visualization helpers were removed
+after tracked-reference checks showed no external consumers. The v2 pipeline,
+contracts, stages, config, and prompt-backed agents remain because internal
+stage imports and comparison scripts still depend on them.
+
 ### `data_miner/auto_annotation_v3/`
 
 Decision: blocked for now.
@@ -83,6 +88,11 @@ the active v4 prompt set already preserves them.
 
 Removal rule: remove or rewrite v3 parity tests, docs, and verification entries
 only after the project no longer needs v3 as a benchmark/reference.
+
+Partial cleanup: the v3-specific FastAPI viewer was removed after
+tracked-reference checks showed no external consumers. The v3 pipeline,
+checkpoint manager, workers, servers, and parity tests remain because the
+pipeline and benchmark tests still import them.
 
 ## Next Safe Step
 
