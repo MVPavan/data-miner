@@ -77,6 +77,8 @@ direction in `review-frontends.md`.
   `./scripts/manage_cvat.sh start` → http://127.0.0.1:8081
 - **Datatang-1000 LS -> CVAT seed run** (Track A): see
   [migrations_from_LS/README.md](migrations_from_LS/README.md).
+- **Offline CVAT export writeback**: export a task as Datumaro 1.0, then run
+  `python -m manual_reviewer_cvat.scripts.export_to_aa_v4 --datumaro-json annotations/default.json --pipeline-db /path/to/pipeline.db --reviewer-id reviewer@example.com`.
 - **Smart-tools / Nuclio rollout** (Track B): see
   [RESUME.md](RESUME.md) Phases 2-4.
 
