@@ -72,6 +72,8 @@ than frontend migration details.
 
 ## Current Implementation Notes
 
+- `data_miner/annotation_io/` contains the frontend-neutral box/task/result
+  contracts and conversion helpers into v4 `HumanReviewResult`.
 - `manual_reviewer/pipeline_io/` contains the production Label Studio parser
   and v4 writeback behavior.
 - `manual_reviewer_cvat/migrations_from_LS/` already has LS -> CVAT migration
