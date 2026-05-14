@@ -37,7 +37,7 @@ Use this to point at the right doc before guessing. Repo-relative paths only.
 | Path | Purpose | Read when |
 |------|---------|-----------|
 | [`docs/development/contributing.md`](../../docs/development/contributing.md) | Contribution conventions | Before a PR |
-| [`docs/development/legacy-auto-annotation-cleanup.md`](../../docs/development/legacy-auto-annotation-cleanup.md) | Tracked-reference audit and deletion order for old auto-annotation packages | Before deleting `auto_annotation`, `auto_annotation_v2`, or `auto_annotation_v3` |
+| [`docs/development/legacy-auto-annotation-cleanup.md`](../../docs/development/legacy-auto-annotation-cleanup.md) | Audit record for removed legacy auto-annotation packages | When checking why only v4 remains |
 | [`docs/updates/monthly_update_2026-03-03_to_2026-05-03.md`](../../docs/updates/monthly_update_2026-03-03_to_2026-05-03.md) | Most recent activity digest | Catching up after time away |
 
 ## Infra / Kubernetes (`docs/k3s/`)
@@ -59,12 +59,12 @@ Use this to point at the right doc before guessing. Repo-relative paths only.
 | [`manual_reviewer_cvat/docs/long_term_vision.md`](../../manual_reviewer_cvat/docs/long_term_vision.md) | End-state design for the permanent multi-team review tool | supporting | Scoping new work in manual_reviewer_cvat |
 | [`manual_reviewer_cvat/docs/smart_tools_plan.md`](../../manual_reviewer_cvat/docs/smart_tools_plan.md) | Nuclio + SAM 3.1 smart-tool plan | supporting | Implementing or debugging smart tools |
 
-## Auto-annotation engines
+## Auto-annotation engine
 
-Each `auto_annotation_v*` package has its own `tests/` and (for v4) `configs/`. There is no central design doc; the package READMEs and tests are authoritative.
-
-- [`data_miner/auto_annotation_v4/`](../../data_miner/auto_annotation_v4/) — current engine (SAM 3.1, Rex-Omni, VLM finalization).
-- [`data_miner/auto_annotation_v3/`](../../data_miner/auto_annotation_v3/) — legacy engine (kept for parity).
+[`data_miner/auto_annotation_v4/`](../../data_miner/auto_annotation_v4/) is the
+current and only retained auto-annotation engine (SAM 3.1, Rex-Omni, VLM
+finalization). Older tracked `auto_annotation`, `auto_annotation_v2`, and
+`auto_annotation_v3` source packages were removed after prompt preservation.
 
 Prompt preservation for legacy cleanup lives under [`data_miner/auto_annotation_v4/prompts/archive/legacy/`](../../data_miner/auto_annotation_v4/prompts/archive/legacy/). Review it before deleting older auto-annotation packages.
 

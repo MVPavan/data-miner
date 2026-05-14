@@ -7,9 +7,7 @@ bs=B*N, then post-processes per image.
 
 Zero modifications to the DART source -- all new code lives here.
 
-Note: This is the v4 copy of the batch predictor, moved from
-``data_miner.auto_annotation_v3.dart_batch`` into the v4 models package
-for self-contained deployment. No LitServe dependency.
+Note: This is the v4 self-contained batch predictor. No LitServe dependency.
 
 Usage:
     from data_miner.auto_annotation_v4.models.sam3_dart_batch import (

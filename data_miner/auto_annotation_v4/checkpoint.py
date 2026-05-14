@@ -171,9 +171,8 @@ class CheckpointDB:
     DB file, eliminating cross-job contamination and external dependencies
     (Redis, filesystem locks).
 
-    Replaces both :class:`~auto_annotation_v3.checkpoint.CheckpointManager`
-    (file-based) and :class:`~auto_annotation_v3.workers.messaging.RedisMessageBroker`
-    (Redis Streams).
+    Replaces the earlier file-checkpoint and Redis Streams work-distribution
+    design with one SQLite-backed source of truth.
 
     Args:
         db_path: Path to SQLite database file (auto-created if missing).

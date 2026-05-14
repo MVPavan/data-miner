@@ -88,9 +88,9 @@ the with-crop run, so the 224×224 crop is a small cost.
 - **Sweet spot C=24-32**: lowest p50 that's still near peak throughput.
   Pipeline `max_concurrent_calls=24` is a reasonable starting value.
 
-### Comparison to prior 2× 3090 tuning (aa_v3)
+### Comparison to prior 2x 3090 tuning
 
-| Metric | aa_v3 (2×3090 TP=2 + text-only) | aa_v4 (4×L40S TP=1 + VLM) | Ratio |
+| Metric | Prior baseline (2x3090 TP=2 + text-only) | aa_v4 (4xL40S TP=1 + VLM) | Ratio |
 |---|---|---|---|
 | Peak req/s | 4.16 | **6.28** | 1.51× |
 | Peak gen tok/s | 272 | **360** | 1.32× |
@@ -187,7 +187,7 @@ with N — that's a pipeline-level decision, not a tuning one.
 At 6.28 req/s, a 100k-image job with ~8 VLM calls/image:
 
 ```
-aa_v3 baseline (2× 3090 post-tune): 800,000 / 4.16 = 53 h
+Prior baseline (2x 3090 post-tune): 800,000 / 4.16 = 53 h
 aa_v4 now (4× L40S):                800,000 / 6.28 = 35 h
                                                      ─────
                                                      +34% faster

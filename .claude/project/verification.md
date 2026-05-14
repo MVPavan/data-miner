@@ -16,7 +16,7 @@ The repo runs Python code, ships a CLI, and has tests colocated per subproject. 
 ### Full (before declaring a feature done)
 
 - `ruff format --check .` — formatting clean (do not auto-format unrelated files).
-- `pytest data_miner/auto_annotation_v3/tests data_miner/auto_annotation_v4/tests manual_reviewer/tests manual_reviewer_cvat/tests -x -q` — all subproject test suites pass, fail-fast.
+- `pytest data_miner/auto_annotation_v4/tests manual_reviewer/tests manual_reviewer_cvat/tests -x -q` — all retained subproject test suites pass, fail-fast.
 - `data-miner status --help` — `status` subcommand registers (proves `cli.py` parses end-to-end).
 - Invariant suite: `rg -n '^## \[INV-' .claude/project/invariants.md` then run each invariant's check command.
 

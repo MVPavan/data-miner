@@ -37,7 +37,6 @@ with each stage owned by a long-running worker process holding a row-level Postg
 | [`manual_reviewer/`](../../manual_reviewer/) | Label Studio + SAM 3.1 ML backend for human review. Smart-tool drafts come from the ML backend; users accept/correct. | [`manual_reviewer/docs/next_phases.md`](../../manual_reviewer/docs/next_phases.md) — Phases 1/3/4/5/7/8 done; Phase 2 (LS ML backend hardening) and Phase 6 (Rex-Omni) pending. |
 | [`manual_reviewer_cvat/`](../../manual_reviewer_cvat/) | CVAT-based review (permanent multi-team tool). Vanilla CVAT + Nuclio smart-tools, **not** a fork. | [`manual_reviewer_cvat/RESUME.md`](../../manual_reviewer_cvat/RESUME.md) — pending host-Docker machine. Two tracks: (A) Datatang-1000 LS→CVAT migration, (B) permanent Nuclio + SAM 3.1 stack. |
 | [`data_miner/auto_annotation_v4/`](../../data_miner/auto_annotation_v4/) | Current auto-annotation engine: SAM 3.1, Rex-Omni, VLM finalization. Replaces v3. | Phase tracker lives inside that package (Phases 1+2+3 complete per user memory). |
-| [`data_miner/auto_annotation_v3/`](../../data_miner/auto_annotation_v3/) | Legacy auto-annotation (superseded; kept for parity/benchmark). | — |
 | [`annotation-validator/`](../../annotation-validator/) | YOLO bbox sanity checker (filter_inner_bboxes, vllm-backed). | — |
 | [`detection_metrics/`](../../detection_metrics/) | Detection evaluation + dataset format utilities. | — |
 | [`export/`](../../export/) | Clean YOLO dataset export pipeline. | — |
