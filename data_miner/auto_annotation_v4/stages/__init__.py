@@ -3,6 +3,7 @@
 from .detect import DetectMergeWorker
 from .detect_model import DetectModelWorker
 from .evaluate import EvaluateWorker
+from .filter import FilterWorker
 from .finalize import FinalizeWorker
 from .refine import RefineWorker
 
@@ -10,6 +11,7 @@ __all__ = [
     "DetectMergeWorker",
     "DetectModelWorker",
     "EvaluateWorker",
+    "FilterWorker",
     "RefineWorker",
     "FinalizeWorker",
 ]

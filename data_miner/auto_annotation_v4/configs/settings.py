@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .enums import ClassTier, DetectorName, Stage, STAGE_ORDER, TiebreakField
 
@@ -146,6 +146,31 @@ class AutoAcceptConfig(BaseModel):
     """
     tiers: list[int] = Field(default_factory=lambda: [1])
     """Tiers eligible for auto-accept. Empty list disables auto-accept entirely."""
+    high_confidence_scores: dict[str, float] = Field(default_factory=dict)
+    """Per-model high-confidence shortcut: a candidate auto-accepts if
+    ``source_model`` is keyed here and ``score >= threshold``, even when
+    agreement is below ``min_model_agreement``. Primary use: single-detector
+    runs (e.g. sam3_dart-only) where agreement can never reach 2.
+    """
+    head_person_coexistence: bool = False
+    """If True, any ``head`` whose containment-in-person meets
+    ``filtering.head_person_containment_min`` is auto-accepted, and the
+    containing ``person`` is also auto-accepted. A co-existing head+person
+    pair is a strong signal — both labels firing on the same body rarely
+    needs VLM disambiguation.
+
+    Gated by ``head_person_coexistence_min_score``: a pair only qualifies
+    if BOTH the head and the person have score >= that floor. Prevents
+    a marginal head detection from riding any spurious person box into
+    auto-accept.
+    """
+    head_person_coexistence_min_score: float = 0.0
+    """Minimum score (applied to BOTH the head and the person) required for
+    the co-existence shortcut to fire. Default 0.0 = no score gate (legacy).
+    Set above the per-model score floor so weak detections don't get a
+    free pass; for sam3_dart with ``per_model_score.sam3_dart=0.50`` a
+    value of 0.55-0.65 is a reasonable gate.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -153,19 +178,51 @@ class AutoAcceptConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class EvaluateConfig(BaseModel):
-    """Confidence thresholds for the evaluate stage's three-way routing.
+class VlmImageConfig(BaseModel):
+    """Image encoding knobs for the VLM payload.
 
-    Pure confidence-based — reject_below / accept_above define the tri-state
-    boundaries.
+    Controls the overview (full image with red TARGET border) and crop
+    close-ups fed to the evaluate stage. Defaults tuned for Qwen-VL class
+    models behind vLLM: JPEG q=90 at max_size=1280 keeps small-object
+    patch density while cutting payload ~5-10x versus PNG.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    format: str = "JPEG"
+    """Encoding format: "JPEG" (default, much smaller) or "PNG" (lossless)."""
+    max_size: int = 1280
+    """Longest side in pixels; ``thumbnail`` resizes to fit if larger."""
+    quality: int = 90
+    """JPEG quality 1-95. Ignored when format == "PNG"."""
+
+
+class EvaluateConfig(BaseModel):
+    """Confidence / bbox-score thresholds for the evaluate stage's
+    three-way routing (accept / review / reject).
+
+    Two independent axes: ``class_confidence`` (does the VLM believe the
+    class call) and ``bbox_score`` (does the bbox fit tightly). The class
+    axis gates on ``reject_below`` / ``accept_above``; the bbox axis has
+    its own pair so class-correct-but-loose-bbox can be tuned separately.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     reject_below: float = 0.3
+    """Class-confidence floor — below this, reject outright."""
     accept_above: float = 0.5
+    """Class-confidence ceiling — at/above this, class call is trusted."""
+    bbox_reject_below: float = 0.3
+    """Bbox-score floor — class trusted but bbox below this rejects the
+    candidate (bbox unusable)."""
+    bbox_accept_above: float = 0.5
+    """Bbox-score ceiling — at/above this, bbox is accepted; below means
+    human-review bucket."""
     concurrency: int = 8
     """Max in-flight per-candidate VLM requests per worker."""
+    vlm_image: VlmImageConfig = Field(default_factory=VlmImageConfig)
+    """Image encoding knobs for the per-candidate VLM payload."""
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +357,42 @@ class IouDedupConfig(BaseModel):
     )
     """Model order from most-trusted (lowest index) to least."""
 
+    same_class_containment_min: float = 0.0
+    """Containment threshold (intersection / min(area_a, area_b)) above which
+    two same-class bboxes are also merged into one cluster — in addition to
+    IoU >= ``threshold``. IoU misses nested pairs (a small bbox fully inside
+    a larger one can have IoU ~0.4-0.5 while containment ~1.0), so detectors
+    that fire both a wide and a narrow box for the same object (e.g. SAM3-
+    DART often emits both a hair-and-face head and a face-only head) leave
+    duplicates. 0.0 disables the containment rule. 0.8 is recommended for
+    jobs with heavy same-class duplication (video-frame heads in particular).
+    """
+
+
+class ClassAgnosticNmsConfig(BaseModel):
+    """Post-dedup NMS across *all* classes at a configurable IoU threshold.
+
+    Within-class dedup (``cluster_and_collapse``) already merges same-class
+    overlaps. The older ``apply_cross_class_rules`` handles cross-class
+    overlaps at IoU > 0.5 but exempts ``overlap_exempt`` classes and only
+    flags confusion pairs without suppressing them.
+
+    This stricter pass runs AFTER both, optionally suppressing confusion
+    pairs too, using the same tiebreak cascade as cluster_and_collapse.
+    Off by default so existing jobs are unaffected.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    threshold: float = 0.7
+    respect_overlap_exempt: bool = True
+    """If True, any pair involving an ``overlap_exempt`` class is skipped."""
+    suppress_confusion_pairs: bool = True
+    """If True, confusion-tag pairs are NMS'd alongside non-confusion pairs.
+    If False, confusion-pair overlaps are left intact (kept for VLM review).
+    """
+
 
 class FilterConfig(BaseModel):
     """Programmatic bounding-box filtering thresholds."""
@@ -317,6 +410,37 @@ class FilterConfig(BaseModel):
     """
     iou_dedup: IouDedupConfig = Field(default_factory=IouDedupConfig)
     max_per_class: int = 30
+    allowed_source_models: list[str] = Field(default_factory=list)
+    """Pipeline-wide source_model allowlist. Empty = allow all (default).
+    When non-empty, any candidate whose ``source_model`` is not in the list
+    is dropped at the merge boundary and again at the start of every
+    ``FilterPipeline`` run — so flipping this post-detect only requires a
+    filter-stage re-run (not a full detect re-run) to take effect.
+    """
+    reject_head_without_person: bool = False
+    """If True (and ``head_person_containment_min`` is 0), drop all
+    class_name='head' candidates from an image whose surviving candidates
+    contain no class_name='person'. Coarse image-level presence check; superseded
+    by ``head_person_containment_min`` when that threshold is > 0.
+    """
+    head_person_containment_min: float = 0.0
+    """Per-head containment threshold. If > 0, drop any head whose maximum
+    containment-in-person across all persons in the image is below this value.
+    Containment is ``intersection(head, person) / area(head)`` — so 1.0 means
+    head fully inside a person bbox. A containment-based check is more surgical
+    than IoU (head-vs-person IoU is typically < 0.2 even when the head is fully
+    inside the person). Set to 0.0 to disable (default).
+    """
+    class_agnostic_nms: ClassAgnosticNmsConfig = Field(
+        default_factory=ClassAgnosticNmsConfig
+    )
+    """Optional stricter post-dedup NMS across classes. See ClassAgnosticNmsConfig."""
+    per_class_min_area: dict[str, float] = Field(default_factory=dict)
+    """Per-class ``min_area`` overrides. Classes in this dict use the listed
+    floor instead of the global ``min_area``; classes absent fall back to it.
+    Only affects min_area — ``max_area`` and aspect ratio stay uniform.
+    Example: ``{head: 0.0001, cellphone: 0.00005}``.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -348,8 +472,11 @@ class WorkersConfig(BaseModel):
     """Workers per enabled detector model. Total detect workers =
     detect_per_model × number of enabled detectors."""
     detect_merge: int = 2
-    """Workers for the detect merge stage (combine per-model proposals,
-    filter, dedup, route)."""
+    """Workers for the detect merge stage (combine per-model proposals
+    into raw merged detections; filter/dedup/route is now the filter stage)."""
+    filter_count: int = 4
+    """Workers for the filter stage (programmatic geometric + score filters,
+    IoU dedup, and auto-accept routing)."""
     evaluate_count: int = 6
     refine_count: int = 2
     finalize_count: int = 2
@@ -482,3 +609,80 @@ class AutoAnnotationV4Config(BaseModel):
     def tier_names(self, tier: int) -> list[str]:
         """Names of active classes at a given tier."""
         return [name for name, cfg in self.classes.items() if cfg.tier == tier]
+
+    # ------------------------------------------------------------------
+    # Cross-section validation
+    # ------------------------------------------------------------------
+
+    @model_validator(mode="after")
+    def _validate_cross_section_keys(self) -> "AutoAnnotationV4Config":
+        """Catch typos in dicts whose keys are free-form strings but should
+        reference a known class / detector name.
+
+        ``extra="forbid"`` catches typos in known pydantic field names;
+        this validator catches typos in *values* of dict-typed fields where
+        pydantic can't help (e.g. ``per_class_min_area.Head`` vs ``head``,
+        or ``per_model_score.sam3_drt`` vs ``sam3_dart``). Without this,
+        a single misspelled key silently no-ops.
+        """
+        known_classes = set(self.class_registry)
+        known_detectors = {d.value for d in DetectorName}
+        errors: list[str] = []
+
+        # Class-name dicts
+        for dict_field, owner in (
+            ("per_class_min_area", self.filtering),
+        ):
+            d = getattr(owner, dict_field, None) or {}
+            unknown = [k for k in d if k not in known_classes]
+            if unknown:
+                errors.append(
+                    f"filtering.{dict_field} references unknown class(es): "
+                    f"{sorted(unknown)}. Known classes: "
+                    f"{sorted(known_classes)[:20]}{'…' if len(known_classes) > 20 else ''}"
+                )
+
+        # Detector-name dicts
+        for dict_field, owner_name, owner in (
+            ("per_model_score", "filtering", self.filtering),
+            ("high_confidence_scores", "auto_accept", self.auto_accept),
+        ):
+            d = getattr(owner, dict_field, None) or {}
+            unknown = [k for k in d if k not in known_detectors]
+            if unknown:
+                errors.append(
+                    f"{owner_name}.{dict_field} references unknown "
+                    f"detector(s): {sorted(unknown)}. "
+                    f"Known detectors: {sorted(known_detectors)}"
+                )
+
+        # Couple head_person_coexistence with a meaningful containment gate
+        if (
+            self.auto_accept.head_person_coexistence
+            and self.filtering.head_person_containment_min <= 0
+        ):
+            errors.append(
+                "auto_accept.head_person_coexistence=True requires "
+                "filtering.head_person_containment_min > 0 — otherwise every "
+                "head-with-any-person pair auto-accepts, bypassing VLM review."
+            )
+
+        # Couple coexistence with a non-zero per-candidate score gate so a
+        # weak head riding any person box doesn't slip through. 0.0 default
+        # is the legacy unsafe behaviour; once you opt in to coexistence
+        # you must also set a minimum score.
+        if (
+            self.auto_accept.head_person_coexistence
+            and self.auto_accept.head_person_coexistence_min_score <= 0
+        ):
+            errors.append(
+                "auto_accept.head_person_coexistence=True requires "
+                "auto_accept.head_person_coexistence_min_score > 0 — a "
+                "score gate is mandatory so marginal detections don't "
+                "auto-accept just by sharing space with a person box."
+            )
+
+        if errors:
+            raise ValueError("Invalid cross-section config:\n  - " + "\n  - ".join(errors))
+
+        return self

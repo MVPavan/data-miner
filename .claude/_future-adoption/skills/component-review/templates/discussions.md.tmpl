@@ -1,0 +1,19 @@
+# Discussions — <component> (<version>)
+
+This file is the running thread for the user and Claude to discuss the `<component>` review. Append new entries at the bottom — never rewrite or delete prior entries.
+
+Format each entry as:
+
+```
+## <YYYY-MM-DD> — <speaker: User | Claude | Codex>
+<content>
+```
+
+Use this thread for:
+
+- Questions the user wants to dig deeper into after reading `review.md`.
+- Clarifications, corrections, or follow-up traces Claude should add to the review.
+- Decisions about scope (e.g. "skip the temporal-workflows angle, we'll cover it under the cross-cutting review").
+- A final sign-off entry when the user marks the component complete.
+
+When the user says the component is done ("mark complete", "tick it", "done with this one"), the skill writes the sign-off entry here on their behalf and then flips the checklist entry in `../index.md` from `[~]` to `[x]`. The user does not need to write the entry themselves first — saying "mark complete" is enough.

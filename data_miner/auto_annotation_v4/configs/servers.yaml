@@ -6,13 +6,31 @@
 servers:
   detectors:
     grounding_dino:
-      enabled: true
+      enabled: false
       port: 3001
       gpu: "cuda:0"
+      # Multi-image batched: with batch=8 and prompt_chunk_size=1, every
+      # Swin forward is (8, 3, H, W) which peaks at ~11 GiB on 24 GB 3090s.
+      # See harness in scripts/harness_gdino.py: this row delivers ~4.4 s
+      # per image vs 6.7 s for single-image chunked4 (1.51x throughput).
+      # batch=8 only helps when LitServe can fill the queue; with bursty
+      # traffic it falls back to smaller batches at the same per-batch cost.
       max_batch_size: 8
       batch_timeout_ms: 50
       model_id: "IDEA-Research/grounding-dino-base"
       script: "serve_gdino.py"
+      options:
+        # Per-image prompt fan-out. The Swin backbone runs ONE forward per
+        # prompt chunk on (B*chunk, 3, H, W) where B is the LitServe batch.
+        # Peak memory scales with B*chunk, so paired with max_batch_size=8
+        # we keep chunk=1 to land at the 11 GiB / 4.4 ms-per-img sweet spot.
+        # Harness data (43 prompts, 24 GB 3090):
+        #   B=1  chunk=4   ~6  GiB,  6676 ms/img   (single-image baseline)
+        #   B=2  chunk=4   ~11 GiB,  5208 ms/img
+        #   B=4  chunk=2   ~11 GiB,  4714 ms/img
+        #   B=8  chunk=1   ~11 GiB,  4421 ms/img   (default)
+        #   B=8  chunk=2   OOM at ~21 GiB
+        prompt_chunk_size: 1
 
     falcon:
       enabled: false
@@ -33,7 +51,7 @@ servers:
       script: "serve_sam3.py"
 
     sam3_dart:
-      enabled: true
+      enabled: false
       port: 3013
       gpu: "cuda:1"           # same slot sam3 used to occupy
       max_batch_size: 8       # LitServe needs >=2 to enter batched mode (predict gets list)
@@ -43,6 +61,24 @@ servers:
       options:
         detection_only: true  # M4; flip to false for M3 (masks preserved)
         presence_threshold: 0.05
+
+    sam3_1:
+      # SAM 3.1 — used exclusively by manual_reviewer (reconciler, ML backend,
+      # tracker). Auto pipeline still goes through sam3_dart. Sessions are
+      # inherently per-call inside the model wrapper, so LitServe batching
+      # is disabled (max_batch_size=1) — a single GPU gets one inference at
+      # a time and concurrency comes from running multiple LitServe workers
+      # behind the same port.
+      enabled: false
+      port: 3014
+      gpu: "cuda:1"
+      max_batch_size: 1
+      batch_timeout_ms: 0
+      model_id: "facebook/sam3.1"
+      script: "serve_sam3_1.py"
+      options: {}
+        # apply_temporal_disambiguation: true  # default in sam3 upstream
+        # checkpoint_path / bpe_path: leave unset to download from HF
 
     owlvit2:
       enabled: false          # parked — kept discoverable but off
@@ -61,6 +97,23 @@ servers:
       batch_timeout_ms: 50
       model_id: "omlab/omdet-turbo-swin-tiny-hf"
       script: "serve_omdet_turbo.py"
+
+    rex_omni:
+      # Rex-Omni — IDEA-Research's 3B autoregressive MLLM detector, "next
+      # point prediction". Used by aav4 only (manual_reviewer stays SAM 3.1
+      # only). Latency 1-3 s/image, batch_size=1 because the decoder is
+      # sequence-length-bound. Off by default — enable in user config or
+      # via `runtime.detect_models: [rex_omni]`.
+      enabled: false
+      port: 3015
+      gpu: "cuda:0"
+      max_batch_size: 1
+      batch_timeout_ms: 0
+      model_id: "IDEA-Research/Rex-Omni"
+      script: "serve_rex_omni.py"
+      options: {}
+        # backend: "transformers"   # or "vllm" if installed
+        # max_new_tokens: 2048
 
   vlm:
     url: "http://localhost:8955/v1"

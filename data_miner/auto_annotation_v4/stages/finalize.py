@@ -26,12 +26,11 @@ from pydantic import BaseModel
 from ..workers.base import StageWorker
 from ..configs import (
     AutoAnnotationV4Config,
-    BoundingBox,
     BboxSource,
     Candidate,
-    DetectResult,
-    DropReason,
     EvaluateResult,
+    FilterContext,
+    FilterResult,
     FinalAction,
     FinalAnnotation,
     FinalizeDrop,
@@ -42,13 +41,8 @@ from ..configs import (
     StageMessage,
     Verdict,
 )
+from ..filters import FilterPipeline
 from ..output import OutputWriter
-from ..utils import (
-    apply_cross_class_rules,
-    cluster_and_collapse,
-    geometric_filter,
-    limit_per_class,
-)
 
 logger = logging.getLogger("data_miner.auto_annotation_v4.finalize")
 
@@ -69,15 +63,18 @@ class FinalizeWorker(StageWorker):
         job_id: str | None = None,
     ) -> None:
         super().__init__(config, db, output_writer=output_writer, worker_id=worker_id, job_id=job_id)
+        # Cache a single FilterPipeline per worker — reused for every
+        # PRE_FINALIZE pass on the canonical post-refine candidate list.
+        self._filter_pipeline = FilterPipeline(self.config)
 
     async def process(self, msg: StageMessage) -> BaseModel:
         t0 = time.monotonic()
 
-        detect: DetectResult | None = await self.load_checkpoint(
-            msg.image_id, Stage.DETECT, DetectResult
+        filtered: FilterResult | None = await self.load_checkpoint(
+            msg.image_id, Stage.FILTER, FilterResult
         )
-        if detect is None:
-            raise RuntimeError(f"No detect checkpoint for {msg.image_id}")
+        if filtered is None:
+            raise RuntimeError(f"No filter checkpoint for {msg.image_id}")
 
         evaluate: EvaluateResult | None = await self.load_checkpoint(
             msg.image_id, Stage.EVALUATE, EvaluateResult
@@ -88,25 +85,27 @@ class FinalizeWorker(StageWorker):
 
         # 1. Build canonical candidate list (relabel + refined bbox applied,
         #    rejected dropped, was_refined flag attached).
-        canonical, refine_review = self._build_canonical(detect, evaluate, refine)
+        canonical, refine_review = self._build_canonical(filtered, evaluate, refine)
         before_geometric = len(canonical)
 
-        # 2. Re-run invariants in the same order as detect's filtering chain.
-        after_geom = geometric_filter(canonical, self.config)
-        geom_dropped = _diff_drop(canonical, after_geom, DropReason.GEOMETRIC_FILTER)
-
-        after_dedup = cluster_and_collapse(
-            after_geom, self.config.filtering.iou_dedup
+        # 2. Re-run filter invariants via FilterPipeline (PRE_FINALIZE subset:
+        #    geometric -> score_floor -> dedup -> per_class_cap -> cross_class).
+        kept, filter_drops = self._filter_pipeline.run(
+            canonical, FilterContext.PRE_FINALIZE,
         )
-        dedup_dropped = _diff_drop(after_geom, after_dedup, DropReason.DEDUP)
-
-        after_cap = limit_per_class(after_dedup, self.config.filtering.max_per_class)
-        cap_dropped = _diff_drop(after_dedup, after_cap, DropReason.PER_CLASS_CAP)
-
-        after_cross = apply_cross_class_rules(after_cap, self.config)
-        cross_dropped = _diff_drop(after_cap, after_cross, DropReason.CROSS_CLASS)
-
-        all_drops = geom_dropped + dedup_dropped + cap_dropped + cross_dropped
+        # Convert FilterDrops -> FinalizeDrops so existing FinalizeResult shape
+        # is preserved. A canonical-id lookup preserves class_name + bbox for
+        # the drop record.
+        canonical_by_id: dict[str, Candidate] = {c.candidate_id: c for c in canonical}
+        all_drops: list[FinalizeDrop] = []
+        for d in filter_drops:
+            src = canonical_by_id.get(d.candidate_id)
+            all_drops.append(FinalizeDrop(
+                candidate_id=d.candidate_id,
+                class_name=src.class_name if src else "",
+                reason=d.reason,
+                bbox=src.bbox if src else None,
+            ))
 
         # 3. Build FinalAnnotation list + review items.
         # v4: config.classes is dict[str, ClassConfig]
@@ -114,7 +113,7 @@ class FinalizeWorker(StageWorker):
             name: cfg.id for name, cfg in self.config.classes.items()
         }
         annotations: list[FinalAnnotation] = []
-        for c in after_cross:
+        for c in kept:
             annotations.append(FinalAnnotation(
                 candidate_id=c.candidate_id,
                 class_name=c.class_name,
@@ -129,7 +128,7 @@ class FinalizeWorker(StageWorker):
 
         review_items: list[dict] = []
         # Upstream review (evaluate.review for non-refined classes).
-        review_items.extend(self._evaluate_review_items(detect, evaluate, refine))
+        review_items.extend(self._evaluate_review_items(filtered, evaluate, refine))
         # Refine adjudication review verdicts.
         review_items.extend(refine_review)
 
@@ -140,11 +139,9 @@ class FinalizeWorker(StageWorker):
             review_items=review_items,
             dropped=all_drops,
             filter_stats={
-                "before_geometric": before_geometric,
-                "after_geometric": len(after_geom),
-                "after_dedup": len(after_dedup),
-                "after_per_class_cap": len(after_cap),
-                "after_cross_class": len(after_cross),
+                "before_filter": before_geometric,
+                "after_filter": len(kept),
+                "dropped": len(all_drops),
                 "review_items": len(review_items),
             },
             stage_timing_ms=elapsed_ms,
@@ -159,10 +156,10 @@ class FinalizeWorker(StageWorker):
             self.output_writer.write_trace(msg.image_id, {
                 "image_id": msg.image_id,
                 "stages": [
-                    "detect", "evaluate" if evaluate else None,
+                    "filter", "evaluate" if evaluate else None,
                     "refine" if refine else None, "finalize",
                 ],
-                "detect": detect.model_dump(mode="json"),
+                "filter": filtered.model_dump(mode="json"),
                 "evaluate": evaluate.model_dump(mode="json") if evaluate else None,
                 "refine": refine.model_dump(mode="json") if refine else None,
                 "finalize": result.model_dump(mode="json"),
@@ -191,7 +188,7 @@ class FinalizeWorker(StageWorker):
 
     def _build_canonical(
         self,
-        detect: DetectResult,
+        filtered: FilterResult,
         evaluate: EvaluateResult | None,
         refine: RefineResult | None,
     ) -> tuple[list[Candidate], list[dict]]:
@@ -201,7 +198,7 @@ class FinalizeWorker(StageWorker):
                             else original_bbox if final_verdict==accept,
                             else dropped (review items captured separately).
           - evaluate.rejected -> dropped
-          - detect auto-accepted not in evaluate or refine -> kept as-is
+          - filter auto-accepted not in evaluate or refine -> kept as-is
         Adds metadata={"was_refined": bool} on the survivor.
 
         Returns (canonical_list, refine_review_items).
@@ -217,8 +214,8 @@ class FinalizeWorker(StageWorker):
             rejected_set = set(evaluate.rejected)
             relabels = dict(evaluate.relabels)
 
-        # Detect-stage auto-accepts that bypassed evaluate are also "accepted".
-        accepted_set |= set(detect.routing.auto_accepted)
+        # Filter-stage auto-accepts that bypassed evaluate are also "accepted".
+        accepted_set |= set(filtered.routing.auto_accepted)
 
         refine_by_id: dict[str, RefinementResult] = {}
         if refine is not None:
@@ -227,7 +224,7 @@ class FinalizeWorker(StageWorker):
         canonical: list[Candidate] = []
         refine_review: list[dict] = []
 
-        for cand in detect.candidates:
+        for cand in filtered.candidates:
             if cand.candidate_id in rejected_set:
                 continue
             if (
@@ -290,7 +287,7 @@ class FinalizeWorker(StageWorker):
 
     @staticmethod
     def _evaluate_review_items(
-        detect: DetectResult,
+        filtered: FilterResult,
         evaluate: EvaluateResult | None,
         refine: RefineResult | None,
     ) -> list[dict]:
@@ -300,7 +297,7 @@ class FinalizeWorker(StageWorker):
             {r.candidate_id for r in refine.results} if refine else set()
         )
         review = []
-        for cand in detect.candidates:
+        for cand in filtered.candidates:
             if cand.candidate_id not in evaluate.review:
                 continue
             if cand.candidate_id in refine_ids:
@@ -315,25 +312,3 @@ class FinalizeWorker(StageWorker):
         return review
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _diff_drop(
-    before: list[Candidate],
-    after: list[Candidate],
-    reason: DropReason,
-) -> list[FinalizeDrop]:
-    """Items in `before` but not in `after` (by candidate_id) become FinalizeDrop entries."""
-    after_ids = {c.candidate_id for c in after}
-    return [
-        FinalizeDrop(
-            candidate_id=c.candidate_id,
-            class_name=c.class_name,
-            reason=reason,
-            bbox=c.bbox,
-        )
-        for c in before
-        if c.candidate_id not in after_ids
-    ]

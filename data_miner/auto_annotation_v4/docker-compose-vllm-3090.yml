@@ -1,0 +1,229 @@
+# ============================================================================
+# Qwen3.5-27B-GPTQ-Int4 Annotation Validator — 8× vLLM replicas + nginx LB
+# (THIS machine: 8× RTX 3090, Ampere / sm_86 / no NVLink / 2-socket NUMA)
+#
+# Key differences vs docker-compose-vllm-large.yml (4× L40S):
+#   - 8 replicas on GPUs 0..7 (not 4 on 4..7)
+#   - GPTQ-Int4 model as default (see "MODEL / FP8 NOTES" below)
+#   - FP8 KV cache kept on: emulated on Ampere, still halves KV footprint →
+#     roughly 2× max_num_seqs for free. Compute cost vs FP16 is negligible
+#     because KV read/write is memory-bound and dequant is fused.
+#   - Lower gpu-memory-utilization (0.88) and max-num-seqs (start at 32)
+#     because 24 GB has less absolute KV headroom than 46 GB L40S
+#   - NUMA pinning via cpuset: GPUs 0-3 → CPUs 0-31,64-95 (node 0)
+#                                GPUs 4-7 → CPUs 32-63,96-127 (node 1)
+#   - shm_size raised for vLLM's prefix cache and mm-processor shared memory
+#
+# MODEL / FP8 NOTES on sm_86 (Ampere) — FP8 tensor cores are sm_89+ (Ada/Hopper),
+# but vLLM supports FP8 on older archs via EMULATION (dequant to FP16 at compute):
+#   - FP8 KV cache (--kv-cache-dtype fp8_e4m3): WORKS on 3090. Storage benefit
+#     (2× KV capacity) applies; compute is ~same as FP16 (dequant is fused and
+#     memory-bound anyway).
+#   - FP8 MODEL WEIGHTS (Qwen3.5-27B-FP8): LOAD but ~27 GB weights > 24 GB,
+#     so NOT viable TP=1 on a single 3090. Viable with TP=2 (PCIe allreduce
+#     tax, no NVLink on this box) → 4 replicas instead of 8. Usually a loss
+#     vs 8× TP=1 Int4 unless FP8 Marlin kernels close the gap.
+#   - GPTQ-Int4 (default): ~14 GB weights, fits TP=1 comfortably, uses
+#     ExLlamaV2/Marlin kernels that are fast on Ampere.
+#
+# Pipeline endpoint (same as large): http://<host>:${VLLM_PORT:-8956}/v1/...
+# nginx fans out to the 8 backends internally (least-conn).
+#
+# MODEL OPTIONS (override via env):
+#   VALIDATOR_MODEL=Qwen/Qwen3.5-27B-GPTQ-Int4   (default; ~14 GB, TP=1 on 24 GB)
+#   VALIDATOR_MODEL=Qwen/Qwen3.5-27B-AWQ         (~14 GB, sometimes slower on Ampere than GPTQ)
+#   VALIDATOR_MODEL=Qwen/Qwen3.5-27B-FP8         (~27 GB, needs TP=2 on 3090 — halve the replica count)
+#
+# KV CACHE OPTIONS:
+#   VALIDATOR_KV_DTYPE=fp8_e4m3  (default, emulated on Ampere, +2× KV capacity)
+#   VALIDATOR_KV_DTYPE=auto      (disables FP8 KV — falls back to FP16)
+#
+# To shift to a different 8-GPU block, override device_ids on each service.
+# ============================================================================
+
+x-vllm-service: &vllm-service
+  image: vllm/vllm-openai:latest
+  environment:
+    - HF_TOKEN=${HF_TOKEN:-}
+    - VLLM_WORKER_MULTIPROC_METHOD=spawn
+    - NVIDIA_DISABLE_REQUIRE=1
+    # Ampere doesn't have Flash-Attn-3; vLLM auto-selects FA2/Xformers. Leaving
+    # VLLM_ATTENTION_BACKEND unset lets vLLM pick the best backend at startup.
+  volumes:
+    - ${HF_HOME:-/media/data_2/all_cache/hf_home}:/root/.cache/huggingface
+  ipc: host
+  # Prefix-caching + mm-processor shm can exhaust the default 64 MB /dev/shm.
+  shm_size: "16gb"
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 600s
+
+x-vllm-command: &vllm-command
+  - --model
+  - ${VALIDATOR_MODEL:-Qwen/Qwen3.5-27B-GPTQ-Int4}
+  - --tensor-parallel-size
+  - "1"
+  - --max-model-len
+  - "${VALIDATOR_MAX_MODEL_LEN:-4096}"
+  - --gpu-memory-utilization
+  - "${VALIDATOR_GPU_MEM_UTIL:-0.88}"
+  # Start conservative — bench with scripts_bench/bench_vllm_3090.py and bump
+  # if KV headroom remains. Pure-attn 27B at Int4 with 4k context costs roughly
+  # 0.35 GB KV per seq → 24 concurrent ≈ 8.4 GB, comfortable.
+  - --max-num-seqs
+  - "${VALIDATOR_MAX_NUM_SEQS:-32}"
+  - --enable-chunked-prefill
+  - --max-num-batched-tokens
+  - "4096"
+  # FP8 KV cache: emulated on Ampere but still doubles KV capacity. Compute
+  # cost is memory-bound; dequant is fused in the attention kernel. Usually
+  # a net win on 3090 — confirm with scripts_bench/bench_vllm_3090.py.
+  - --kv-cache-dtype
+  - ${VALIDATOR_KV_DTYPE:-fp8_e4m3}
+  - --reasoning-parser
+  - qwen3
+  - --enable-prefix-caching
+  - --mm-processor-cache-type
+  - shm
+  - --dtype
+  - ${VALIDATOR_DTYPE:-auto}
+  - --port
+  - "8000"
+  - --default-chat-template-kwargs
+  - '{"enable_thinking": false}'
+  # MTP speculative decoding is arch-agnostic — keep as an opt-in. Uncomment
+  # the two lines below after the bench confirms it helps on Ampere Int4.
+  # - --speculative-config
+  # - '${VALIDATOR_SPECULATIVE:-{"method":"qwen3_next_mtp","num_speculative_tokens":2}}'
+
+services:
+  qwen35-validator-0:
+    <<: *vllm-service
+    container_name: qwen35-validator-0
+    cpuset: "0-7,64-71"       # NUMA node 0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-1:
+    <<: *vllm-service
+    container_name: qwen35-validator-1
+    cpuset: "8-15,72-79"      # NUMA node 0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['1']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-2:
+    <<: *vllm-service
+    container_name: qwen35-validator-2
+    cpuset: "16-23,80-87"     # NUMA node 0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-3:
+    <<: *vllm-service
+    container_name: qwen35-validator-3
+    cpuset: "24-31,88-95"     # NUMA node 0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['3']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-4:
+    <<: *vllm-service
+    container_name: qwen35-validator-4
+    cpuset: "32-39,96-103"    # NUMA node 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['4']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-5:
+    <<: *vllm-service
+    container_name: qwen35-validator-5
+    cpuset: "40-47,104-111"   # NUMA node 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['5']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-6:
+    <<: *vllm-service
+    container_name: qwen35-validator-6
+    cpuset: "48-55,112-119"   # NUMA node 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['6']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-7:
+    <<: *vllm-service
+    container_name: qwen35-validator-7
+    cpuset: "56-63,120-127"   # NUMA node 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['7']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-lb:
+    image: nginx:alpine
+    container_name: qwen35-lb
+    ports:
+      - "${VLLM_PORT:-8956}:80"
+    volumes:
+      - ./nginx-vllm-3090.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      qwen35-validator-0: { condition: service_healthy }
+      qwen35-validator-1: { condition: service_healthy }
+      qwen35-validator-2: { condition: service_healthy }
+      qwen35-validator-3: { condition: service_healthy }
+      qwen35-validator-4: { condition: service_healthy }
+      qwen35-validator-5: { condition: service_healthy }
+      qwen35-validator-6: { condition: service_healthy }
+      qwen35-validator-7: { condition: service_healthy }
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

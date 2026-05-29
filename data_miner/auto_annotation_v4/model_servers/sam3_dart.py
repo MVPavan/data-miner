@@ -60,13 +60,28 @@ class SAM3DartApi(DetectorServerBase):
         return super().decode_request(request, **kwargs)
 
     def predict(self, batch, **kwargs):
-        results = []
-        for item in batch:
+        # LitServe passes a list in batched mode (max_batch_size>=2) or a
+        # single item in single-loop mode (max_batch_size==1). Normalize to
+        # a list internally; unwrap on return when called single-loop.
+        single = not isinstance(batch, list)
+        batch = [batch] if single else batch
+
+        # Split refine items (per-request serial) from proposal items
+        # (batched through model.infer_batch for a shared backbone pass).
+        results: list = [None] * len(batch)
+        proposal_items: list = []
+        proposal_idx: list[int] = []
+        for i, item in enumerate(batch):
             if isinstance(item, dict) and item.get("__mode__") == _REFINE_TAG:
-                results.append(self.model.refine(item))
+                results[i] = self.model.refine(item)
             else:
-                results.append(self.model.infer(item))
-        return results
+                proposal_items.append(item)
+                proposal_idx.append(i)
+        if proposal_items:
+            proposal_raws = self.model.infer_batch(proposal_items)
+            for i, raw in zip(proposal_idx, proposal_raws):
+                results[i] = raw
+        return results[0] if single else results
 
     def encode_response(self, output, **kwargs):
         if isinstance(output, SAM3RefineResponse):
@@ -140,10 +155,14 @@ if __name__ == "__main__":
     api._detection_only = args.detection_only
     api._presence_threshold = args.presence_threshold
 
+    # LitServer's devices= wants int(s), not "cuda:N" strings. Accept either.
+    gpu_str = str(args.gpu)
+    device_idx = int(gpu_str.split(":", 1)[1]) if gpu_str.startswith("cuda:") else int(gpu_str)
+
     server = ls.LitServer(
         api,
         accelerator="gpu",
-        devices=[args.gpu],
+        devices=[device_idx],
         max_batch_size=args.max_batch_size,
         batch_timeout=args.batch_timeout,
     )

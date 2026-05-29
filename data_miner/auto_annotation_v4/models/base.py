@@ -42,6 +42,15 @@ class BaseDetectorModel(ABC):
     def infer(self, prepared: PreparedInput) -> RawPrediction:
         """Run model forward pass. Returns raw outputs (tensors, etc.)."""
 
+    def infer_batch(self, prepareds: list[PreparedInput]) -> list[RawPrediction]:
+        """Run forward pass for a batch of prepared inputs.
+
+        Default implementation loops per-item. Subclasses override when the
+        model supports multi-image batching (e.g. GDINO, SAM3-DART) to share
+        a single backbone/encoder pass across the batch.
+        """
+        return [self.infer(p) for p in prepareds]
+
     @abstractmethod
     def postprocess(self, raw: RawPrediction) -> DetectorResponse:
         """Convert raw outputs to normalized boxes/scores/labels."""

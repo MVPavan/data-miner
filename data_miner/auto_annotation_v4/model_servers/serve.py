@@ -21,21 +21,32 @@ from ..configs.enums import DetectorName
 _SERVER_REGISTRY: dict[DetectorName, type] = {}
 
 
+def _parse_gpu_arg(value: str) -> list[int]:
+    # Accepts "0", "cuda:0", "4", "cuda:4", or "0,1".
+    # litserve requires a list of ints.
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    return [int(p.removeprefix("cuda:")) for p in parts]
+
+
 def _get_registry() -> dict[DetectorName, type]:
     """Lazy import to avoid loading all model deps at startup."""
     if not _SERVER_REGISTRY:
         from .grounding_dino import GDINOApi
         from .falcon import FalconApi
         from .sam3_dart import SAM3DartApi
+        from .sam3_1 import SAM3OneApi
         from .owlvit2 import OWLv2Api
         from .omdet_turbo import OmDetTurboApi
+        from .rex_omni import RexOmniApi
 
         _SERVER_REGISTRY.update({
             DetectorName.GROUNDING_DINO: GDINOApi,
             DetectorName.FALCON: FalconApi,
             DetectorName.SAM3_DART: SAM3DartApi,
+            DetectorName.SAM3_1: SAM3OneApi,
             DetectorName.OWLVIT2: OWLv2Api,
             DetectorName.OMDET_TURBO: OmDetTurboApi,
+            DetectorName.REX_OMNI: RexOmniApi,
         })
     return _SERVER_REGISTRY
 
@@ -56,12 +67,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Launch detector model servers")
     parser.add_argument("--model", type=str, help="Single model to launch")
     parser.add_argument("--port", type=int, default=3001)
-    parser.add_argument("--gpu", type=str, default="cuda:0")
+    parser.add_argument("--gpu", type=str, default="0",
+                        help='GPU index for litserve devices=[N]. '
+                             'Accepts "N", "cuda:N", or "N,M" for multi-GPU.')
     parser.add_argument("--config", type=str, help="Path to user config YAML")
     parser.add_argument("--all", action="store_true", help="Launch all enabled")
     parser.add_argument("--models", nargs="+", help="Specific models to launch")
     parser.add_argument("--max-batch-size", type=int, default=8)
     parser.add_argument("--batch-timeout", type=float, default=0.05)
+    # GDINO-only knob; ignored by other detectors. Limits per-image prompt
+    # fan-out so the Swin backbone runs on (chunk, 3, H, W) instead of
+    # (N, 3, H, W). See models/gdino_batch.py for the memory/time tradeoff.
+    parser.add_argument("--prompt-chunk-size", type=int, default=None,
+                        help="GDINO only: prompts per forward pass (default 4).")
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
@@ -70,14 +88,19 @@ def main() -> None:
     if args.model:
         import litserve as ls
 
+        devices = _parse_gpu_arg(args.gpu)
         registry = _get_registry()
         name = DetectorName(args.model)
         api_cls = registry[name]
         api = api_cls()
+        # Apply detector-specific knobs after instantiation so the LitServe
+        # setup() call (in worker subprocesses) sees the right value.
+        if args.prompt_chunk_size is not None and name is DetectorName.GROUNDING_DINO:
+            api.prompt_chunk_size = args.prompt_chunk_size
         server = ls.LitServer(
             api,
             accelerator="gpu",
-            devices=[args.gpu],
+            devices=devices,
             max_batch_size=args.max_batch_size,
             batch_timeout=args.batch_timeout,
         )

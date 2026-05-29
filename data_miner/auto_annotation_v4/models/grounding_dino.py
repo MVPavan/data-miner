@@ -1,20 +1,19 @@
 """Pure inference model for GroundingDINO zero-shot object detection.
 
-Wraps ``IDEA-Research/grounding-dino-base`` from HuggingFace transformers.
-No LitServe dependency — the LitAPI wrapper in model_servers/ calls these
-methods.
+Wraps ``IDEA-Research/grounding-dino-base`` via ``GDINOBatchPredictor`` from
+``gdino_batch.py``. No LitServe dependency — the LitAPI wrapper in
+model_servers/ calls these methods.
 
 GroundingDINO degrades when multiple classes are combined in a single
-forward pass, so this model loops per-prompt internally and concatenates
-the results. Each prompt gets a trailing ``.`` appended (required by the
-post-process tokenizer logic).
+forward pass, so the batch predictor keeps per-prompt isolation but stacks
+all N prompts (and optionally B images) into a single GPU call by expanding
+the image tensor to (B*N, 3, H, W) and tokenising all prompts together.
 
 Quirks:
-  - The processor's ``post_process_grounded_object_detection`` requires the
-    ``input_ids`` from each prompt's encoding to map detected sub-strings
-    back to text labels.
   - ``text_threshold=0.2`` is hardcoded (matching v3 behaviour); the main
     ``threshold`` controls the box confidence cutoff.
+  - The batch predictor returns per-prompt result dicts; boxes already live
+    in pixel space on CPU, so postprocess only normalises and relabels.
 """
 
 from __future__ import annotations
@@ -30,50 +29,44 @@ from .base import BaseDetectorModel, normalize_box
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL_ID = "IDEA-Research/grounding-dino-base"
+_DEFAULT_THRESHOLD = 0.25
+_TEXT_THRESHOLD = 0.2
 
 
 class GDINOModel(BaseDetectorModel):
-    """GroundingDINO detector — per-prompt loop, concatenated results.
+    """GroundingDINO detector — batched N-prompt forward via GDINOBatchPredictor.
 
     Attributes (populated by ``load``):
-        processor: HuggingFace ``AutoProcessor`` for image/text pre-processing.
-        model: ``AutoModelForZeroShotObjectDetection`` on the target device.
+        predictor: :class:`GDINOBatchPredictor` instance.
         device: Torch device string (e.g. ``"cuda:0"``).
-        dtype: Torch dtype for inference.
     """
 
     def load(self, device: str, model_id: str = _DEFAULT_MODEL_ID,
              **options: Any) -> None:
-        """Load GroundingDINO processor and model onto *device*.
+        """Load GroundingDINO batch predictor onto *device*.
 
         Args:
             device: Torch device string (``"cuda:0"``, ``"cpu"``, etc.).
             model_id: HuggingFace model identifier.
-            **options: Unused — reserved for forward-compat.
+            **options: Forwarded from servers.yaml. Recognised keys:
+                ``prompt_chunk_size`` -- per-image prompt fan-out chunk size
+                (default 4; see ``gdino_batch.GDINOBatchPredictor``).
         """
-        import torch
-        from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
+        from .gdino_batch import GDINOBatchPredictor
 
         self.device = device
-        self.dtype = torch.bfloat16 if "cuda" in str(device) else torch.float32
-
-        logger.info("Loading GroundingDINO processor %s", model_id)
-        self.processor = AutoProcessor.from_pretrained(model_id)
-
-        logger.info("Loading GroundingDINO model onto %s", device)
-        self.model = (
-            AutoModelForZeroShotObjectDetection.from_pretrained(model_id)
-            .to(device)
-            .eval()
+        chunk_size = int(options.get("prompt_chunk_size", 4))
+        logger.info(
+            "Loading GDINOBatchPredictor (%s) onto %s prompt_chunk_size=%d",
+            model_id, device, chunk_size,
+        )
+        self.predictor = GDINOBatchPredictor(
+            model_id=model_id, device=device, prompt_chunk_size=chunk_size,
         )
 
     def prepare(self, image: Image.Image, prompts: list[str],
                 threshold: float | None = None) -> PreparedInput:
-        """Build per-prompt processor inputs.
-
-        Each prompt is suffixed with `` .`` (required by GDINO post-process)
-        and individually encoded through the processor. The per-prompt
-        ``input_ids`` are preserved for post-processing.
+        """Pass-through preprocessing — the batch predictor handles encoding.
 
         Args:
             image: RGB PIL image.
@@ -81,93 +74,123 @@ class GDINOModel(BaseDetectorModel):
             threshold: Optional box-confidence threshold override.
 
         Returns:
-            ``PreparedInput`` with ``processor_inputs`` as a list of per-prompt
-            dicts containing ``prompt``, ``inputs``, and ``text``.
+            ``PreparedInput`` carrying the image and prompt list.
         """
-        per_prompt = []
-        for prompt in prompts:
-            text = f"{prompt.strip()} ."
-            inputs = self.processor(images=image, text=text, return_tensors="pt")
-            per_prompt.append({"prompt": prompt, "inputs": inputs, "text": text})
         w, h = image.size
         return PreparedInput(
             image=image,
-            processor_inputs=per_prompt,
+            processor_inputs={"image": image},
             image_size=(w, h),
             prompts=list(prompts),
             threshold=threshold,
         )
 
     def infer(self, prepared: PreparedInput) -> RawPrediction:
-        """Run one forward pass per prompt and gather raw outputs.
-
-        Each prompt's inputs are moved to the model device and run through
-        the model independently. The raw ``outputs`` and ``input_ids`` are
-        preserved for ``postprocess``.
+        """Run a single-image N-prompt batched forward pass.
 
         Args:
             prepared: Result of ``prepare()``.
 
         Returns:
-            ``RawPrediction`` with per-prompt outputs list.
+            ``RawPrediction`` whose ``outputs`` is the per-prompt list from
+            :meth:`GDINOBatchPredictor.predict`.
         """
-        import torch
-
-        per_prompt_outputs = []
-        for entry in prepared.processor_inputs:
-            moved = {
-                k: v.to(self.device) if torch.is_tensor(v) else v
-                for k, v in entry["inputs"].items()
-            }
-            with torch.no_grad():
-                outputs = self.model(**moved)
-            per_prompt_outputs.append({
-                "prompt": entry["prompt"],
-                "outputs": outputs,
-                "input_ids": moved["input_ids"],
-            })
+        threshold = (
+            prepared.threshold if prepared.threshold is not None else _DEFAULT_THRESHOLD
+        )
+        per_prompt_results = self.predictor.predict(
+            prepared.image,
+            prepared.prompts,
+            threshold=float(threshold),
+            text_threshold=_TEXT_THRESHOLD,
+        )
         return RawPrediction(
-            outputs=per_prompt_outputs,
+            outputs=per_prompt_results,
             inputs=None,
             image_size=prepared.image_size,
             prompts=prepared.prompts,
             threshold=prepared.threshold,
         )
 
-    def postprocess(self, raw: RawPrediction) -> DetectorResponse:
-        """Post-process per-prompt outputs into normalized boxes/scores/labels.
+    def infer_batch(self, prepareds: list[PreparedInput]) -> list[RawPrediction]:
+        """Run a multi-image N-prompt batched forward pass.
 
-        Uses the processor's ``post_process_grounded_object_detection`` with
-        ``text_threshold=0.2``. Boxes are normalized to [0, 1] range. Labels
-        echo back the original prompt string for uniform client-side matching.
+        All images in the batch must share the same prompt list (the
+        pipeline case — one set of classes per job). When prompts diverge
+        across items, falls back to per-item :meth:`infer`.
 
         Args:
-            raw: Result of ``infer()``.
+            prepareds: Batch of prepared inputs (same prompts preferred).
 
         Returns:
-            ``DetectorResponse`` with concatenated detections across all prompts.
+            List of ``RawPrediction`` in the same order as *prepareds*.
         """
-        w, h = raw.image_size
-        threshold = raw.threshold if raw.threshold is not None else 0.25
+        if not prepareds:
+            return []
 
+        first_prompts = tuple(prepareds[0].prompts)
+        first_threshold = prepareds[0].threshold
+        homogeneous = all(
+            tuple(p.prompts) == first_prompts and p.threshold == first_threshold
+            for p in prepareds
+        )
+        if not homogeneous:
+            return [self.infer(p) for p in prepareds]
+
+        threshold = (
+            first_threshold if first_threshold is not None else _DEFAULT_THRESHOLD
+        )
+        images = [p.image for p in prepareds]
+        per_image = self.predictor.predict_images(
+            images,
+            list(first_prompts),
+            threshold=float(threshold),
+            text_threshold=_TEXT_THRESHOLD,
+        )
+        raws: list[RawPrediction] = []
+        for p, per_prompt_results in zip(prepareds, per_image):
+            raws.append(RawPrediction(
+                outputs=per_prompt_results,
+                inputs=None,
+                image_size=p.image_size,
+                prompts=p.prompts,
+                threshold=p.threshold,
+            ))
+        return raws
+
+    def postprocess(self, raw: RawPrediction) -> DetectorResponse:
+        """Normalise per-prompt pixel boxes to [0, 1] and relabel to prompts.
+
+        The batch predictor returns a list of dicts (one per prompt) with
+        ``boxes`` / ``scores`` tensors already on CPU. We normalise the
+        pixel boxes and echo back the original prompt string for each box.
+
+        Args:
+            raw: Result of ``infer()`` or one element of ``infer_batch()``.
+
+        Returns:
+            ``DetectorResponse`` with concatenated detections across prompts.
+        """
+        import torch
+
+        w, h = raw.image_size
         all_boxes: list[list[float]] = []
         all_scores: list[float] = []
         all_labels: list[str] = []
 
         for entry in raw.outputs:
             prompt = entry["prompt"]
-            post = self.processor.post_process_grounded_object_detection(
-                entry["outputs"],
-                entry["input_ids"],
-                threshold=threshold,
-                text_threshold=0.2,
-                target_sizes=[(h, w)],
-            )[0]
-            raw_boxes = post["boxes"].cpu().tolist()
-            scores = post["scores"].cpu().tolist()
-            all_boxes.extend(normalize_box(b, w, h) for b in raw_boxes)
-            all_scores.extend(float(s) for s in scores)
-            all_labels.extend([prompt] * len(raw_boxes))
+            boxes = entry["boxes"]
+            scores = entry["scores"]
+            boxes_list = (
+                boxes.cpu().tolist() if torch.is_tensor(boxes) else list(boxes)
+            )
+            scores_list = (
+                scores.cpu().tolist() if torch.is_tensor(scores) else list(scores)
+            )
+            all_boxes.extend(normalize_box(b, w, h) for b in boxes_list)
+            all_scores.extend(float(s) for s in scores_list)
+            all_labels.extend([prompt] * len(boxes_list))
 
         return DetectorResponse(
             boxes=all_boxes, scores=all_scores, labels=all_labels

@@ -23,7 +23,6 @@ from pathlib import Path
 
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
-import numpy as np
 import torch
 from PIL import Image
 
@@ -36,8 +35,14 @@ SAMPLES = REPO / "output" / "sample" / "fl_pj_sample"
 CLASSES_3 = ["person", "forklift", "pallet jack"]
 CLASSES_1 = ["person"]
 CLASSES_8 = [
-    "person", "forklift", "pallet jack", "car",
-    "truck", "bicycle", "dog", "cat",
+    "person",
+    "forklift",
+    "pallet jack",
+    "car",
+    "truck",
+    "bicycle",
+    "dog",
+    "cat",
 ]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 THRESHOLD = 0.25
@@ -63,10 +68,12 @@ def load_images(max_images: int | None = None) -> list[tuple[str, Image.Image]]:
 
 _PREDICTOR = None
 
+
 def _build_predictor():
     global _PREDICTOR
     if _PREDICTOR is None:
         from data_miner.auto_annotation_v3.gdino_batch import GDINOBatchPredictor
+
         _PREDICTOR = GDINOBatchPredictor(device=DEVICE)
     return _PREDICTOR
 
@@ -87,7 +94,9 @@ def _compare_results(
     """
     ok = True
     if len(seq_results) != len(bat_results):
-        print(f"  FAIL [{label}]: result count mismatch: seq={len(seq_results)} bat={len(bat_results)}")
+        print(
+            f"  FAIL [{label}]: result count mismatch: seq={len(seq_results)} bat={len(bat_results)}"
+        )
         return False
 
     for i, (sr, br) in enumerate(zip(seq_results, bat_results)):
@@ -95,7 +104,9 @@ def _compare_results(
         s_prompt = sr.get("prompt", f"prompt_{i}")
         b_prompt = br.get("prompt", f"prompt_{i}")
         if s_prompt != b_prompt:
-            print(f"  FAIL [{label}]: prompt mismatch at idx {i}: seq='{s_prompt}' bat='{b_prompt}'")
+            print(
+                f"  FAIL [{label}]: prompt mismatch at idx {i}: seq='{s_prompt}' bat='{b_prompt}'"
+            )
             ok = False
             continue
 
@@ -110,7 +121,9 @@ def _compare_results(
 
         # STRICT: any detection count mismatch is a failure
         if s_n != b_n:
-            print(f"  FAIL [{label}/{prompt}]: detection count mismatch: seq={s_n} bat={b_n}")
+            print(
+                f"  FAIL [{label}/{prompt}]: detection count mismatch: seq={s_n} bat={b_n}"
+            )
             ok = False
             continue
 
@@ -128,10 +141,14 @@ def _compare_results(
         box_diff = (s_bx.float() - b_bx.float()).abs().max().item()
 
         if score_diff > score_atol:
-            print(f"  FAIL [{label}/{prompt}]: score diff={score_diff:.4f} > atol={score_atol}")
+            print(
+                f"  FAIL [{label}/{prompt}]: score diff={score_diff:.4f} > atol={score_atol}"
+            )
             ok = False
         if box_diff > box_atol:
-            print(f"  FAIL [{label}/{prompt}]: box diff={box_diff:.2f}px > atol={box_atol}")
+            print(
+                f"  FAIL [{label}/{prompt}]: box diff={box_diff:.2f}px > atol={box_atol}"
+            )
             ok = False
 
     return ok
@@ -140,6 +157,7 @@ def _compare_results(
 # ===================================================================
 # Test 1: Batched vs Sequential parity
 # ===================================================================
+
 
 def test_1_batched_vs_sequential_parity():
     """Batched predict() must produce same results as predict_sequential()."""
@@ -162,12 +180,22 @@ def test_1_batched_vs_sequential_parity():
         label = f"img={name}"
         if _compare_results(seq_results, bat_results, label):
             passed += 1
-            print(f"  OK [{label}]: {sum(len(r['scores']) if not torch.is_tensor(r['scores']) else r['scores'].shape[0] for r in seq_results)} detections match")
+            print(
+                f"  OK [{label}]: {sum(len(r['scores']) if not torch.is_tensor(r['scores']) else r['scores'].shape[0] for r in seq_results)} detections match"
+            )
         else:
             # Print details for debugging
             for i, (sr, br) in enumerate(zip(seq_results, bat_results)):
-                s_n = len(sr["scores"]) if not torch.is_tensor(sr["scores"]) else sr["scores"].shape[0]
-                b_n = len(br["scores"]) if not torch.is_tensor(br["scores"]) else br["scores"].shape[0]
+                s_n = (
+                    len(sr["scores"])
+                    if not torch.is_tensor(sr["scores"])
+                    else sr["scores"].shape[0]
+                )
+                b_n = (
+                    len(br["scores"])
+                    if not torch.is_tensor(br["scores"])
+                    else br["scores"].shape[0]
+                )
                 print(f"    prompt={sr['prompt']}: seq={s_n} bat={b_n} detections")
 
     print(f"\n  Result: {passed}/{total} images passed")
@@ -177,6 +205,7 @@ def test_1_batched_vs_sequential_parity():
 # ===================================================================
 # Test 2: Single prompt regression (N=1)
 # ===================================================================
+
 
 def test_2_single_prompt():
     """N=1 should work identically to sequential with one prompt."""
@@ -197,7 +226,11 @@ def test_2_single_prompt():
 
         total += 1
         if _compare_results(seq_results, bat_results, f"img={name}"):
-            s_n = len(seq_results[0]["scores"]) if not torch.is_tensor(seq_results[0]["scores"]) else seq_results[0]["scores"].shape[0]
+            s_n = (
+                len(seq_results[0]["scores"])
+                if not torch.is_tensor(seq_results[0]["scores"])
+                else seq_results[0]["scores"].shape[0]
+            )
             print(f"  OK [img={name}]: {s_n} detections match")
             passed += 1
 
@@ -208,6 +241,7 @@ def test_2_single_prompt():
 # ===================================================================
 # Test 3: Variable prompt counts
 # ===================================================================
+
 
 def test_3_variable_prompt_counts():
     """Test with 1, 3, and 8 prompts."""
@@ -228,7 +262,9 @@ def test_3_variable_prompt_counts():
 
         if _compare_results(seq_results, bat_results, f"N={n}"):
             total_det = sum(
-                len(r["scores"]) if not torch.is_tensor(r["scores"]) else r["scores"].shape[0]
+                len(r["scores"])
+                if not torch.is_tensor(r["scores"])
+                else r["scores"].shape[0]
                 for r in bat_results
             )
             print(f"  OK [N={n}]: {total_det} total detections match")
@@ -241,6 +277,7 @@ def test_3_variable_prompt_counts():
 # ===================================================================
 # Test 4: Cross-image independence
 # ===================================================================
+
 
 def test_4_cross_image_independence():
     """predict_images() must return identical results for image A regardless
@@ -291,6 +328,7 @@ def test_4_cross_image_independence():
 # Test 5: Zero-detection / blank image
 # ===================================================================
 
+
 def test_5_blank_image():
     """Blank image should produce few/zero detections without crashing."""
     print("\n=== Test 5: Blank image (zero detections) ===")
@@ -317,14 +355,19 @@ def test_5_blank_image():
 
     # Real + blank in predict_images (independent processing)
     results_mixed = predictor.predict_images(
-        [real_image, blank], CLASSES_3, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD
+        [real_image, blank],
+        CLASSES_3,
+        threshold=THRESHOLD,
+        text_threshold=TEXT_THRESHOLD,
     )
 
     # Real image results must match solo predict
     results_real_solo = predictor.predict(
         real_image, CLASSES_3, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD
     )
-    ok2 = _compare_results(results_real_solo, results_mixed[0], "real_solo vs real_in_list")
+    ok2 = _compare_results(
+        results_real_solo, results_mixed[0], "real_solo vs real_in_list"
+    )
 
     total_blank_in_list = sum(
         len(r["scores"]) if not torch.is_tensor(r["scores"]) else r["scores"].shape[0]
@@ -340,6 +383,7 @@ def test_5_blank_image():
 # ===================================================================
 # Test 6: Multi-image batch parity
 # ===================================================================
+
 
 def test_6_multi_image_parity():
     """predict_images([A,B,C]) must match individual predict() calls exactly."""
@@ -365,9 +409,13 @@ def test_6_multi_image_parity():
     passed = 0
     for i, (name, _) in enumerate(images_data):
         # Exact match expected since predict_images calls predict() per image
-        if _compare_results(individual[i], batch_results[i], f"img={name}", score_atol=0.0, box_atol=0.0):
+        if _compare_results(
+            individual[i], batch_results[i], f"img={name}", score_atol=0.0, box_atol=0.0
+        ):
             total_det = sum(
-                len(r["scores"]) if not torch.is_tensor(r["scores"]) else r["scores"].shape[0]
+                len(r["scores"])
+                if not torch.is_tensor(r["scores"])
+                else r["scores"].shape[0]
                 for r in individual[i]
             )
             print(f"  OK [img={name}]: {total_det} detections match (exact)")
@@ -380,6 +428,7 @@ def test_6_multi_image_parity():
 # ===================================================================
 # Test 7: Variable image sizes
 # ===================================================================
+
 
 def test_7_variable_image_sizes():
     """Different aspect ratio images in predict_images."""
@@ -412,9 +461,13 @@ def test_7_variable_image_sizes():
     passed = 0
     labels = ["landscape", "portrait", "square"]
     for i, label in enumerate(labels):
-        if _compare_results(individual[i], batch_results[i], label, score_atol=0.0, box_atol=0.0):
+        if _compare_results(
+            individual[i], batch_results[i], label, score_atol=0.0, box_atol=0.0
+        ):
             total_det = sum(
-                len(r["scores"]) if not torch.is_tensor(r["scores"]) else r["scores"].shape[0]
+                len(r["scores"])
+                if not torch.is_tensor(r["scores"])
+                else r["scores"].shape[0]
                 for r in individual[i]
             )
             print(f"  OK [{label} {sizes[i]}]: {total_det} detections match (exact)")
@@ -427,6 +480,7 @@ def test_7_variable_image_sizes():
 # ===================================================================
 # Test 8: Latency benchmark
 # ===================================================================
+
 
 def test_8_latency_benchmark():
     """Compare throughput: sequential (N passes) vs batched (1 pass) per image."""
@@ -449,7 +503,9 @@ def test_8_latency_benchmark():
 
         # Warmup
         for _ in range(warmup):
-            predictor.predict(images[0], prompts, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD)
+            predictor.predict(
+                images[0], prompts, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD
+            )
             sync()
 
         # Sequential
@@ -457,7 +513,9 @@ def test_8_latency_benchmark():
         t0 = time.perf_counter()
         for _ in range(trials):
             for img in images:
-                predictor.predict_sequential(img, prompts, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD)
+                predictor.predict_sequential(
+                    img, prompts, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD
+                )
             sync()
         seq_time = (time.perf_counter() - t0) / trials
         seq_per_image = seq_time / B
@@ -467,14 +525,20 @@ def test_8_latency_benchmark():
         t0 = time.perf_counter()
         for _ in range(trials):
             for img in images:
-                predictor.predict(img, prompts, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD)
+                predictor.predict(
+                    img, prompts, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD
+                )
             sync()
         bat_time = (time.perf_counter() - t0) / trials
         bat_per_image = bat_time / B
 
         speedup = seq_per_image / bat_per_image
-        print(f"  Sequential:  {seq_time*1000:7.1f} ms total, {seq_per_image*1000:7.1f} ms/image")
-        print(f"  Batched:     {bat_time*1000:7.1f} ms total, {bat_per_image*1000:7.1f} ms/image")
+        print(
+            f"  Sequential:  {seq_time * 1000:7.1f} ms total, {seq_per_image * 1000:7.1f} ms/image"
+        )
+        print(
+            f"  Batched:     {bat_time * 1000:7.1f} ms total, {bat_per_image * 1000:7.1f} ms/image"
+        )
         print(f"  Speedup:     {speedup:.2f}x")
 
         # Assert batched is actually faster (minimum 1.1x — anything less
@@ -490,6 +554,7 @@ def test_8_latency_benchmark():
 # Test 9: Memory stability
 # ===================================================================
 
+
 def test_9_memory_stability():
     """Run 10 iterations and check GPU memory doesn't grow significantly."""
     print("\n=== Test 9: Memory stability ===")
@@ -502,7 +567,9 @@ def test_9_memory_stability():
 
     # Warmup
     for _ in range(3):
-        predictor.predict(image, CLASSES_3, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD)
+        predictor.predict(
+            image, CLASSES_3, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD
+        )
     sync()
     gc.collect()
     torch.cuda.empty_cache()
@@ -510,7 +577,9 @@ def test_9_memory_stability():
     mem_start = torch.cuda.memory_allocated()
 
     for i in range(10):
-        predictor.predict(image, CLASSES_8, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD)
+        predictor.predict(
+            image, CLASSES_8, threshold=THRESHOLD, text_threshold=TEXT_THRESHOLD
+        )
         sync()
 
     gc.collect()
@@ -530,6 +599,7 @@ def test_9_memory_stability():
 # ===================================================================
 # Test 10a: Prompt-to-slot mapping validation
 # ===================================================================
+
 
 def test_10a_prompt_slot_mapping():
     """Verify that results[i] actually detects prompt[i], not some other prompt.
@@ -553,7 +623,9 @@ def test_10a_prompt_slot_mapping():
     for i, result in enumerate(results):
         # 1. Verify the prompt field echoes the input prompt at position i
         if result["prompt"] != prompts[i]:
-            print(f"  FAIL: result[{i}].prompt='{result['prompt']}' != prompts[{i}]='{prompts[i]}'")
+            print(
+                f"  FAIL: result[{i}].prompt='{result['prompt']}' != prompts[{i}]='{prompts[i]}'"
+            )
             ok = False
             continue
 
@@ -575,7 +647,9 @@ def test_10a_prompt_slot_mapping():
                 mismatches.append(label)
 
         if mismatches:
-            print(f"  FAIL [{prompts[i]}]: decoded labels don't contain prompt words: {mismatches[:3]}")
+            print(
+                f"  FAIL [{prompts[i]}]: decoded labels don't contain prompt words: {mismatches[:3]}"
+            )
             ok = False
         else:
             print(f"  OK [{prompts[i]}]: all {n} labels map correctly to prompt")
@@ -588,7 +662,9 @@ def test_10a_prompt_slot_mapping():
 
     for i, result in enumerate(shuffled_results):
         if result["prompt"] != shuffled[i]:
-            print(f"  FAIL (shuffle): result[{i}].prompt='{result['prompt']}' != shuffled[{i}]='{shuffled[i]}'")
+            print(
+                f"  FAIL (shuffle): result[{i}].prompt='{result['prompt']}' != shuffled[{i}]='{shuffled[i]}'"
+            )
             ok = False
 
     if ok:
@@ -601,6 +677,7 @@ def test_10a_prompt_slot_mapping():
 # ===================================================================
 # Test 10b: Tokenization padding (long & short prompts mixed)
 # ===================================================================
+
 
 def test_10b_tokenization_padding():
     """Verify correctness when prompts have very different tokenized lengths.
@@ -640,6 +717,7 @@ def test_10b_tokenization_padding():
 # Test 10: Empty prompts
 # ===================================================================
 
+
 def test_10_empty_prompts():
     """Empty prompts list should return empty results without crashing."""
     print("\n=== Test 10: Empty prompts ===")
@@ -661,6 +739,7 @@ def test_10_empty_prompts():
 # ===================================================================
 # Main
 # ===================================================================
+
 
 def main():
     tests = [
@@ -686,6 +765,7 @@ def main():
         except Exception as e:
             print(f"\n  EXCEPTION: {e}")
             import traceback
+
             traceback.print_exc()
             results.append((name, f"ERROR: {e}"))
 

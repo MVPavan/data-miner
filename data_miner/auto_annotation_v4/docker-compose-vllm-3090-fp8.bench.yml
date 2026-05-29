@@ -1,0 +1,19 @@
+# Bench override for docker-compose-vllm-3090-fp8.yml
+#
+# Publishes qwen35-validator-0's internal port 8000 to host ${BENCH_PORT:-8960}
+# so scripts_bench/bench_vllm_3090.py can hit a single replica directly
+# without bringing up nginx or the other validators.
+#
+# Usage:
+#   VALIDATOR_MAX_NUM_SEQS=32 VALIDATOR_KV_DTYPE=fp8_e4m3 BENCH_PORT=8960 \
+#     docker compose \
+#       -f docker-compose-vllm-3090-fp8.yml \
+#       -f docker-compose-vllm-3090-fp8.bench.yml \
+#       up -d qwen35-validator-0
+#
+# After benching, stop with:
+#   docker compose -f docker-compose-vllm-3090-fp8.yml down qwen35-validator-0
+services:
+  qwen35-validator-0:
+    ports:
+      - "${BENCH_PORT:-8960}:8000"

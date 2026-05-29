@@ -1,0 +1,97 @@
+# Review — <component> (<version>)
+
+> **Sources read for this review.** This list anchors the Codex critic's checks, so it must be honest. The full set of *possible* sources is below as a starting point — **before saving, prune any line you didn't actually open.** Replace `<component>` and `<version>` with real values, list the specific design docs you read by path, and drop any cross-cutting trace that didn't apply.
+>
+> - `docs/architecture-trace/at-claude/<version>/01-<component>.md`
+> - `docs/architecture-trace/at-codex/<version>/01-<component>.md` (drop if missing)
+> - `docs/architecture-trace/at-claude/<version>/02-data-flow-full.md` (drop if `<component>` not covered)
+> - `docs/architecture-trace/at-claude/<version>/02-dependency-matrix.md` (drop if `<component>` not covered)
+> - `docs/architecture-trace/at-claude/<version>/02-contracts-and-protocols.md` (drop if `<component>` exposes no shared contracts)
+> - `docs/architecture-trace/at-claude/<version>/02-temporal-workflows.md` (drop if `<component>` has no Temporal usage)
+> - `docs/design/v_2_7/core/<list-actual-files-here>` (replace with concrete paths)
+> - `src/bodha/<component>/` (or the off-tree path for components like `eval-harness`)
+> - Prior `docs/reviews/<version>/<component>/discussions.md` (drop if not yet created)
+
+---
+
+## 1. What it is
+
+One paragraph, plain English. What is this component, what role does it play in the Bodha system, and what would break if you removed it?
+
+## 2. Where it lives
+
+- Source: `src/bodha/<component>/` — list key files and their roles.
+- Public surface (what other components import from here).
+- Tests: where the test files live, what they cover at a high level.
+
+## 3. Why it exists / design intent
+
+Why this component exists as a standalone thing (vs. being folded into a sibling). Pull the rationale from design docs and the arch-trace. Cite `docs/design/v_2_7/core/<file>:<section>` for design intent.
+
+## 4. How it works (internal mechanics)
+
+The deepest section. Walk through the component's behavior step by step:
+
+- Lifecycle (construction, initialization, shutdown).
+- Key flows — for each flow, a numbered walkthrough with `file:line` citations.
+- State transitions (if the component holds state).
+- Concurrency model (sync, async, threads, Temporal activities).
+- Data shapes that flow through.
+
+When something is non-obvious, cite `[name](src/bodha/<component>/file.py#L42)`.
+
+## 5. Public contracts
+
+- Pydantic models exposed to other components (with field-level notes for the non-trivial ones).
+- Protocols / interfaces.
+- Temporal activities and workflows (signature + semantics).
+- Invariants the contracts enforce (link to `.claude/project/invariants.md` numbers if applicable).
+
+## 6. Dependencies (in and out)
+
+- **Inbound** (who consumes this component): list with links to those components' reviews. If a dependent component hasn't been reviewed yet: `[other-component — TODO](../other-component/review.md)`.
+- **Outbound** (what this component depends on): same.
+- External dependencies (libraries, services).
+
+Pull this from `docs/architecture-trace/at-claude/<version>/02-dependency-matrix.md`.
+
+## 7. Configuration & runtime knobs
+
+- Pydantic-settings keys (with defaults).
+- Environment variables.
+- YAML config sections.
+- Feature flags.
+
+## 8. Failure modes & guarantees
+
+- Error handling pattern.
+- Retry / timeout policy.
+- Degradation behavior (e.g. "Redis failure degrades quality, never blocks response" — invariant 34).
+- What this component guarantees to its callers, and what it explicitly does not.
+
+## 9. What docs say
+
+Direct quotes / paraphrases from the design docs and both arch-traces. Highlight the parts that informed sections 3–8.
+
+**Disagreements between Claude's and Codex's arch-traces** (if any): list them side by side. These are signals worth resolving.
+
+## 10. Open questions / risks
+
+- Anything ambiguous in the design or the code.
+- Suspected drift between design and implementation.
+- Performance / scalability concerns.
+- Areas the Codex critic flagged as gaps.
+
+## 11. Codex critique log
+
+> _Filled by the skill after `/codex:rescue --wait --fresh` runs against this review. If Codex was skipped (capacity error), note the reason here._
+
+For each Codex finding:
+
+- **Finding**: <verbatim or summary>
+- **Disposition**: accepted / dismissed
+- **Action**: <how the review was updated, or why it wasn't>
+
+---
+
+_Last updated: <YYYY-MM-DD> · Reviewer: Claude · Critic: Codex (`/codex:rescue`)_

@@ -1,0 +1,78 @@
+# Datatang-specific filter + evaluate overrides (sam3_dart only).
+#
+# Applied on top of default.yaml + class_config.yaml when re-running the
+# datatang_val_detect job (11,087 images, detect already done Apr 17-18):
+#
+#   python -u -m data_miner.auto_annotation_v4 \
+#       --config data_miner/auto_annotation_v4/configs/overrides/datatang_rules.yaml \
+#       runtime.image_dir=/media/data_2/datasets/datasets_pavan/DataTang_val \
+#       runtime.job_id=datatang_val_detect \
+#       'runtime.stages=[filter,evaluate,finalize]' \
+#       'runtime.force_stages=[filter]' ...
+#
+# Differences from loco/flpj:
+#   - No head_person_coexistence shortcut (datatang is surveillance, many
+#     ambiguous head-in-person co-occurrences; let the VLM decide).
+#   - Class-agnostic NMS disabled — datatang has almost zero forklift/
+#     palletjack, so there's no industrial confusion tier to suppress;
+#     enabling it would just hide legitimate adjacent pedestrians in
+#     crowd scenes.
+#   - Evaluate thresholds kept at default 0.3/0.5 (looser than LOCO's
+#     0.4/0.7) — no hard industrial disambiguation to adjudicate.
+
+filtering:
+  # Single-detector run: only sam3_dart proposals considered. grounding_dino
+  # candidates (437k of them) are dropped at the source_model filter step.
+  allowed_source_models:
+    - sam3_dart
+
+  # Per-head containment check. Orphan-head detections on surveillance
+  # frames are a systemic sam3_dart failure (same as LOCO) — drop heads
+  # whose max containment in any person bbox is below 0.3. Bimodal gap
+  # between legitimate contained heads (>= 0.9) and orphan FPs (< 0.1).
+  head_person_containment_min: 0.3
+
+  # Containment-based within-class dedup addition. IoU >= 0.7 misses
+  # nested same-class pairs (small bbox fully inside larger one: IoU ~0.45,
+  # containment ~0.99). Post-hoc cleanup on fl_pj dropped ~22k duplicates
+  # (-16%) from this alone; expect similar pattern on datatang heads.
+  iou_dedup:
+    threshold: 0.7
+    same_class_containment_min: 0.8
+
+  # Class-agnostic NMS disabled — no strong tier-3 industrial confusion
+  # on datatang, so NMS would mostly suppress legitimate adjacent
+  # pedestrians / vehicles rather than genuine confusion pairs.
+  class_agnostic_nms:
+    enabled: false
+
+  # Per-class min_area overrides. Same small-class rescue as LOCO/fl_pj:
+  # global 0.0005 (≈32x32 px on 1920x1080) is too aggressive for heads
+  # and hand-held objects in surveillance footage.
+  per_class_min_area:
+    head:      0          # no floor; distant surveillance heads are real targets
+    cellphone: 0.00005    # ≈10x10 px on 1920x1080
+    wallet:    0.00005
+    bird:      0.0001
+    cat:       0.0001
+    dog:       0.0001
+    handbag:   0.0002     # ≈20x20 px
+
+# Evaluate thresholds: default 0.3/0.5. Datatang has wide class variety,
+# no focused industrial-pair disambiguation, so a looser accept floor is
+# fine for typical pedestrian/vehicle/bag decisions.
+evaluate:
+  reject_below: 0.3
+  accept_above: 0.5
+  bbox_reject_below: 0.3
+  bbox_accept_above: 0.5
+  vlm_image:
+    format: JPEG
+    max_size: 1280
+    quality: 90
+
+# Refine stage intentionally not run — empty classes dict makes evaluate's
+# _resolve_next_stage route straight to finalize instead of enqueueing
+# refine work no worker would claim (same fix as loco/flpj).
+refine_rules:
+  classes: {}

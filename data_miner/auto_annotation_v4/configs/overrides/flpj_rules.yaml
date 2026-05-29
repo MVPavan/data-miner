@@ -1,0 +1,81 @@
+# fl_pj-specific filter + evaluate overrides.
+#
+# Applied on top of default.yaml + class_config.yaml when running the
+# fl_pj_frames_dedup_v1_cls_0_85 job (37,923 dedup'd video frames):
+#
+#   python -u -m data_miner.auto_annotation_v4 \
+#       --config data_miner/auto_annotation_v4/configs/overrides/flpj_rules.yaml \
+#       runtime.image_dir=/media/data_2/datasets/datasets_pavan/fl_pj/frames_dedup_v1_cls_0.85 \
+#       runtime.job_id=fl_pj_frames_dedup_v1_cls_0_85 \
+#       'runtime.stages=[filter,evaluate,finalize]' ...
+#
+# Differences from loco_rules.yaml (most rules identical — fl_pj and LOCO
+# both run 23-class sam3_dart-only with the same confusion-pair set):
+#   - No head_person_coexistence: false (fl_pj is video frames with fewer
+#     clean head/person co-occurrences than LOCO warehouse stills; keep
+#     head-person pairs going to VLM for verification).
+#   - Evaluate thresholds match LOCO (strict: 0.4/0.7).
+
+auto_accept:
+  head_person_coexistence: false
+
+filtering:
+  # Single-detector run: only sam3_dart proposals (detect uses v4 pipeline,
+  # not the standalone path).
+  allowed_source_models:
+    - sam3_dart
+
+  # Per-head containment check — same reasoning as LOCO. 0.3 threshold is
+  # in the bimodal gap between legitimate contained heads (>= 0.9) and
+  # orphan FPs (< 0.1). Persons still shield their heads because
+  # head_no_person runs BEFORE the score floor in the filter plan.
+  head_person_containment_min: 0.3
+
+  # Strict class-agnostic NMS after dedup + cross_class. Same industrial
+  # confusion pairs as LOCO (forklift <-> palletjack <-> shopping_cart
+  # <-> truck, suitcase <-> backpack, etc.).
+  class_agnostic_nms:
+    enabled: true
+    threshold: 0.7
+    respect_overlap_exempt: true
+    suppress_confusion_pairs: true
+
+  # Containment-based within-class dedup addition. Fixes the "two heads
+  # nested in each other" problem visible on fl_pj video frames (SAM3-DART
+  # fires both a wide head incl. hair and a narrow face head; IoU ~0.45
+  # so IoU-0.7 dedup kept both). On fl_pj this alone removed ~22k
+  # duplicate boxes (~16% of output) post-hoc; enabling here prevents the
+  # duplication at filter time for future runs.
+  iou_dedup:
+    threshold: 0.7
+    same_class_containment_min: 0.8
+
+  # Per-class min_area overrides. Same structure as LOCO — global 0.0005
+  # culls too many legitimate small objects from video frames.
+  per_class_min_area:
+    head:      0          # no floor; distant heads are real targets
+    cellphone: 0.00005    # ~10x10 px
+    wallet:    0.00005
+    bird:      0.0001
+    cat:       0.0001
+    dog:       0.0001
+    handbag:   0.0002     # ~20x20 px
+
+# Evaluate-stage tuning — strict 0.4/0.7 on both axes. Same as LOCO;
+# industrial confusion pairs need high VLM confidence before auto-accept.
+evaluate:
+  reject_below: 0.4
+  accept_above: 0.7
+  bbox_reject_below: 0.4
+  bbox_accept_above: 0.7
+  vlm_image:
+    format: JPEG
+    max_size: 1280
+    quality: 90
+
+# Refine stage is intentionally not run in this job. Empty classes dict
+# makes evaluate's _resolve_next_stage route directly to finalize instead
+# of forwarding to refine — which would enqueue work no worker is running
+# to claim, deadlocking the pipeline (same fix as loco_rules.yaml).
+refine_rules:
+  classes: {}

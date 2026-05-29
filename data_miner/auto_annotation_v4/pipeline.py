@@ -15,7 +15,8 @@ Key differences from v3:
 from __future__ import annotations
 
 import asyncio
-import logging
+import fcntl
+import os
 import signal
 import sys
 import urllib.request
@@ -27,9 +28,9 @@ from .configs.enums import DetectorName, Stage
 from .configs.loader import compute_config_hash, load_config
 from .configs.settings import AutoAnnotationV4Config
 from .output import OutputWriter
-from .workers.submitter import JobSubmitter
-from .workers.monitor import PipelineMonitor
 from .utils import configure_logging, get_logger
+from .workers.monitor import PipelineMonitor
+from .workers.submitter import JobSubmitter
 
 logger = get_logger("pipeline")
 
@@ -67,9 +68,7 @@ class AutoAnnotationPipelineV4:
 
         # Prefer explicit job_id, then config.runtime.job_id, then autogen.
         self.job_id = (
-            job_id
-            or config.runtime.job_id
-            or f"job_{datetime.now():%Y%m%d_%H%M%S}"
+            job_id or config.runtime.job_id or f"job_{datetime.now():%Y%m%d_%H%M%S}"
         )
 
         # Setup output directory
@@ -77,9 +76,7 @@ class AutoAnnotationPipelineV4:
         self.job_dir.mkdir(parents=True, exist_ok=True)
 
         # Save frozen config as JSON (config.yaml extension kept for readability)
-        (self.job_dir / "config.yaml").write_text(
-            config.model_dump_json(indent=2)
-        )
+        (self.job_dir / "config.yaml").write_text(config.model_dump_json(indent=2))
 
         # ONE database for everything: checkpoints, work queue, proposals, metadata.
         db_path = self.job_dir / config.database.filename
@@ -94,6 +91,7 @@ class AutoAnnotationPipelineV4:
             self.db,
             lock_ttl=config.database.lock_ttl,
             max_retries=config.database.max_retries,
+            stages=list(config.runtime.stages),
         )
 
         self._workers: list = []
@@ -192,7 +190,7 @@ class AutoAnnotationPipelineV4:
         else:
             msg = f"VLM not reachable at {vlm_health}"
             logger.error("  x %s", msg)
-            failures.append(msg)
+            # failures.append(msg)
 
         if failures:
             summary = "\n  - ".join(failures)
@@ -221,8 +219,9 @@ class AutoAnnotationPipelineV4:
         from .stages.detect import DetectMergeWorker
         from .stages.detect_model import DetectModelWorker
         from .stages.evaluate import EvaluateWorker
-        from .stages.refine import RefineWorker
+        from .stages.filter import FilterWorker
         from .stages.finalize import FinalizeWorker
+        from .stages.refine import RefineWorker
 
         active_stages = set(self.config.runtime.stages)
         workers = []
@@ -265,6 +264,17 @@ class AutoAnnotationPipelineV4:
                     db=self.db,
                     output_writer=self.output_writer,
                     worker_id=f"detect:merge-{i}",
+                    job_id=self.job_id,
+                )
+                workers.append(w)
+
+        # ── Filter ────────────────────────────────────────────────────
+        if Stage.FILTER in active_stages:
+            for i in range(self.config.workers.filter_count):
+                w = FilterWorker(
+                    config=self.config,
+                    db=self.db,
+                    worker_id=f"filter-{i}",
                     job_id=self.job_id,
                 )
                 workers.append(w)
@@ -383,6 +393,32 @@ class AutoAnnotationPipelineV4:
         image_dir:
             Directory to scan for image files.
         """
+        lock_path = self.job_dir / "pipeline.lock"
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            # LOCK_NB: fail fast on contention rather than silently overwriting
+            # checkpoints (CheckpointDB uses INSERT OR REPLACE).
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(lock_fd)
+            raise RuntimeError(
+                f"Another pipeline is already running on job_dir={self.job_dir}.\n"
+                f"If this is stale (previous process crashed), delete the lock "
+                f"file: {lock_path}"
+            )
+        os.ftruncate(lock_fd, 0)
+        os.write(lock_fd, f"{os.getpid()}\n".encode())
+        try:
+            await self._run_locked(image_paths=image_paths, image_dir=image_dir)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+
+    async def _run_locked(
+        self,
+        image_paths: list[str] | None = None,
+        image_dir: str | None = None,
+    ) -> None:
         # Preflight: verify all servers are reachable before committing.
         self.preflight()
 
@@ -393,6 +429,10 @@ class AutoAnnotationPipelineV4:
             # Compute config + prompt hash for this run.
             config_hash = compute_config_hash(self.config, self.config.prompts_dir)
 
+            # Check config continuity (warns if changed, optionally aborts).
+            # MUST run before save_job_info so it sees the PREVIOUS run's hash.
+            await self._check_config_continuity()
+
             # Save job-level metadata.
             await self.db.save_job_info(
                 job_id=self.job_id,
@@ -400,9 +440,6 @@ class AutoAnnotationPipelineV4:
                 config_hash=config_hash,
                 prompt_version=config_hash,  # prompt version is embedded in the hash
             )
-
-            # Check config continuity (warns if changed, optionally aborts).
-            await self._check_config_continuity()
 
             # Resolve inputs: arg -> config.runtime fallback
             image_dir = image_dir or self.config.runtime.image_dir

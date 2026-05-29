@@ -1,0 +1,152 @@
+# ============================================================================
+# Qwen3.5-27B-FP8 Annotation Validator — 4× vLLM replicas (TP=2) + nginx LB
+# (THIS machine: 8× RTX 3090, sm_86 Ampere)
+#
+# Alternative to docker-compose-vllm-3090.yml (8× Int4 TP=1).
+#
+# Why this file exists:
+#   - FP8 accuracy is typically 1-2% better than GPTQ-Int4 on structured-output
+#     and reasoning tasks. For a validator that gates downstream steps, that
+#     can matter.
+#   - 27B FP8 weights (~27 GB) don't fit a single 24 GB 3090, so we use TP=2
+#     across pairs of GPUs. This halves the replica count to 4 and, because
+#     this box has NO NVLink, every layer pays a PCIe allreduce tax.
+#   - Expect ~2.5-3× lower aggregate throughput than the Int4 TP=1 variant.
+#     Run scripts_bench/bench_vllm_3090.py against BOTH configs and compare
+#     accuracy on your real prompts before committing to one.
+#
+# GPU pairings (same NUMA node on each pair to minimise cross-socket chatter):
+#   replica-0 → GPUs 0,1  (NUMA 0)
+#   replica-1 → GPUs 2,3  (NUMA 0)
+#   replica-2 → GPUs 4,5  (NUMA 1)
+#   replica-3 → GPUs 6,7  (NUMA 1)
+#
+# KV dtype: FP8 E4M3 (native on Ampere via emulation — doubles KV capacity).
+# FP8 weight compute is also emulated on sm_86 (dequant to FP16 for matmul);
+# the *storage* win is real, the per-op compute is FP16-equivalent speed.
+# ============================================================================
+
+x-vllm-service: &vllm-service
+  image: vllm/vllm-openai:latest
+  environment:
+    - HF_TOKEN=${HF_TOKEN:-}
+    - VLLM_WORKER_MULTIPROC_METHOD=spawn
+    - NVIDIA_DISABLE_REQUIRE=1
+    # Without NVLink, NCCL defaults can be suboptimal. PCIe Bar1/P2P helps
+    # on some kernels; leave unset to let NCCL auto-detect unless you see
+    # allreduce hangs.
+    # - NCCL_P2P_DISABLE=0
+    # - NCCL_IB_DISABLE=1
+  volumes:
+    - ${HF_HOME:-/media/data_2/all_cache/hf_home}:/root/.cache/huggingface
+  ipc: host
+  shm_size: "16gb"
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 900s   # TP=2 load is slower than TP=1
+
+x-vllm-command: &vllm-command
+  - --model
+  - ${VALIDATOR_MODEL:-Qwen/Qwen3.5-27B-FP8}
+  - --tensor-parallel-size
+  - "2"
+  - --max-model-len
+  - "${VALIDATOR_MAX_MODEL_LEN:-4096}"
+  - --gpu-memory-utilization
+  - "${VALIDATOR_GPU_MEM_UTIL:-0.90}"
+  - --max-num-seqs
+  - "${VALIDATOR_MAX_NUM_SEQS:-32}"
+  - --enable-chunked-prefill
+  - --max-num-batched-tokens
+  - "4096"
+  - --kv-cache-dtype
+  - ${VALIDATOR_KV_DTYPE:-fp8_e4m3}
+  - --reasoning-parser
+  - qwen3
+  - --enable-prefix-caching
+  - --mm-processor-cache-type
+  - shm
+  - --dtype
+  - ${VALIDATOR_DTYPE:-auto}
+  - --port
+  - "8000"
+  - --default-chat-template-kwargs
+  - '{"enable_thinking": false}'
+
+services:
+  qwen35-validator-0:
+    <<: *vllm-service
+    container_name: qwen35-validator-0
+    cpuset: "0-15,64-79"       # NUMA node 0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-1:
+    <<: *vllm-service
+    container_name: qwen35-validator-1
+    cpuset: "16-31,80-95"      # NUMA node 0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2', '3']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-2:
+    <<: *vllm-service
+    container_name: qwen35-validator-2
+    cpuset: "32-47,96-111"     # NUMA node 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['4', '5']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-validator-3:
+    <<: *vllm-service
+    container_name: qwen35-validator-3
+    cpuset: "48-63,112-127"    # NUMA node 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['6', '7']
+              capabilities: [gpu]
+    command: *vllm-command
+
+  qwen35-lb:
+    image: nginx:alpine
+    container_name: qwen35-lb
+    ports:
+      - "${VLLM_PORT:-8956}:80"
+    # Reuse nginx-vllm.conf (the 4-backend variant). Parent compose dir must
+    # contain it.
+    volumes:
+      - ./nginx-vllm.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      qwen35-validator-0: { condition: service_healthy }
+      qwen35-validator-1: { condition: service_healthy }
+      qwen35-validator-2: { condition: service_healthy }
+      qwen35-validator-3: { condition: service_healthy }
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

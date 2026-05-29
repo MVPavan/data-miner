@@ -1,0 +1,110 @@
+# docker-compose for the manual review system: LS + Postgres + ML backend.
+#
+# The ML backend is a pure protocol adapter: it talks HTTP to the SAM 3.1
+# LitServe server (port 3014, started separately on the GPU host) and reads
+# pipeline.db directly. No model weights live in the ml_backend container.
+#
+# LOCAL_FILES_SERVING_ENABLED + LOCAL_FILES_DOCUMENT_ROOT lets the build_tasks
+# default URL template (`/data/local-files/?d={path}`) serve image bytes
+# straight from the host filesystem mounted into the container. Override by
+# pointing image_url_template at S3/HTTPS instead and removing the volume.
+#
+# Bring up:
+#   docker compose -f manual_reviewer/docker-compose.review.yml up -d
+#
+# Stop:
+#   docker compose -f manual_reviewer/docker-compose.review.yml down
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${LS_PG_DB:-labelstudio}
+      POSTGRES_USER: ${LS_PG_USER:-labelstudio}
+      POSTGRES_PASSWORD: ${LS_PG_PASSWORD:-labelstudio}
+    volumes:
+      - ls_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LS_PG_USER:-labelstudio} -d ${LS_PG_DB:-labelstudio}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  label-studio:
+    # Pinned: the wire shape (smart-tool draft from_name discriminator,
+    # task list pagination, predictions[0] ordering) is sensitive to LS
+    # internals. Override LS_VERSION at compose-time after re-running the
+    # smoke test. Do not switch to ``latest`` without verifying that
+    # task_builder predictions still seed correctly and the export parser
+    # still classifies edits.
+    image: heartexlabs/label-studio:${LS_VERSION:-1.13.1}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Bound to localhost by default; override LS_BIND_HOST=0.0.0.0 only after
+      # rotating LS_PASSWORD / LS_PG_PASSWORD off the documented defaults.
+      - "${LS_BIND_HOST:-127.0.0.1}:${LS_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    environment:
+      DJANGO_DB: default
+      POSTGRE_NAME: ${LS_PG_DB:-labelstudio}
+      POSTGRE_USER: ${LS_PG_USER:-labelstudio}
+      POSTGRE_PASSWORD: ${LS_PG_PASSWORD:-labelstudio}
+      POSTGRE_HOST: postgres
+      POSTGRE_PORT: 5432
+      LABEL_STUDIO_USERNAME: ${LS_USERNAME:-admin@example.com}
+      # IMPORTANT: deployments MUST override LS_PASSWORD (and LS_PG_PASSWORD)
+      # before exposing the port off-host. The default below is for local
+      # bring-up only.
+      LABEL_STUDIO_PASSWORD: ${LS_PASSWORD:-changeme}
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /label-studio/data/images
+    volumes:
+      - ls_data:/label-studio/data
+      # Mount your aa_v4 image_dir at /label-studio/data/images so URLs of
+      # the form `/data/local-files/?d=<absolute_path>` resolve. Override
+      # IMAGE_HOST_DIR to point at your job's image_dir.
+      - ${IMAGE_HOST_DIR:-./images}:/label-studio/data/images:ro
+
+  ml_backend:
+    build:
+      context: ..
+      dockerfile: manual_reviewer/ml_backend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${ML_BACKEND_PORT:-9090}:9090"
+    environment:
+      AAV4_PIPELINE_DB: /data/pipeline.db
+      # SAM 3.1 LitServe server — by default points at the host so the GPU
+      # container (started separately) is reachable. Override to a docker
+      # network address if SAM 3.1 also runs in compose.
+      SAM3_1_URL: ${SAM3_1_URL:-http://host.docker.internal:3014/predict}
+      SAM3_1_TIMEOUT: ${SAM3_1_TIMEOUT:-60}
+      ML_MODEL_VERSION: ${ML_MODEL_VERSION:-manual_reviewer_v1}
+      LABEL_STUDIO_ML_PORT: "9090"
+      LOGLEVEL: ${ML_BACKEND_LOGLEVEL:-INFO}
+    volumes:
+      # Bind-mount of the host pipeline.db. Mounting a single SQLite file
+      # ``:ro`` blocks the WAL/SHM sidecars the aa_v4 writer needs, so we
+      # mount read-write and rely on the ML backend opening the connection
+      # with PRAGMA query_only / ?mode=ro&immutable=1 on the Python side.
+      # Operators who want a hard FS-level guarantee should bind-mount the
+      # *containing directory* read-only instead (and accept that aa_v4
+      # cannot append while the review stack is up).
+      - ${AAV4_PIPELINE_DB_HOST:-./pipeline.db}:/data/pipeline.db
+    extra_hosts:
+      # Make host.docker.internal resolve on Linux too — needed because the
+      # SAM 3.1 GPU server lives on the host network, not in compose.
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  ls_data:
+  ls_pgdata:

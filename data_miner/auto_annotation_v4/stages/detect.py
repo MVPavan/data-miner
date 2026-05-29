@@ -1,16 +1,14 @@
-"""Stage 1b: Detection merge — load proposals, filter, dedup, route.
+"""Stage 1b: Detection merge — load per-model proposals and combine them.
 
-Phase 2 splits the monolithic detect stage: per-model DetectModelWorker
-instances (in detect_model.py) call individual model servers and save
-proposals. This DetectMergeWorker loads all proposals, runs the full
-filtering pipeline, and routes to the next stage.
-
-Replaces the Phase 1 DetectWorker.
+Phase 2a split the former monolithic detect stage: filtering and routing now
+live in :class:`~.filter.FilterWorker`. This worker only loads per-model
+proposals saved by :class:`~.detect_model.DetectModelWorker` instances,
+merges them into a single raw candidate list, and saves a
+:class:`DetectResult` checkpoint with empty ``routing`` / ``filter_stats``.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -22,22 +20,15 @@ from ..configs import (
     ClassConfig,
     DetectResult,
     DetectRouting,
-    FinalAction,
-    FinalAnnotation,
     ProposalResult,
     Stage,
     StageMessage,
 )
 from ..output import OutputWriter
 from ..utils import (
-    apply_cross_class_rules,
-    cluster_and_collapse,
-    filter_by_model_score,
-    geometric_filter,
+    filter_by_source_model,
     get_image_size,
-    limit_per_class,
     normalize_class_alias,
-    route_candidates,
 )
 from ..workers.base import StageWorker
 
@@ -57,50 +48,14 @@ def _build_v4_alias_map(classes: dict[str, ClassConfig]) -> dict[str, str]:
     return alias_map
 
 
-def _run_filtering_pipeline(
-    candidates: list[Candidate],
-    config: AutoAnnotationV4Config,
-) -> tuple[list[Candidate], dict, dict]:
-    """Run the full filtering chain. Pure CPU — safe for run_in_executor.
-
-    Returns (cross_filtered, routing_result, filter_stats).
-    """
-    filtered = geometric_filter(candidates, config)
-    after_geometric = len(filtered)
-
-    filtered = filter_by_model_score(filtered, config.filtering.per_model_score)
-    after_model_score = len(filtered)
-
-    deduped = cluster_and_collapse(filtered, config.filtering.iou_dedup)
-    after_dedup = len(deduped)
-
-    capped = limit_per_class(deduped, config.filtering.max_per_class)
-    after_cap = len(capped)
-
-    cross_filtered = apply_cross_class_rules(capped, config)
-
-    routing_result = route_candidates(cross_filtered, config)
-
-    filter_stats = {
-        "total_proposed": len(candidates),
-        "after_geometric_filter": after_geometric,
-        "after_model_score_filter": after_model_score,
-        "after_iou_dedup": after_dedup,
-        "after_per_class_cap": after_cap,
-        "after_cross_class_rules": len(cross_filtered),
-        "auto_accepted": len(routing_result["auto_accepted"]),
-        "sent_to_vlm": len(routing_result["needs_evaluation"]),
-    }
-
-    return cross_filtered, routing_result, filter_stats
-
-
 class DetectMergeWorker(StageWorker):
-    """Stage 1b: load per-model proposals, merge, filter, dedup, route.
+    """Stage ``detect:merge`` worker: load per-model proposals and merge.
 
-    Claims work from ``"detect:merge"`` queue. Loads proposals saved by
-    DetectModelWorker instances, runs the full filtering pipeline, and
-    saves a DetectResult checkpoint under the canonical ``Stage.DETECT``.
+    Claims work from the ``"detect:merge"`` queue, loads proposals saved by
+    :class:`~.detect_model.DetectModelWorker` instances, merges them into a
+    single raw candidate list, and saves a :class:`DetectResult` checkpoint
+    under the canonical :attr:`Stage.DETECT` key. Filtering and routing run
+    downstream in :class:`~.filter.FilterWorker`.
 
     This worker does ZERO HTTP calls — all model server communication
     happens in DetectModelWorker.
@@ -131,120 +86,72 @@ class DetectMergeWorker(StageWorker):
     # ------------------------------------------------------------------
 
     async def process(self, msg: StageMessage) -> BaseModel:
+        """Merge per-model proposals into a single raw DetectResult.
+
+        No filtering or routing runs here — the saved checkpoint carries
+        every raw candidate from every model. :class:`FilterWorker` handles
+        the full filter + route chain downstream.
+        """
         image_path = msg.image_path
         image_w, image_h = get_image_size(image_path)
 
-        # 1. Load all per-model proposals from DB.
         proposals: dict[str, ProposalResult] = await self.db.load_all_proposals(
             msg.image_id, ProposalResult
         )
 
-        # Build model_results: model_name -> list[Candidate]
-        model_results: dict[str, list[Candidate]] = {}
-        for model_name, proposal in proposals.items():
-            model_results[model_name] = proposal.candidates
+        model_results: dict[str, list[Candidate]] = {
+            model_name: proposal.candidates
+            for model_name, proposal in proposals.items()
+        }
 
-        if not any(model_results.values()):
-            self.logger.info(
-                "No detections from any model for %s — forwarding empty",
-                msg.image_id,
-            )
-            detect_result = self._build_detect_result(
-                msg.image_id,
-                image_path,
-                image_w,
-                image_h,
-                model_results,
-                candidates=[],
-                routing_result={
-                    "auto_accepted": [],
-                    "needs_evaluation": [],
-                    "confusion_flags": [],
-                },
-            )
-            if self.output_writer:
-                self._write_auto_accepted_output(msg.image_id, detect_result)
-            return detect_result
-
-        # 2. Merge all per-model candidates.
         all_candidates: list[Candidate] = []
         for candidates in model_results.values():
             all_candidates.extend(candidates)
-        total_proposed = len(all_candidates)
 
-        # 3-7. Filtering pipeline (geometric -> score floor -> dedup -> cap -> cross-class -> route).
-        if total_proposed > 100:
-            # Offload CPU-bound filtering to thread pool to avoid blocking
-            # the event loop when processing large detection sets.
-            loop = asyncio.get_running_loop()
-            cross_filtered, routing_result, filter_stats = await loop.run_in_executor(
-                None,
-                _run_filtering_pipeline,
-                all_candidates,
-                self.config,
+        # Primary application of the source_model allowlist. Downstream
+        # stages inherit clean input; FilterPipeline also re-applies it as
+        # a defensive belt-and-braces for re-runs after the allowlist flips.
+        allowed = list(
+            getattr(self.config.filtering, "allowed_source_models", []) or []
+        )
+        if allowed:
+            before = len(all_candidates)
+            all_candidates = filter_by_source_model(all_candidates, allowed)
+            if before != len(all_candidates):
+                self.logger.info(
+                    "%s: source_model allowlist %s dropped %d/%d candidates",
+                    msg.image_id, allowed, before - len(all_candidates), before,
+                )
+
+        if not all_candidates:
+            self.logger.info(
+                "No detections from any model for %s — forwarding empty DetectResult",
+                msg.image_id,
             )
         else:
-            cross_filtered, routing_result, filter_stats = _run_filtering_pipeline(
-                all_candidates, self.config,
+            self.logger.info(
+                "%s: merged %d raw candidates from %d model(s)",
+                msg.image_id,
+                len(all_candidates),
+                len(model_results),
             )
 
-        # 8. Build DetectResult.
-        detect_result = self._build_detect_result(
+        return self._build_detect_result(
             msg.image_id,
             image_path,
             image_w,
             image_h,
             model_results,
-            candidates=cross_filtered,
-            routing_result=routing_result,
-            filter_stats=filter_stats,
+            candidates=all_candidates,
         )
-
-        # Write auto-accepted output if applicable.
-        if self.output_writer and not routing_result["needs_evaluation"]:
-            self._write_auto_accepted_output(msg.image_id, detect_result)
-
-        # Log routing decisions (base class handles save_and_forward).
-        if routing_result["needs_evaluation"]:
-            self.logger.info(
-                "%s: %d auto-accepted, %d sent to evaluate",
-                msg.image_id,
-                len(routing_result["auto_accepted"]),
-                len(routing_result["needs_evaluation"]),
-            )
-        else:
-            self.logger.info(
-                "%s: all %d candidates auto-accepted",
-                msg.image_id,
-                len(routing_result["auto_accepted"]),
-            )
-
-        return detect_result
 
     # ------------------------------------------------------------------
     # Routing
     # ------------------------------------------------------------------
 
     def _resolve_next_stage(self, result: BaseModel) -> Stage:
-        detect_result: DetectResult = result  # type: ignore[assignment]
-
-        # If candidates need VLM evaluation -> evaluate
-        if detect_result.routing.needs_evaluation:
-            return Stage.EVALUATE
-
-        # All surviving candidates were auto-accepted by detect — skip VLM.
-        # If any of them belongs to a class with a refine rule, forward to
-        # refine (which will adjudicate without an evaluate checkpoint).
-        refine_classes = set(self.config.refine_rules.classes.keys())
-        auto_accept_ids = set(detect_result.routing.auto_accepted)
-        needs_refine = any(
-            c.candidate_id in auto_accept_ids and c.class_name in refine_classes
-            for c in detect_result.candidates
-        )
-        if needs_refine:
-            return Stage.REFINE
-
-        return Stage.FINALIZE
+        """Always forward to :attr:`Stage.FILTER`; routing happens there."""
+        return Stage.FILTER
 
     # ------------------------------------------------------------------
     # Helpers
@@ -258,8 +165,6 @@ class DetectMergeWorker(StageWorker):
         image_h: int,
         model_results: dict[str, list[Candidate]],
         candidates: list[Candidate],
-        routing_result: dict,
-        filter_stats: dict | None = None,
     ) -> DetectResult:
         return DetectResult(
             image_id=image_id,
@@ -267,66 +172,7 @@ class DetectMergeWorker(StageWorker):
             image_size=[image_w, image_h],
             models_used=list(model_results.keys()),
             candidates=candidates,
-            routing=DetectRouting(
-                auto_accepted=routing_result.get("auto_accepted", []),
-                needs_evaluation=routing_result.get("needs_evaluation", []),
-                confusion_flags=routing_result.get("confusion_flags", []),
-            ),
-            filter_stats=filter_stats or {},
+            routing=DetectRouting(),
+            filter_stats={},
             stage_timing_ms=0.0,
-        )
-
-    # ------------------------------------------------------------------
-    # Auto-accept output path (skips VLM entirely)
-    # ------------------------------------------------------------------
-
-    def _write_auto_accepted_output(
-        self, image_id: str, detect_result: DetectResult
-    ) -> None:
-        """Write YOLO labels and trace when all candidates are auto-accepted."""
-        if self.output_writer is None:
-            return
-
-        auto_accepted_ids: set[str] = set(detect_result.routing.auto_accepted)
-        # v4: config.classes is dict[str, ClassConfig]
-        class_map: dict[str, int] = {
-            name: cfg.id for name, cfg in self.config.classes.items()
-        }
-
-        annotations: list[FinalAnnotation] = []
-        for cand in detect_result.candidates:
-            if cand.candidate_id not in auto_accepted_ids:
-                continue
-            annotations.append(
-                FinalAnnotation(
-                    candidate_id=cand.candidate_id,
-                    class_name=cand.class_name,
-                    class_id=class_map.get(cand.class_name, -1),
-                    bbox=cand.bbox,
-                    confidence=cand.score,
-                    action=FinalAction.ACCEPT,
-                    source_model=cand.source_model,
-                    was_refined=False,
-                    trace=[
-                        f"auto_accepted: agreement={cand.agreement}, "
-                        f"score={cand.score:.4f}, "
-                        f"agreeing_models={cand.agreeing_models}"
-                    ],
-                )
-            )
-
-        self.output_writer.write_yolo_labels(image_id, annotations, class_map)
-        self.output_writer.write_trace(
-            image_id,
-            {
-                "image_id": image_id,
-                "stages": ["detect"],
-                "detect": detect_result.model_dump(mode="json"),
-                "annotations": [a.model_dump(mode="json") for a in annotations],
-            },
-        )
-        self.logger.info(
-            "Wrote %d auto-accepted annotations for %s",
-            len(annotations),
-            image_id,
         )

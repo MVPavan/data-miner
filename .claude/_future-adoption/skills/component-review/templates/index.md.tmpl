@@ -1,0 +1,27 @@
+# Component Review Index — <version>
+
+Status legend: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` needs revisit
+
+The skill bootstraps this list by globbing `docs/architecture-trace/at-claude/<version>/01-*.md` (Components) and `02-*.md` (Cross-cutting topics). If the trace gains new components later, re-bootstrap will append them — existing tick states are preserved.
+
+## Components
+
+<!-- BEGIN:components -->
+- [ ] <component-1>
+- [ ] <component-2>
+- [ ] ...
+<!-- END:components -->
+
+## Cross-cutting topics
+
+<!-- BEGIN:cross-cutting -->
+- [ ] <topic-1>
+- [ ] <topic-2>
+- [ ] ...
+<!-- END:cross-cutting -->
+
+## Notes
+
+- Tick state is **only** flipped to `[x]` on explicit user confirmation after discussion.
+- Use `[!]` to mark something as needing a revisit (e.g. design changed, code drifted, new questions surfaced).
+- Per-component artifacts live at `docs/reviews/<version>/<component>/{review.md, discussions.md}`.

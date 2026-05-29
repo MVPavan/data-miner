@@ -22,7 +22,8 @@ import logging
 from pathlib import Path
 
 from ..checkpoint import CheckpointDB
-from ..configs.enums import DetectorName, Stage
+from ..configs.enums import STAGE_ORDER, DetectorName, Stage
+from ..configs.loader import compute_config_hash
 from ..configs.settings import AutoAnnotationV4Config
 
 logger = logging.getLogger("data_miner.auto_annotation_v4.submitter")
@@ -42,6 +43,13 @@ class JobSubmitter:
     _IMAGE_EXTENSIONS: frozenset[str] = frozenset(
         {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp"}
     )
+
+    # Chunk sizes tuned for 1M-image scale (target 500-2000 rows per
+    # SQLite transaction to amortize fsync cost).
+    _REGISTER_CHUNK: int = 1000
+    _WORK_CHUNK: int = 1000
+    # Emit a progress log every N images during submit_images.
+    _PROGRESS_EVERY: int = 10_000
 
     def __init__(
         self,
@@ -99,15 +107,19 @@ class JobSubmitter:
     # Internal: queue detect work for one image
     # ------------------------------------------------------------------
 
-    async def _queue_detect_work(self, image_id: str) -> None:
-        """Queue per-model detect work items for one image.
+    async def _plan_detect_work(
+        self,
+        image_id: str,
+        pending: dict[str, list[str]],
+    ) -> None:
+        """Plan per-model detect work items for one image into *pending*.
 
         For each target model:
         - Skip if proposal already cached (unless forced)
-        - Queue ``"detect:{model.value}"`` work item
+        - Append image_id to ``pending["detect:{model.value}"]``
 
-        After queueing, check if the barrier is already met (all proposals
-        cached from a previous run) and queue ``"detect:merge"`` directly.
+        After planning, check if the barrier is already met (all proposals
+        cached from a previous run) and append to ``pending["detect:merge"]``.
         """
         target_models = self._target_models()
         models_queued = 0
@@ -121,7 +133,7 @@ class JobSubmitter:
                 )
                 continue
             stage_key = f"detect:{model.value}"
-            await self.db.add_work(stage_key, image_id)
+            pending.setdefault(stage_key, []).append(image_id)
             models_queued += 1
 
         # If all proposals already cached, queue merge directly
@@ -130,7 +142,7 @@ class JobSubmitter:
             if await self.db.barrier_ready(image_id, model_values):
                 # Check if detect stage result exists — if it does, no need to merge
                 if not await self.db.stage_exists(image_id, Stage.DETECT):
-                    await self.db.add_work("detect:merge", image_id)
+                    pending.setdefault("detect:merge", []).append(image_id)
                     logger.debug(
                         "All proposals cached for %s — queued detect:merge",
                         image_id,
@@ -140,15 +152,18 @@ class JobSubmitter:
     # Internal: queue non-detect first stage
     # ------------------------------------------------------------------
 
-    async def _queue_first_stage(
-        self, image_id: str, first_stage: Stage
+    async def _plan_first_stage(
+        self,
+        image_id: str,
+        first_stage: Stage,
+        pending: dict[str, list[str]],
     ) -> bool:
-        """Queue work for a non-detect first stage (e.g. evaluate, refine).
+        """Plan work for a non-detect first stage into *pending*.
 
-        Checks that the prerequisite stage exists before queueing.
+        Checks that the prerequisite stage exists before planning.
 
         Returns:
-            True if work was queued, False if prerequisite missing.
+            True if work was planned, False if prerequisite missing.
         """
         # Prerequisite: the stage before first_stage must have a checkpoint.
         from ..configs.enums import STAGE_ORDER
@@ -167,7 +182,7 @@ class JobSubmitter:
                 )
                 return False
 
-        await self.db.add_work(first_stage.value, image_id)
+        pending.setdefault(first_stage.value, []).append(image_id)
         return True
 
     # ------------------------------------------------------------------
@@ -201,34 +216,98 @@ class JobSubmitter:
         stages = rt.stages
         first_stage = stages[0] if stages else Stage.DETECT
 
+        current_hash = compute_config_hash(self.config, self.config.prompts_dir)
+
+        # When force_stages is non-empty, clear_downstream wipes the cleared
+        # stage (and everything after) for every input image. Enqueue must
+        # target the earliest cleared stage rather than runtime.stages[0],
+        # otherwise detect-first routing short-circuits on cached proposals
+        # and nothing gets queued for the actual force-cleared stage.
+        if rt.force_stages:
+            effective_first = min(rt.force_stages, key=STAGE_ORDER.index)
+        else:
+            effective_first = first_stage
+
         submitted = 0
         skipped = 0
         prerequisite_missing = 0
+        total = len(image_paths)
 
-        for path in image_paths:
+        # Buffers flushed in chunks to keep SQLite transactions large.
+        register_buf: list[tuple[str, str]] = []
+        work_buf: dict[str, list[str]] = {}
+
+        async def _flush_register() -> None:
+            if register_buf:
+                await self.db.register_image_batch(register_buf)
+                register_buf.clear()
+
+        async def _flush_work(stage_key: str) -> None:
+            ids = work_buf.get(stage_key)
+            if ids:
+                await self.db.add_work_batch(stage_key, ids)
+                ids.clear()
+
+        async def _flush_all_work() -> None:
+            for key in list(work_buf.keys()):
+                await _flush_work(key)
+
+        for idx, path in enumerate(image_paths, 1):
             image_id = Path(path).stem
 
             # Apply force controls (may clear cached data)
             await self._apply_force_controls(image_id)
 
+            # Check for config-hash mismatch on any enabled stage. A mismatch
+            # triggers clear_downstream as a side-effect of should_run_stage,
+            # which is the desired invalidation. If any stage was invalidated,
+            # do NOT skip this image even if all_stages_complete still reports
+            # True from a stale image_meta.status row.
+            invalidated = False
+            for stg in stages:
+                if await self.db.should_run_stage(image_id, stg, current_hash):
+                    invalidated = True
+                    break
+
             # Skip already-complete images (after force controls applied)
-            if await self.db.all_stages_complete(image_id):
+            if not invalidated and await self.db.all_stages_complete(image_id):
                 skipped += 1
-                continue
-
-            # Register image in image_meta
-            await self.db.register_image(image_id, str(path))
-
-            # Queue work based on first stage
-            if first_stage == Stage.DETECT:
-                await self._queue_detect_work(image_id)
             else:
-                queued = await self._queue_first_stage(image_id, first_stage)
-                if not queued:
-                    prerequisite_missing += 1
-                    continue
+                # Register image in image_meta (batched)
+                register_buf.append((image_id, str(path)))
+                if len(register_buf) >= self._REGISTER_CHUNK:
+                    await _flush_register()
 
-            submitted += 1
+                # Plan work based on effective first stage (accounts for
+                # force_stages clearing downstream of a non-detect stage).
+                if effective_first == Stage.DETECT:
+                    await self._plan_detect_work(image_id, work_buf)
+                else:
+                    queued = await self._plan_first_stage(
+                        image_id, effective_first, work_buf
+                    )
+                    if not queued:
+                        prerequisite_missing += 1
+                        continue
+
+                submitted += 1
+
+                # Flush any work bucket that grew past the chunk threshold
+                for key, ids in work_buf.items():
+                    if len(ids) >= self._WORK_CHUNK:
+                        await _flush_work(key)
+
+            # Progress log every _PROGRESS_EVERY images
+            if idx % self._PROGRESS_EVERY == 0:
+                logger.info(
+                    "submit_images progress: %d/%d scanned"
+                    " (submitted=%d, skipped=%d) for job '%s'",
+                    idx, total, submitted, skipped, job_id,
+                )
+
+        # Final flush for any partial buffers
+        await _flush_register()
+        await _flush_all_work()
 
         if skipped:
             logger.info(
@@ -275,15 +354,26 @@ class JobSubmitter:
         )
 
         glob_fn = image_dir.rglob if recursive else image_dir.glob
-        paths = sorted(
-            p for p in glob_fn("*") if p.is_file() and p.suffix.lower() in exts
+        logger.info(
+            "submit_directory: scanning '%s' (recursive=%s)",
+            image_dir, recursive,
+        )
+        paths: list[Path] = []
+        for p in glob_fn("*"):
+            if p.is_file() and p.suffix.lower() in exts:
+                paths.append(p)
+                if len(paths) % self._PROGRESS_EVERY == 0:
+                    logger.info(
+                        "submit_directory: scanned %d image(s) so far",
+                        len(paths),
+                    )
+        paths.sort()
+        logger.info(
+            "submit_directory: found %d image(s) in '%s'",
+            len(paths), image_dir,
         )
 
         submitted, total_input = await self.submit_images(
             [str(p) for p in paths], job_id
-        )
-        logger.info(
-            "submit_directory: found %d image(s) in '%s'",
-            len(paths), image_dir,
         )
         return submitted, total_input

@@ -144,21 +144,25 @@ def geometric_filter(candidates: list, config: Any) -> list:
 
     config is expected to have a .filtering attribute with min_area, max_area,
     min_aspect_ratio, max_aspect_ratio, and min_edge_distance fields
-    (matches AutoAnnotationV4Config.filtering / FilterConfig).
+    (matches AutoAnnotationV4Config.filtering / FilterConfig). An optional
+    ``per_class_min_area`` dict overrides ``min_area`` for listed classes;
+    max_area and aspect ratio stay uniform.
 
     Returns the list of candidates that pass all filters.
     """
     logger = get_logger("utils.geometric_filter")
     cfg = config.filtering
+    per_class_min = getattr(cfg, "per_class_min_area", {}) or {}
     passed = []
     for cand in candidates:
         bbox = cand.bbox
-        if not passes_area_filter(bbox, cfg.min_area, cfg.max_area):
+        min_area = per_class_min.get(cand.class_name, cfg.min_area)
+        if not passes_area_filter(bbox, min_area, cfg.max_area):
             logger.debug(
                 "Filtered %s: area=%.6f not in [%.6f, %.6f]",
                 cand.candidate_id,
                 bbox_area(bbox),
-                cfg.min_area,
+                min_area,
                 cfg.max_area,
             )
             continue
@@ -182,6 +186,25 @@ def geometric_filter(candidates: list, config: Any) -> list:
         "Geometric filtering: %d → %d candidates", len(candidates), len(passed)
     )
     return passed
+
+
+# ---------------------------------------------------------------------------
+# Source-model allowlist
+# ---------------------------------------------------------------------------
+
+
+def filter_by_source_model(candidates: list, allowed: list[str]) -> list:
+    """Drop candidates whose ``source_model`` is not in ``allowed``.
+
+    Empty/None ``allowed`` is treated as "allow all" so this is a no-op
+    in default configs. Called both at the merge boundary and as the first
+    step of every ``FilterPipeline`` plan, so flipping the allowlist in
+    config only requires a filter-stage re-run to take effect.
+    """
+    if not allowed:
+        return list(candidates)
+    allow = set(allowed)
+    return [c for c in candidates if c.source_model in allow]
 
 
 # ---------------------------------------------------------------------------
@@ -256,11 +279,14 @@ def cluster_and_collapse(candidates: list, iou_dedup_cfg: Any) -> list:
       list of survivors; each has ``agreement`` and ``agreeing_models`` set.
     """
     threshold = iou_dedup_cfg.threshold
+    contain_min = float(
+        getattr(iou_dedup_cfg, "same_class_containment_min", 0.0) or 0.0
+    )
     tiebreak_by = list(iou_dedup_cfg.tiebreak_by)
     priority_index = {m: i for i, m in enumerate(iou_dedup_cfg.model_priority)}
     fallback_priority = len(iou_dedup_cfg.model_priority)  # unknown models last
 
-    if threshold <= 0 or not candidates:
+    if (threshold <= 0 and contain_min <= 0) or not candidates:
         # Still attach singleton agreement metadata so downstream is consistent.
         for c in candidates:
             c.agreement = 1
@@ -294,8 +320,23 @@ def cluster_and_collapse(candidates: list, iou_dedup_cfg: Any) -> list:
 
         for i in range(n):
             for j in range(i + 1, n):
-                if bbox_iou(group[i].bbox, group[j].bbox) >= threshold:
+                bi, bj = group[i].bbox, group[j].bbox
+                if threshold > 0 and bbox_iou(bi, bj) >= threshold:
                     _union(i, j)
+                    continue
+                # Containment fallback: catches nested pairs that IoU misses
+                # (small-in-large can have IoU ~0.4 while containment ~1.0).
+                if contain_min > 0:
+                    ai = max(0.0, bi.x2 - bi.x1) * max(0.0, bi.y2 - bi.y1)
+                    aj = max(0.0, bj.x2 - bj.x1) * max(0.0, bj.y2 - bj.y1)
+                    if ai <= 0 or aj <= 0:
+                        continue
+                    ix1, iy1 = max(bi.x1, bj.x1), max(bi.y1, bj.y1)
+                    ix2, iy2 = min(bi.x2, bj.x2), min(bi.y2, bj.y2)
+                    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+                    inter = iw * ih
+                    if inter > 0 and inter / min(ai, aj) >= contain_min:
+                        _union(i, j)
 
         # Bucket members by cluster root.
         clusters: dict[int, list[int]] = {}
@@ -454,19 +495,71 @@ def route_candidates(candidates: list, config: Any) -> dict:
     }
     _, confusion_pairs = _resolve_co_existence(config)
 
+    # Head+person co-existence shortcut: if a head is contained in a person
+    # bbox above filtering.head_person_containment_min AND auto_accept
+    # has opted in, both candidates auto-accept. The spatial reinforcement
+    # is strong enough that VLM disambiguation rarely changes the verdict,
+    # EXCEPT when either leg of the pair is itself a weak detection — a
+    # marginal head riding a spurious person box must not auto-accept.
+    # Both head and person therefore must clear
+    # ``head_person_coexistence_min_score`` (default 0.0 = no gate).
+    coexist_auto_ids: set[str] = set()
+    coexist_enabled = getattr(
+        aa_cfg, "head_person_coexistence", False
+    ) and getattr(
+        config.filtering, "head_person_containment_min", 0.0
+    ) > 0
+    if coexist_enabled:
+        thr = config.filtering.head_person_containment_min
+        coexist_min_score = getattr(
+            aa_cfg, "head_person_coexistence_min_score", 0.0
+        ) or 0.0
+        cand_by_id = {c.candidate_id: c for c in candidates}
+        _coex_log = get_logger("utils.route_candidates.coexist")
+        for hid, pid in head_person_coexist_pairs(candidates, thr):
+            head = cand_by_id.get(hid)
+            person = cand_by_id.get(pid)
+            if head is None or person is None:
+                continue
+            if head.score < coexist_min_score or person.score < coexist_min_score:
+                # One leg too weak — pair doesn't qualify for the
+                # shortcut; each candidate still routes via baseline
+                # tier/score/agreement logic below. Log so an operator
+                # can see *why* a plausible-looking pair didn't auto-accept.
+                _coex_log.debug(
+                    "coexist shortcut declined: head=%s(%.2f) person=%s(%.2f) "
+                    "gate=%.2f",
+                    hid, head.score, pid, person.score, coexist_min_score,
+                )
+                continue
+            coexist_auto_ids.add(hid)
+            coexist_auto_ids.add(pid)
+
     auto_accepted: list[str] = []
     needs_evaluation: list[str] = []
 
     per_model_score = getattr(config.filtering, "per_model_score", {}) or {}
     fallback_score = aa_cfg.min_score
+    # Per-model high-confidence shortcut — a strong score bypasses the
+    # agreement requirement for single-detector runs (e.g. sam3_dart-only
+    # where agreement can never reach 2).
+    hi_conf_scores = getattr(aa_cfg, "high_confidence_scores", {}) or {}
 
     for cand in candidates:
+        if cand.candidate_id in coexist_auto_ids:
+            auto_accepted.append(cand.candidate_id)
+            continue
         is_eligible = cand.class_name in eligible_names
         score_floor = per_model_score.get(cand.source_model, fallback_score)
+        hi_conf_floor = hi_conf_scores.get(cand.source_model)
+        passes_agreement = cand.agreement >= aa_cfg.min_model_agreement
+        passes_hi_conf = (
+            hi_conf_floor is not None and cand.score >= hi_conf_floor
+        )
         qualifies = (
             is_eligible
-            and cand.agreement >= aa_cfg.min_model_agreement
             and cand.score >= score_floor
+            and (passes_agreement or passes_hi_conf)
         )
         if qualifies:
             auto_accepted.append(cand.candidate_id)
@@ -589,6 +682,167 @@ def apply_cross_class_rules(candidates: list, config: Any) -> list:
     return [c for c in candidates if c.candidate_id not in suppressed]
 
 
+def _containment_in(small_bbox, big_bbox) -> float:
+    """Fraction of ``small_bbox`` area that falls inside ``big_bbox``.
+
+    Intersection / area(small). 0.0 means no overlap; 1.0 means fully
+    contained. More surgical than IoU when ``small`` is much smaller than
+    ``big`` (e.g. a head vs a full-body person bbox).
+    """
+    x1 = max(_x1(small_bbox), _x1(big_bbox))
+    y1 = max(_y1(small_bbox), _y1(big_bbox))
+    x2 = min(_x2(small_bbox), _x2(big_bbox))
+    y2 = min(_y2(small_bbox), _y2(big_bbox))
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    a = bbox_area(small_bbox)
+    return inter / a if a > 0 else 0.0
+
+
+def head_person_coexist_pairs(
+    candidates: list, containment_min: float
+) -> set[tuple[str, str]]:
+    """Return (head_id, person_id) pairs whose head is contained in person
+    above ``containment_min``. A head may appear in multiple pairs if it
+    overlaps several persons.
+    """
+    if containment_min <= 0:
+        return set()
+    heads = [c for c in candidates if c.class_name == "head"]
+    persons = [c for c in candidates if c.class_name == "person"]
+    pairs: set[tuple[str, str]] = set()
+    for h in heads:
+        for p in persons:
+            if _containment_in(h.bbox, p.bbox) >= containment_min:
+                pairs.add((h.candidate_id, p.candidate_id))
+    return pairs
+
+
+def drop_head_without_person(candidates: list, config: Any = None) -> list:
+    """Drop stray ``head`` candidates that are not part of a detected person.
+
+    Two modes, chosen by config:
+
+    - **Per-head containment** (when
+      ``config.filtering.head_person_containment_min > 0``): each head is
+      kept only if its maximum containment-in-person across all persons in
+      the image is >= threshold. Heads in images with no persons, and heads
+      floating away from any person, are dropped. More surgical.
+
+    - **Image-level presence** (when
+      ``config.filtering.reject_head_without_person = True`` and containment
+      threshold is 0): legacy coarse check — drop all heads if the image has
+      no person candidates.
+
+    If ``config`` is None, falls back to the legacy image-level check
+    (previously the only behavior).
+    """
+    thr = 0.0
+    legacy_presence = False
+    if config is not None:
+        thr = getattr(config.filtering, "head_person_containment_min", 0.0) or 0.0
+        legacy_presence = getattr(
+            config.filtering, "reject_head_without_person", False
+        )
+
+    heads = [c for c in candidates if c.class_name == "head"]
+    if not heads:
+        return list(candidates)
+
+    logger = get_logger("utils.drop_head_without_person")
+
+    if thr > 0:
+        persons = [c for c in candidates if c.class_name == "person"]
+        keep_head_ids: set[str] = set()
+        if persons:
+            for h in heads:
+                for p in persons:
+                    if _containment_in(h.bbox, p.bbox) >= thr:
+                        keep_head_ids.add(h.candidate_id)
+                        break
+        kept = [c for c in candidates
+                if c.class_name != "head" or c.candidate_id in keep_head_ids]
+        dropped = len(candidates) - len(kept)
+        if dropped:
+            logger.info(
+                "head_person_containment (thr=%.2f): %d head(s) lacked "
+                "containment, dropped",
+                thr, dropped,
+            )
+        return kept
+
+    if legacy_presence:
+        if any(c.class_name == "person" for c in candidates):
+            return list(candidates)
+        kept = [c for c in candidates if c.class_name != "head"]
+        dropped = len(candidates) - len(kept)
+        if dropped:
+            logger.info(
+                "reject_head_without_person (presence): no person, "
+                "dropped %d head(s)", dropped,
+            )
+        return kept
+
+    return list(candidates)
+
+
+def apply_class_agnostic_nms(candidates: list, config: Any) -> list:
+    """Class-agnostic IoU NMS across all surviving candidates.
+
+    Runs AFTER within-class dedup (cluster_and_collapse) and the legacy
+    cross_class step. Uses ``config.filtering.class_agnostic_nms`` for
+    configuration:
+      - ``enabled``: if False, returns candidates unchanged.
+      - ``threshold``: IoU threshold for suppression.
+      - ``respect_overlap_exempt``: if True, any pair where either side has
+        an ``overlap_exempt`` tag is skipped (preserves head-inside-person,
+        bag-on-person).
+      - ``suppress_confusion_pairs``: if False, pairs belonging to the same
+        confusion tag are left intact (kept for VLM disambiguation).
+
+    Tiebreak cascade matches cluster_and_collapse: agreement → model_priority
+    → score.
+    """
+    cfg = getattr(config.filtering, "class_agnostic_nms", None)
+    if cfg is None or not cfg.enabled:
+        return list(candidates)
+
+    iou_dedup_cfg = config.filtering.iou_dedup
+    threshold = cfg.threshold
+    exempt, confusion_pairs = _resolve_co_existence(config)
+    logger = get_logger("utils.apply_class_agnostic_nms")
+
+    suppressed: set[str] = set()
+    for i, a in enumerate(candidates):
+        if a.candidate_id in suppressed:
+            continue
+        for j in range(i + 1, len(candidates)):
+            b = candidates[j]
+            if b.candidate_id in suppressed:
+                continue
+            # Same-class already deduped by cluster_and_collapse.
+            if a.class_name == b.class_name:
+                continue
+            if cfg.respect_overlap_exempt and (
+                a.class_name in exempt or b.class_name in exempt
+            ):
+                continue
+            if not cfg.suppress_confusion_pairs:
+                class_pair = frozenset((a.class_name, b.class_name))
+                if class_pair in confusion_pairs:
+                    continue
+            if bbox_iou(a.bbox, b.bbox) >= threshold:
+                loser = _cross_class_winner(a, b, iou_dedup_cfg)
+                suppressed.add(loser.candidate_id)
+
+    kept = [c for c in candidates if c.candidate_id not in suppressed]
+    if suppressed:
+        logger.info(
+            "class_agnostic_nms @ IoU≥%.2f: %d → %d (%d suppressed)",
+            threshold, len(candidates), len(kept), len(suppressed),
+        )
+    return kept
+
+
 # ---------------------------------------------------------------------------
 # Image utilities
 # ---------------------------------------------------------------------------
@@ -624,10 +878,23 @@ def draw_focus_on_image(
     """Draw ONLY this candidate's bbox on a copy of *image* — for per-candidate
     VLM overview input. Keeps the rest of the scene visible (spatial context)
     without any other bboxes that could confuse which one is being asked about.
+
+    Border is drawn OUTWARD from the bbox so the object pixels inside the
+    bbox are never obscured. For bboxes that touch the image edge we
+    **pad the canvas** by ``stroke+1`` px on all sides with a neutral
+    dark-grey gutter before drawing, so the border has room to extend
+    outward on every side. Without this pad the previous implementation
+    clamped the outward offset at the image boundary, which caused PIL's
+    ``width=N`` stroke to fall back to drawing *inward* on the edge side —
+    re-occluding the very pixels the outward-draw change was meant to
+    protect.
+
+    Border width scales with bbox size (1-2 px for tiny boxes up to 4 px
+    for large). Label has a filled background for contrast and renders
+    above the outward border when there's room.
     """
-    rendered = image.copy().convert("RGB")
-    draw = ImageDraw.Draw(rendered)
-    w, h = rendered.size
+    base = image if image.mode == "RGB" else image.convert("RGB")
+    w, h = base.size
 
     try:
         font = ImageFont.truetype(
@@ -636,13 +903,50 @@ def draw_focus_on_image(
     except (OSError, IOError):
         font = ImageFont.load_default()
 
-    px = bbox_to_pixels(candidate.bbox, w, h)
-    draw.rectangle(px, outline=color, width=4)
-    draw.text(
-        (px[0], max(0, px[1] - 20)),
-        label, fill=color, font=font,
-    )
-    return rendered
+    x1, y1, x2, y2 = bbox_to_pixels(candidate.bbox, w, h)
+    # Degenerate bbox guard: collapse to a 1-px seed so PIL doesn't
+    # silently draw nothing on a zero-area rectangle. We still emit the
+    # overview (with a tiny marker) so the caller isn't left wondering
+    # why a candidate vanished.
+    side_px = max(1, min(x2 - x1, y2 - y1))
+    stroke = max(1, min(4, side_px // 15))
+
+    # Pad the canvas with a neutral dark gutter so the outward stroke
+    # ALWAYS has room, even when the bbox touches an image edge. +1 so
+    # the outline never shares a row/col with the padded boundary.
+    pad = stroke + 1
+    padded = Image.new("RGB", (w + 2 * pad, h + 2 * pad), (32, 32, 32))
+    padded.paste(base, (pad, pad))
+    draw = ImageDraw.Draw(padded)
+
+    # Shift bbox into padded coords, then offset outward by stroke.
+    sx1, sy1 = x1 + pad, y1 + pad
+    sx2, sy2 = x2 + pad, y2 + pad
+    ox1, oy1 = sx1 - stroke, sy1 - stroke
+    ox2, oy2 = sx2 + stroke, sy2 + stroke
+    draw.rectangle((ox1, oy1, ox2, oy2), outline=color, width=stroke)
+
+    # Label: filled background + white text for readability on any
+    # scene colour. Try above the outward border first, then below; if
+    # neither fits, skip the label (the red border alone is enough to
+    # identify the target, and drawing inside the bbox would occlude
+    # the very object we want the VLM to see).
+    try:
+        tw = int(draw.textlength(label, font=font))
+    except AttributeError:  # old PIL
+        tw = 8 * len(label)
+    label_h = 20
+    ph = padded.size[1]
+    label_xy: tuple[int, int] | None = None
+    if oy1 >= label_h + 2:
+        label_xy = (ox1, oy1 - (label_h + 2))
+    elif oy2 + label_h + 2 <= ph:
+        label_xy = (ox1, oy2 + 2)
+    if label_xy is not None:
+        lx, ly = label_xy
+        draw.rectangle((lx, ly, lx + tw + 6, ly + label_h), fill=color)
+        draw.text((lx + 3, ly + 1), label, fill=(255, 255, 255), font=font)
+    return padded
 
 
 def draw_candidates_on_image(
@@ -699,15 +1003,38 @@ def crop_candidate(
     )
 
 
-def pil_to_data_url(image: Image.Image, max_size: int = 1024) -> str:
-    """Encode PIL image as base64 data URL. Resize if larger than max_size."""
+def pil_to_data_url(
+    image: Image.Image,
+    max_size: int = 1280,
+    fmt: str = "JPEG",
+    quality: int = 90,
+) -> str:
+    """Encode PIL image as a base64 data URL for the VLM payload.
+
+    Defaults: JPEG q=90 at 1280 px longest side. JPEG is 5-10x smaller
+    than PNG at negligible quality cost for natural-image VLM inputs —
+    the bench harness (tests/bench_vllm.py) already uses JPEG, so this
+    brings production in line. 1280 px keeps patch density for small
+    objects (a 40x40 head bbox on a 4K frame lands at ~20 px here
+    instead of ~10 px under the old 1024 cap).
+
+    When ``fmt == "PNG"`` ``quality`` is ignored.
+    """
     img = image.copy()
     if max(img.size) > max_size:
         img.thumbnail((max_size, max_size), Image.LANCZOS)
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    fmt_up = fmt.upper()
+    if fmt_up == "JPEG":
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        mime = "image/jpeg"
+    else:
+        img.save(buf, format="PNG", optimize=True)
+        mime = "image/png"
     payload = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f"data:image/png;base64,{payload}"
+    return f"data:{mime};base64,{payload}"
 
 
 def pil_to_png_bytes(image: Image.Image) -> bytes:

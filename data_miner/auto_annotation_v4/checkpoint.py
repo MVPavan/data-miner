@@ -19,11 +19,14 @@ Tables::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import sqlite3
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TypeVar
+from typing import AsyncIterator, TypeVar
 
 import aiosqlite
 from pydantic import BaseModel
@@ -48,6 +51,7 @@ _SCHEMA = """\
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA busy_timeout = 5000;
+PRAGMA wal_autocheckpoint = 1000;
 
 CREATE TABLE IF NOT EXISTS job_info (
     job_id          TEXT NOT NULL,
@@ -66,6 +70,8 @@ CREATE TABLE IF NOT EXISTS image_meta (
     config_hash      TEXT NOT NULL DEFAULT '',
     prompt_version   TEXT NOT NULL DEFAULT '',
     total_timing_ms  REAL NOT NULL DEFAULT 0.0,
+    dedup_status     TEXT NOT NULL DEFAULT 'survivor',
+    dedup_cluster_id TEXT,
     created_at       REAL NOT NULL,
     updated_at       REAL NOT NULL
 );
@@ -124,6 +130,35 @@ def _serialize(data: BaseModel) -> str:
     return data.model_dump_json()
 
 
+class _Tx:
+    """Thin proxy exposed inside a ``_transaction`` block. Every cursor
+    is wrapped in ``async with`` so statements finalize before commit."""
+
+    def __init__(self, db: aiosqlite.Connection) -> None:
+        self._db = db
+
+    async def execute(self, sql: str, params: tuple = ()) -> None:
+        async with self._db.execute(sql, params) as _:
+            pass
+
+    async def execute_many(self, sql: str, params_seq) -> None:
+        await self._db.executemany(sql, params_seq)
+
+    async def fetch_one(self, sql: str, params: tuple = ()) -> aiosqlite.Row | None:
+        async with self._db.execute(sql, params) as cursor:
+            return await cursor.fetchone()
+
+    async def fetch_all(self, sql: str, params: tuple = ()) -> list[aiosqlite.Row]:
+        async with self._db.execute(sql, params) as cursor:
+            return await cursor.fetchall()
+
+    async def execute_returning_one(
+        self, sql: str, params: tuple = ()
+    ) -> aiosqlite.Row | None:
+        async with self._db.execute(sql, params) as cursor:
+            return await cursor.fetchone()
+
+
 # ---------------------------------------------------------------------------
 # CheckpointDB
 # ---------------------------------------------------------------------------
@@ -156,6 +191,7 @@ class CheckpointDB:
         self.lock_ttl = lock_ttl
         self.max_retries = max_retries
         self._db: aiosqlite.Connection | None = None
+        self._write_lock: asyncio.Lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -175,7 +211,33 @@ class CheckpointDB:
         # executescript commits any open transaction then runs in autocommit,
         # so we use executescript for the DDL block.
         await self._db.executescript(_SCHEMA)
+        await self._apply_migrations()
         logger.info("CheckpointDB connected: %s", self.db_path)
+
+    async def _apply_migrations(self) -> None:
+        """Apply additive migrations to DBs created before a column existed.
+
+        Each ALTER is wrapped in try/except so re-running on an already-migrated
+        DB is a no-op. SQLite raises OperationalError "duplicate column name"
+        when a column already exists. Indices that reference newly-added
+        columns must be created here (after the ALTER) rather than in _SCHEMA,
+        because legacy DBs reach _SCHEMA before the column exists.
+        """
+        db = self._require_db()
+        column_migrations = (
+            "ALTER TABLE image_meta ADD COLUMN dedup_status TEXT NOT NULL DEFAULT 'survivor'",
+            "ALTER TABLE image_meta ADD COLUMN dedup_cluster_id TEXT",
+        )
+        for sql in column_migrations:
+            try:
+                await db.execute(sql)
+            except aiosqlite.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_image_meta_dedup ON image_meta(dedup_status)"
+        )
+        await db.commit()
 
     async def close(self) -> None:
         """Close the database connection gracefully.
@@ -203,6 +265,54 @@ class CheckpointDB:
         return self._db
 
     # ------------------------------------------------------------------
+    # Core DB helpers
+    # ------------------------------------------------------------------
+
+    async def _fetch_one(
+        self, sql: str, params: tuple = ()
+    ) -> aiosqlite.Row | None:
+        """Run SELECT and return first row (or None). Cursor auto-closes."""
+        db = self._require_db()
+        async with db.execute(sql, params) as cursor:
+            return await cursor.fetchone()
+
+    async def _fetch_all(
+        self, sql: str, params: tuple = ()
+    ) -> list[aiosqlite.Row]:
+        """Run SELECT and return all rows. Cursor auto-closes."""
+        db = self._require_db()
+        async with db.execute(sql, params) as cursor:
+            return await cursor.fetchall()
+
+    async def _write(self, sql: str, params: tuple = ()) -> None:
+        """Single-statement write + commit. Cursor auto-closes before commit."""
+        async with self._write_lock:
+            db = self._require_db()
+            async with db.execute(sql, params) as _:
+                pass
+            await db.commit()
+
+    async def _write_many(self, sql: str, params_seq) -> None:
+        """Multi-row executemany write + commit."""
+        async with self._write_lock:
+            db = self._require_db()
+            await db.executemany(sql, params_seq)
+            await db.commit()
+
+    @asynccontextmanager
+    async def _transaction(self) -> AsyncIterator["_Tx"]:
+        """Multi-statement atomic transaction. Rolls back on exception."""
+        async with self._write_lock:
+            db = self._require_db()
+            tx = _Tx(db)
+            try:
+                yield tx
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
+
+    # ------------------------------------------------------------------
     # Job info
     # ------------------------------------------------------------------
 
@@ -223,14 +333,13 @@ class CheckpointDB:
             config_hash: Hash of the pipeline configuration for cache invalidation.
             prompt_version: Version string for the prompt templates in use.
         """
-        db = self._require_db()
-        await db.execute("DELETE FROM job_info")
-        await db.execute(
-            "INSERT INTO job_info (job_id, image_dir, config_hash, prompt_version, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (job_id, image_dir, config_hash, prompt_version, time.time()),
-        )
-        await db.commit()
+        async with self._transaction() as tx:
+            await tx.execute("DELETE FROM job_info")
+            await tx.execute(
+                "INSERT INTO job_info (job_id, image_dir, config_hash, prompt_version, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (job_id, image_dir, config_hash, prompt_version, time.time()),
+            )
         logger.debug("Saved job_info: job_id=%s", job_id)
 
     async def get_job_info(self) -> dict | None:
@@ -240,9 +349,7 @@ class CheckpointDB:
             Dict with keys: job_id, image_dir, config_hash, prompt_version,
             created_at, status — or None if no job has been registered.
         """
-        db = self._require_db()
-        cursor = await db.execute("SELECT * FROM job_info LIMIT 1")
-        row = await cursor.fetchone()
+        row = await self._fetch_one("SELECT * FROM job_info LIMIT 1")
         if row is None:
             return None
         return dict(row)
@@ -261,15 +368,38 @@ class CheckpointDB:
             image_id: Unique identifier (typically the filename stem).
             image_path: Absolute path to the image file on disk.
         """
-        db = self._require_db()
         now = time.time()
-        await db.execute(
+        await self._write(
             "INSERT OR IGNORE INTO image_meta"
             " (image_id, image_path, status, stages_completed, created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?, ?)",
             (image_id, image_path, ImageStatus.PENDING, "[]", now, now),
         )
-        await db.commit()
+
+    async def register_image_batch(
+        self, items: list[tuple[str, str]]
+    ) -> None:
+        """Register multiple images in a single transaction.
+
+        Uses INSERT OR IGNORE so re-registering already-known images is a
+        no-op.  Designed for high-throughput startup at 1M-image scale where
+        per-image transactions would dominate wall time.
+
+        Args:
+            items: List of ``(image_id, image_path)`` tuples.
+        """
+        if not items:
+            return
+        now = time.time()
+        await self._write_many(
+            "INSERT OR IGNORE INTO image_meta"
+            " (image_id, image_path, status, stages_completed, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (image_id, image_path, ImageStatus.PENDING, "[]", now, now)
+                for image_id, image_path in items
+            ],
+        )
 
     async def resolve_image_path(self, image_id: str) -> str:
         """Look up the filesystem path for *image_id*.
@@ -283,12 +413,10 @@ class CheckpointDB:
         Raises:
             FileNotFoundError: If *image_id* is not registered.
         """
-        db = self._require_db()
-        cursor = await db.execute(
+        row = await self._fetch_one(
             "SELECT image_path FROM image_meta WHERE image_id = ?",
             (image_id,),
         )
-        row = await cursor.fetchone()
         if row is None:
             raise FileNotFoundError(
                 f"Image '{image_id}' not found in checkpoint database"
@@ -317,13 +445,11 @@ class CheckpointDB:
             data: Pydantic model instance containing the stage result.
             config_hash: Configuration hash to track invalidation.
         """
-        db = self._require_db()
-        await db.execute(
+        await self._write(
             "INSERT OR REPLACE INTO stages (image_id, stage, data, config_hash, created_at)"
             " VALUES (?, ?, ?, ?, ?)",
             (image_id, stage.value, _serialize(data), config_hash, time.time()),
         )
-        await db.commit()
         logger.debug("Saved stage checkpoint %s/%s", image_id, stage.value)
 
     async def load_stage(
@@ -342,12 +468,10 @@ class CheckpointDB:
         Returns:
             A validated instance of *model_class*, or None if no checkpoint exists.
         """
-        db = self._require_db()
-        cursor = await db.execute(
+        row = await self._fetch_one(
             "SELECT data FROM stages WHERE image_id = ? AND stage = ?",
             (image_id, stage.value),
         )
-        row = await cursor.fetchone()
         if row is None:
             return None
         try:
@@ -368,12 +492,11 @@ class CheckpointDB:
         Returns:
             True if a row exists in the stages table.
         """
-        db = self._require_db()
-        cursor = await db.execute(
+        row = await self._fetch_one(
             "SELECT 1 FROM stages WHERE image_id = ? AND stage = ?",
             (image_id, stage.value),
         )
-        return (await cursor.fetchone()) is not None
+        return row is not None
 
     # ------------------------------------------------------------------
     # Proposals
@@ -394,13 +517,11 @@ class CheckpointDB:
             model: Detector that produced this proposal.
             data: Pydantic model with the raw proposal output.
         """
-        db = self._require_db()
-        await db.execute(
+        await self._write(
             "INSERT OR REPLACE INTO proposals (image_id, model, data, config_hash, created_at)"
             " VALUES (?, ?, ?, ?, ?)",
             (image_id, model.value, _serialize(data), "", time.time()),
         )
-        await db.commit()
         logger.debug("Saved proposal %s/%s", image_id, model.value)
 
     async def load_proposal(
@@ -419,12 +540,10 @@ class CheckpointDB:
         Returns:
             Validated model instance, or None if no proposal exists.
         """
-        db = self._require_db()
-        cursor = await db.execute(
+        row = await self._fetch_one(
             "SELECT data FROM proposals WHERE image_id = ? AND model = ?",
             (image_id, model.value),
         )
-        row = await cursor.fetchone()
         if row is None:
             return None
         try:
@@ -445,12 +564,11 @@ class CheckpointDB:
         Returns:
             True if a row exists in the proposals table.
         """
-        db = self._require_db()
-        cursor = await db.execute(
+        row = await self._fetch_one(
             "SELECT 1 FROM proposals WHERE image_id = ? AND model = ?",
             (image_id, model.value),
         )
-        return (await cursor.fetchone()) is not None
+        return row is not None
 
     async def load_all_proposals(
         self,
@@ -470,13 +588,12 @@ class CheckpointDB:
             Dict mapping model name (str) to validated model instance.
             Models whose proposals fail deserialization are logged and skipped.
         """
-        db = self._require_db()
-        cursor = await db.execute(
+        rows = await self._fetch_all(
             "SELECT model, data FROM proposals WHERE image_id = ?",
             (image_id,),
         )
         results: dict[str, T] = {}
-        for row in await cursor.fetchall():
+        for row in rows:
             try:
                 results[row["model"]] = model_class.model_validate_json(row["data"])
             except Exception:
@@ -511,12 +628,12 @@ class CheckpointDB:
         Returns:
             True if the stage should run; False to skip.
         """
-        db = self._require_db()
-        cursor = await db.execute(
+        # Unlocked read — clear_downstream acquires the write lock itself,
+        # so we must not hold it here (asyncio.Lock is not re-entrant).
+        row = await self._fetch_one(
             "SELECT config_hash FROM stages WHERE image_id = ? AND stage = ?",
             (image_id, stage.value),
         )
-        row = await cursor.fetchone()
         if row is None:
             return True
         if row["config_hash"] != config_hash:
@@ -551,50 +668,48 @@ class CheckpointDB:
             return
 
         downstream = [s.value for s in STAGE_ORDER[idx:]]
-        db = self._require_db()
 
         # Build placeholders for the IN clause
         placeholders = ",".join("?" for _ in downstream)
 
-        # Delete stage checkpoints for downstream stages
-        await db.execute(
-            f"DELETE FROM stages WHERE image_id = ? AND stage IN ({placeholders})",
-            [image_id, *downstream],
-        )
-
-        # Delete work_queue entries for downstream stages.
-        # Exact match for canonical stage names (e.g. "evaluate").
-        await db.execute(
-            f"DELETE FROM work_queue WHERE image_id = ? AND stage IN ({placeholders})",
-            [image_id, *downstream],
-        )
-
-        # Also delete compound stage entries (e.g. "detect:grounding_dino",
-        # "detect:merge") whose parent stage is in the downstream set.
-        # Phase 2 uses "parent:sub" format for per-model detect workers.
-        for stage_val in downstream:
-            await db.execute(
-                "DELETE FROM work_queue WHERE image_id = ? AND stage LIKE ?",
-                (image_id, f"{stage_val}:%"),
+        async with self._transaction() as tx:
+            # Delete stage checkpoints for downstream stages
+            await tx.execute(
+                f"DELETE FROM stages WHERE image_id = ? AND stage IN ({placeholders})",
+                [image_id, *downstream],
             )
 
-        # Update image_meta: keep only stages that come *before* from_stage
-        keep_stages = [s.value for s in STAGE_ORDER[:idx]]
-        cursor = await db.execute(
-            "SELECT stages_completed FROM image_meta WHERE image_id = ?",
-            (image_id,),
-        )
-        row = await cursor.fetchone()
-        if row is not None:
-            current = json.loads(row["stages_completed"])
-            filtered = [s for s in current if s in keep_stages]
-            await db.execute(
-                "UPDATE image_meta SET stages_completed = ?, status = ?, updated_at = ?"
-                " WHERE image_id = ?",
-                (json.dumps(filtered), ImageStatus.RUNNING, time.time(), image_id),
+            # Delete work_queue entries for downstream stages.
+            # Exact match for canonical stage names (e.g. "evaluate").
+            await tx.execute(
+                f"DELETE FROM work_queue WHERE image_id = ? AND stage IN ({placeholders})",
+                [image_id, *downstream],
             )
 
-        await db.commit()
+            # Also delete compound stage entries (e.g. "detect:grounding_dino",
+            # "detect:merge") whose parent stage is in the downstream set.
+            # Phase 2 uses "parent:sub" format for per-model detect workers.
+            for stage_val in downstream:
+                await tx.execute(
+                    "DELETE FROM work_queue WHERE image_id = ? AND stage LIKE ?",
+                    (image_id, f"{stage_val}:%"),
+                )
+
+            # Update image_meta: keep only stages that come *before* from_stage
+            keep_stages = [s.value for s in STAGE_ORDER[:idx]]
+            row = await tx.fetch_one(
+                "SELECT stages_completed FROM image_meta WHERE image_id = ?",
+                (image_id,),
+            )
+            if row is not None:
+                current = json.loads(row["stages_completed"])
+                filtered = [s for s in current if s in keep_stages]
+                await tx.execute(
+                    "UPDATE image_meta SET stages_completed = ?, status = ?, updated_at = ?"
+                    " WHERE image_id = ?",
+                    (json.dumps(filtered), ImageStatus.RUNNING, time.time(), image_id),
+                )
+
         logger.info(
             "Cleared downstream from %s for %s: %s",
             from_stage.value,
@@ -611,12 +726,10 @@ class CheckpointDB:
         Returns:
             True if image_meta.status equals 'complete'.
         """
-        db = self._require_db()
-        cursor = await db.execute(
+        row = await self._fetch_one(
             "SELECT status FROM image_meta WHERE image_id = ?",
             (image_id,),
         )
-        row = await cursor.fetchone()
         return row is not None and row["status"] == ImageStatus.COMPLETE
 
     async def clear_image(self, image_id: str) -> None:
@@ -627,13 +740,12 @@ class CheckpointDB:
         Args:
             image_id: The image to purge.
         """
-        db = self._require_db()
-        for table in ("image_meta", "proposals", "stages", "work_queue", "failures"):
-            await db.execute(
-                f"DELETE FROM {table} WHERE image_id = ?",  # noqa: S608
-                (image_id,),
-            )
-        await db.commit()
+        async with self._transaction() as tx:
+            for table in ("image_meta", "proposals", "stages", "work_queue", "failures"):
+                await tx.execute(
+                    f"DELETE FROM {table} WHERE image_id = ?",  # noqa: S608
+                    (image_id,),
+                )
         logger.info("Cleared all data for image %s", image_id)
 
     # ------------------------------------------------------------------
@@ -660,13 +772,11 @@ class CheckpointDB:
         """
         if score is None:
             score = time.time()
-        db = self._require_db()
-        await db.execute(
+        await self._write(
             "INSERT OR IGNORE INTO work_queue (image_id, stage, status, score)"
             " VALUES (?, ?, ?, ?)",
             (image_id, stage, WorkStatus.PENDING, score),
         )
-        await db.commit()
 
     async def add_work_batch(self, stage: str, image_ids: list[str]) -> None:
         """Enqueue multiple work items in a single transaction.
@@ -677,14 +787,12 @@ class CheckpointDB:
             stage: Queue name / stage identifier.
             image_ids: List of image identifiers to enqueue.
         """
-        db = self._require_db()
         now = time.time()
-        await db.executemany(
+        await self._write_many(
             "INSERT OR IGNORE INTO work_queue (image_id, stage, status, score)"
             " VALUES (?, ?, ?, ?)",
             [(img_id, stage, WorkStatus.PENDING, now) for img_id in image_ids],
         )
-        await db.commit()
 
     async def claim_work(self, stage: str, worker_id: str) -> str | None:
         """Atomically claim the highest-priority pending work item for *stage*.
@@ -699,26 +807,24 @@ class CheckpointDB:
         Returns:
             The image_id of the claimed item, or None if the queue is empty.
         """
-        db = self._require_db()
         now = time.time()
         # Atomic claim: the subquery selects the rowid of the best candidate
         # and the outer UPDATE sets it to processing in one statement.
-        cursor = await db.execute(
-            "UPDATE work_queue"
-            " SET status = ?, worker_id = ?, claimed_at = ?"
-            " WHERE rowid = ("
-            "   SELECT rowid FROM work_queue"
-            "   WHERE stage = ? AND status = ?"
-            "   ORDER BY score ASC"
-            "   LIMIT 1"
-            " )"
-            " RETURNING image_id",
-            (WorkStatus.PROCESSING, worker_id, now, stage, WorkStatus.PENDING),
-        )
-        row = await cursor.fetchone()
+        async with self._transaction() as tx:
+            row = await tx.execute_returning_one(
+                "UPDATE work_queue"
+                " SET status = ?, worker_id = ?, claimed_at = ?"
+                " WHERE rowid = ("
+                "   SELECT rowid FROM work_queue"
+                "   WHERE stage = ? AND status = ?"
+                "   ORDER BY score ASC"
+                "   LIMIT 1"
+                " )"
+                " RETURNING image_id",
+                (WorkStatus.PROCESSING, worker_id, now, stage, WorkStatus.PENDING),
+            )
         if row is None:
             return None
-        await db.commit()
         image_id: str = row["image_id"]
         logger.debug("Worker %s claimed %s/%s", worker_id, stage, image_id)
         return image_id
@@ -733,13 +839,11 @@ class CheckpointDB:
             image_id: Image whose work item to release.
             stage: Stage/queue the item belongs to.
         """
-        db = self._require_db()
-        await db.execute(
+        await self._write(
             "UPDATE work_queue SET status = ?, worker_id = NULL, claimed_at = NULL"
             " WHERE image_id = ? AND stage = ?",
             (WorkStatus.PENDING, image_id, stage),
         )
-        await db.commit()
 
     async def complete_work(self, image_id: str, stage: str) -> None:
         """Mark a work item as done.
@@ -748,12 +852,10 @@ class CheckpointDB:
             image_id: Image whose work item completed.
             stage: Stage/queue the item belongs to.
         """
-        db = self._require_db()
-        await db.execute(
+        await self._write(
             "UPDATE work_queue SET status = ? WHERE image_id = ? AND stage = ?",
             (WorkStatus.DONE, image_id, stage),
         )
-        await db.commit()
 
     # ------------------------------------------------------------------
     # Atomic save + forward  (the key method)
@@ -798,60 +900,58 @@ class CheckpointDB:
                         (e.g. ``"detect:merge"``) pass their actual queue key
                         here because it differs from the checkpoint stage.
         """
-        db = self._require_db()
         now = time.time()
 
-        # 1. Save stage checkpoint
-        await db.execute(
-            "INSERT OR REPLACE INTO stages (image_id, stage, data, config_hash, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (image_id, stage.value, _serialize(data), config_hash, now),
-        )
-
-        # 2. Update image_meta
-        cursor = await db.execute(
-            "SELECT stages_completed, total_timing_ms FROM image_meta WHERE image_id = ?",
-            (image_id,),
-        )
-        row = await cursor.fetchone()
-        if row is not None:
-            completed: list[str] = json.loads(row["stages_completed"])
-            if stage.value not in completed:
-                completed.append(stage.value)
-            total_timing = row["total_timing_ms"] + timing_ms
-
-            # Check if all canonical stages are done
-            all_done = all(s.value in completed for s in STAGE_ORDER)
-            new_status = ImageStatus.COMPLETE if all_done else ImageStatus.RUNNING
-
-            await db.execute(
-                "UPDATE image_meta"
-                " SET stages_completed = ?, total_timing_ms = ?, config_hash = ?,"
-                "     status = ?, updated_at = ?"
-                " WHERE image_id = ?",
-                (json.dumps(completed), total_timing, config_hash, new_status, now, image_id),
+        async with self._transaction() as tx:
+            # 1. Save stage checkpoint
+            await tx.execute(
+                "INSERT OR REPLACE INTO stages (image_id, stage, data, config_hash, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (image_id, stage.value, _serialize(data), config_hash, now),
             )
 
-        # 3. Mark current work_queue entry as done.
-        #    work_stage may differ from stage.value for compound stages
-        #    (e.g. work_stage="detect:merge" but stage=Stage.DETECT).
-        wq_stage = work_stage if work_stage is not None else stage.value
-        await db.execute(
-            "UPDATE work_queue SET status = ? WHERE image_id = ? AND stage = ?",
-            (WorkStatus.DONE, image_id, wq_stage),
-        )
-
-        # 4. Enqueue next stage (if applicable)
-        if next_stage and next_stage != "done":
-            await db.execute(
-                "INSERT OR IGNORE INTO work_queue (image_id, stage, status, score)"
-                " VALUES (?, ?, ?, ?)",
-                (image_id, next_stage, WorkStatus.PENDING, now),
+            # 2. Update image_meta
+            row = await tx.fetch_one(
+                "SELECT stages_completed, total_timing_ms FROM image_meta WHERE image_id = ?",
+                (image_id,),
             )
+            if row is not None:
+                completed: list[str] = json.loads(row["stages_completed"])
+                if stage.value not in completed:
+                    completed.append(stage.value)
+                total_timing = row["total_timing_ms"] + timing_ms
+
+                # Check if all canonical stages are done
+                all_done = all(s.value in completed for s in STAGE_ORDER)
+                new_status = ImageStatus.COMPLETE if all_done else ImageStatus.RUNNING
+
+                await tx.execute(
+                    "UPDATE image_meta"
+                    " SET stages_completed = ?, total_timing_ms = ?, config_hash = ?,"
+                    "     status = ?, updated_at = ?"
+                    " WHERE image_id = ?",
+                    (json.dumps(completed), total_timing, config_hash, new_status, now, image_id),
+                )
+
+            # 3. Mark current work_queue entry as done.
+            #    work_stage may differ from stage.value for compound stages
+            #    (e.g. work_stage="detect:merge" but stage=Stage.DETECT).
+            wq_stage = work_stage if work_stage is not None else stage.value
+            await tx.execute(
+                "UPDATE work_queue SET status = ? WHERE image_id = ? AND stage = ?",
+                (WorkStatus.DONE, image_id, wq_stage),
+            )
+
+            # 4. Enqueue next stage (if applicable)
+            if next_stage and next_stage != "done":
+                await tx.execute(
+                    "INSERT OR IGNORE INTO work_queue (image_id, stage, status, score)"
+                    " VALUES (?, ?, ?, ?)",
+                    (image_id, next_stage, WorkStatus.PENDING, now),
+                )
 
         # Single commit — atomic: everything above either persists together
         # or rolls back together on crash.
-        await db.commit()
         logger.debug(
             "save_and_forward %s/%s -> %s (%.1f ms)",
             image_id,
@@ -877,52 +977,77 @@ class CheckpointDB:
             stage: Stage/queue where the failure occurred.
             error: Human-readable error description.
         """
-        db = self._require_db()
         now = time.time()
 
-        # Increment attempts on the work_queue row
-        cursor = await db.execute(
-            "UPDATE work_queue SET attempts = attempts + 1, status = ?, claimed_at = NULL, worker_id = NULL"
-            " WHERE image_id = ? AND stage = ?"
-            " RETURNING attempts",
-            (WorkStatus.PENDING, image_id, stage),
-        )
-        row = await cursor.fetchone()
-        attempts = row["attempts"] if row else 1
+        async with self._transaction() as tx:
+            # Increment attempts on the work_queue row
+            row = await tx.execute_returning_one(
+                "UPDATE work_queue SET attempts = attempts + 1, status = ?, claimed_at = NULL, worker_id = NULL"
+                " WHERE image_id = ? AND stage = ?"
+                " RETURNING attempts",
+                (WorkStatus.PENDING, image_id, stage),
+            )
+            attempts = row["attempts"] if row else 1
 
-        if attempts >= self.max_retries:
-            # Move to failures table (dead letter)
-            await db.execute(
-                "INSERT OR REPLACE INTO failures (image_id, stage, attempts, last_error, last_attempt_at)"
-                " VALUES (?, ?, ?, ?, ?)",
-                (image_id, stage, attempts, error, now),
-            )
-            await db.execute(
-                "DELETE FROM work_queue WHERE image_id = ? AND stage = ?",
-                (image_id, stage),
-            )
-            logger.warning(
-                "Image %s/%s exhausted %d retries — moved to failures: %s",
-                image_id,
-                stage,
-                attempts,
-                error,
-            )
-        else:
-            logger.info(
-                "Image %s/%s failed (attempt %d/%d), returning to queue: %s",
-                image_id,
-                stage,
-                attempts,
-                self.max_retries,
-                error,
-            )
-
-        await db.commit()
+            if attempts >= self.max_retries:
+                # Move to failures table (dead letter)
+                await tx.execute(
+                    "INSERT OR REPLACE INTO failures (image_id, stage, attempts, last_error, last_attempt_at)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (image_id, stage, attempts, error, now),
+                )
+                await tx.execute(
+                    "DELETE FROM work_queue WHERE image_id = ? AND stage = ?",
+                    (image_id, stage),
+                )
+                logger.warning(
+                    "Image %s/%s exhausted %d retries — moved to failures: %s",
+                    image_id,
+                    stage,
+                    attempts,
+                    error,
+                )
+            else:
+                logger.info(
+                    "Image %s/%s failed (attempt %d/%d), returning to queue: %s",
+                    image_id,
+                    stage,
+                    attempts,
+                    self.max_retries,
+                    error,
+                )
 
     # ------------------------------------------------------------------
     # Monitoring
     # ------------------------------------------------------------------
+
+    async def wal_checkpoint(self) -> None:
+        """Force a WAL checkpoint (TRUNCATE mode). Safe to call periodically.
+
+        Uses a dedicated short-lived connection so that running checkpoints
+        never races against worker coroutines holding uncommitted transactions
+        on the shared ``self._db`` connection. On BUSY/locked failure we log
+        a warning and fall through — SQLite's ``wal_autocheckpoint=1000`` will
+        still keep the WAL from growing unbounded.
+        """
+        try:
+            conn = await aiosqlite.connect(str(self.db_path))
+        except Exception as exc:  # pragma: no cover - connect failure is rare
+            logger.warning("WAL checkpoint connect failed: %s", exc)
+            return
+        try:
+            async with conn.execute("PRAGMA busy_timeout = 5000") as _:
+                pass
+            async with conn.execute("PRAGMA wal_checkpoint(TRUNCATE)") as _:
+                pass
+            await conn.commit()
+        except sqlite3.OperationalError as exc:
+            # Most commonly "database is locked" when a long writer is active.
+            logger.warning("WAL checkpoint skipped (BUSY): %s", exc)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("WAL checkpoint failed: %s", exc)
+        finally:
+            await conn.close()
 
     async def recover_stale(
         self,
@@ -945,62 +1070,62 @@ class CheckpointDB:
         """
         ttl = lock_ttl if lock_ttl is not None else self.lock_ttl
         retries = max_retries if max_retries is not None else self.max_retries
-        db = self._require_db()
         cutoff = time.time() - ttl
 
-        cursor = await db.execute(
+        stale_rows = await self._fetch_all(
             "SELECT rowid, image_id, stage, attempts FROM work_queue"
             " WHERE status = ? AND claimed_at < ?",
             (WorkStatus.PROCESSING, cutoff),
         )
-        stale_rows = await cursor.fetchall()
         recovered = 0
 
-        for row in stale_rows:
-            new_attempts = row["attempts"] + 1
-            if new_attempts >= retries:
-                # Dead-letter
-                await db.execute(
-                    "INSERT OR REPLACE INTO failures"
-                    " (image_id, stage, attempts, last_error, last_attempt_at)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    (
+        if not stale_rows:
+            return 0
+
+        async with self._transaction() as tx:
+            for row in stale_rows:
+                new_attempts = row["attempts"] + 1
+                if new_attempts >= retries:
+                    # Dead-letter
+                    await tx.execute(
+                        "INSERT OR REPLACE INTO failures"
+                        " (image_id, stage, attempts, last_error, last_attempt_at)"
+                        " VALUES (?, ?, ?, ?, ?)",
+                        (
+                            row["image_id"],
+                            row["stage"],
+                            new_attempts,
+                            "stale claim recovered — max retries exceeded",
+                            time.time(),
+                        ),
+                    )
+                    await tx.execute(
+                        "DELETE FROM work_queue WHERE rowid = ?",
+                        (row["rowid"],),
+                    )
+                    logger.warning(
+                        "Stale item %s/%s dead-lettered after %d attempts",
                         row["image_id"],
                         row["stage"],
                         new_attempts,
-                        "stale claim recovered — max retries exceeded",
-                        time.time(),
-                    ),
-                )
-                await db.execute(
-                    "DELETE FROM work_queue WHERE rowid = ?",
-                    (row["rowid"],),
-                )
-                logger.warning(
-                    "Stale item %s/%s dead-lettered after %d attempts",
-                    row["image_id"],
-                    row["stage"],
-                    new_attempts,
-                )
-            else:
-                # Reset to pending for retry
-                await db.execute(
-                    "UPDATE work_queue"
-                    " SET status = ?, worker_id = NULL, claimed_at = NULL, attempts = ?"
-                    " WHERE rowid = ?",
-                    (WorkStatus.PENDING, new_attempts, row["rowid"]),
-                )
-                logger.info(
-                    "Recovered stale item %s/%s (attempt %d/%d)",
-                    row["image_id"],
-                    row["stage"],
-                    new_attempts,
-                    retries,
-                )
-            recovered += 1
+                    )
+                else:
+                    # Reset to pending for retry
+                    await tx.execute(
+                        "UPDATE work_queue"
+                        " SET status = ?, worker_id = NULL, claimed_at = NULL, attempts = ?"
+                        " WHERE rowid = ?",
+                        (WorkStatus.PENDING, new_attempts, row["rowid"]),
+                    )
+                    logger.info(
+                        "Recovered stale item %s/%s (attempt %d/%d)",
+                        row["image_id"],
+                        row["stage"],
+                        new_attempts,
+                        retries,
+                    )
+                recovered += 1
 
-        if recovered:
-            await db.commit()
         return recovered
 
     async def progress_summary(self) -> dict:
@@ -1013,7 +1138,6 @@ class CheckpointDB:
             - ``queue``: ``{stage: {status: count}}`` — work queue breakdown.
             - ``failed``: total count of dead-lettered items.
         """
-        db = self._require_db()
         summary: dict = {
             "proposals": {},
             "stages": {},
@@ -1022,33 +1146,32 @@ class CheckpointDB:
         }
 
         # Proposals per model
-        cursor = await db.execute(
+        proposal_rows = await self._fetch_all(
             "SELECT model, COUNT(*) as cnt FROM proposals GROUP BY model"
         )
-        for row in await cursor.fetchall():
+        for row in proposal_rows:
             summary["proposals"][row["model"]] = row["cnt"]
 
         # Completed stages
-        cursor = await db.execute(
+        stage_rows = await self._fetch_all(
             "SELECT stage, COUNT(*) as cnt FROM stages GROUP BY stage"
         )
-        for row in await cursor.fetchall():
+        for row in stage_rows:
             summary["stages"][row["stage"]] = row["cnt"]
 
         # Work queue by stage and status
-        cursor = await db.execute(
+        queue_rows = await self._fetch_all(
             "SELECT stage, status, COUNT(*) as cnt FROM work_queue GROUP BY stage, status"
         )
-        for row in await cursor.fetchall():
+        for row in queue_rows:
             stage_key = row["stage"]
             if stage_key not in summary["queue"]:
                 summary["queue"][stage_key] = {}
             summary["queue"][stage_key][row["status"]] = row["cnt"]
 
         # Total failures
-        cursor = await db.execute("SELECT COUNT(*) as cnt FROM failures")
-        row = await cursor.fetchone()
-        summary["failed"] = row["cnt"] if row else 0
+        failed_row = await self._fetch_one("SELECT COUNT(*) as cnt FROM failures")
+        summary["failed"] = failed_row["cnt"] if failed_row else 0
 
         return summary
 
@@ -1059,12 +1182,11 @@ class CheckpointDB:
             ``{stage: {status: count}}`` dict — e.g.
             ``{"detect": {"pending": 5, "processing": 2, "done": 10}}``.
         """
-        db = self._require_db()
-        cursor = await db.execute(
+        rows = await self._fetch_all(
             "SELECT stage, status, COUNT(*) as cnt FROM work_queue GROUP BY stage, status"
         )
         counts: dict[str, dict[str, int]] = {}
-        for row in await cursor.fetchall():
+        for row in rows:
             stage_key = row["stage"]
             if stage_key not in counts:
                 counts[stage_key] = {}
@@ -1088,14 +1210,12 @@ class CheckpointDB:
         Returns:
             True if the number of distinct proposals >= len(models).
         """
-        db = self._require_db()
         placeholders = ",".join("?" for _ in models)
-        cursor = await db.execute(
+        row = await self._fetch_one(
             f"SELECT COUNT(DISTINCT model) as cnt FROM proposals"
             f" WHERE image_id = ? AND model IN ({placeholders})",
             [image_id, *models],
         )
-        row = await cursor.fetchone()
         return row is not None and row["cnt"] >= len(models)
 
     async def delete_proposal(self, image_id: str, model: str) -> None:
@@ -1105,12 +1225,10 @@ class CheckpointDB:
             image_id: Target image.
             model: Detector name (plain string for Phase 2 flexibility).
         """
-        db = self._require_db()
-        await db.execute(
+        await self._write(
             "DELETE FROM proposals WHERE image_id = ? AND model = ?",
             (image_id, model),
         )
-        await db.commit()
 
     async def delete_stage(self, image_id: str, stage: str) -> None:
         """Delete a single stage checkpoint row.
@@ -1119,9 +1237,7 @@ class CheckpointDB:
             image_id: Target image.
             stage: Stage name (plain string for Phase 2 flexibility).
         """
-        db = self._require_db()
-        await db.execute(
+        await self._write(
             "DELETE FROM stages WHERE image_id = ? AND stage = ?",
             (image_id, stage),
         )
-        await db.commit()

@@ -18,6 +18,7 @@ nav:
       - Overview: architecture/overview.md
       - Database Models: architecture/database-models.md
       - Workers: architecture/workers.md
+      - Review Frontends: architecture/review-frontends.md
   - Development:
       - Contributing: development/contributing.md
   - Reference:

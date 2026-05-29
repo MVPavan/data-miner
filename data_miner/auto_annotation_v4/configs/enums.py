@@ -12,11 +12,11 @@ from enum import IntEnum, StrEnum
 __all__ = [
     "Stage",
     "STAGE_ORDER",
+    "FilterContext",
     "WorkStatus",
     "ImageStatus",
     "DetectorName",
     "CandidateStatus",
-    "BboxQuality",
     "FinalAction",
     "RefineAction",
     "RefineOutcome",
@@ -37,18 +37,35 @@ class Stage(StrEnum):
     """Pipeline execution stages stored in checkpoint metadata and Redis messages."""
 
     DETECT = "detect"
+    FILTER = "filter"
     EVALUATE = "evaluate"
     REFINE = "refine"
     FINALIZE = "finalize"
+    # Event-driven, written by manual_reviewer/scripts/run_reconcile.py.
+    # Cross-frame static-object propagation; NOT in STAGE_ORDER (post-pipeline batch).
+    RECONCILE = "reconcile"
+    # Event-driven, written by manual_reviewer/scripts/export_to_aa_v4.py.
+    # Deliberately NOT in STAGE_ORDER — the auto pipeline must complete without it.
+    HUMAN_REVIEW = "human_review"
     DONE = "done"
 
 
 STAGE_ORDER: list[Stage] = [
     Stage.DETECT,
+    Stage.FILTER,
     Stage.EVALUATE,
     Stage.REFINE,
     Stage.FINALIZE,
 ]
+
+
+class FilterContext(StrEnum):
+    """Which pipeline point a filter was invoked from."""
+
+    POST_DETECT = "post_detect"
+    POST_REVIEW = "post_review"
+    POST_REFINE = "post_refine"
+    PRE_FINALIZE = "pre_finalize"
 
 
 # ---------------------------------------------------------------------------
@@ -85,13 +102,15 @@ class DetectorName(StrEnum):
     FALCON = "falcon"
     SAM3 = "sam3"
     SAM3_DART = "sam3_dart"
+    SAM3_1 = "sam3_1"
     OWLVIT2 = "owlvit2"
     OMDET_TURBO = "omdet_turbo"
+    REX_OMNI = "rex_omni"
 
     @property
     def is_sam3_family(self) -> bool:
-        """True for SAM3 and SAM3_DART which share the same wire contract."""
-        return self in (DetectorName.SAM3, DetectorName.SAM3_DART)
+        """True for SAM3 / SAM3_DART / SAM3_1 — all share the SAM3RefineRequest wire."""
+        return self in (DetectorName.SAM3, DetectorName.SAM3_DART, DetectorName.SAM3_1)
 
 
 # ---------------------------------------------------------------------------
@@ -109,20 +128,6 @@ class CandidateStatus(StrEnum):
     ACCEPTED = "accepted"
     REJECTED = "rejected"
     REFINED = "refined"
-
-
-# ---------------------------------------------------------------------------
-# VLM evaluation signals
-# ---------------------------------------------------------------------------
-
-
-class BboxQuality(StrEnum):
-    """VLM assessment of bounding-box tightness during evaluate."""
-
-    GOOD = "good"
-    NEEDS_EXPANSION = "needs_expansion"
-    TOO_LOOSE = "too_loose"
-    BAD = "bad"
 
 
 # ---------------------------------------------------------------------------
@@ -183,13 +188,30 @@ class BboxSource(StrEnum):
 
 
 class DropReason(StrEnum):
-    """Reason a candidate was dropped during finalize."""
+    """Reason a candidate was dropped during filter / evaluate / finalize."""
 
+    SOURCE_MODEL = "source_model"
     GEOMETRIC_FILTER = "geometric_filter"
+    SCORE_FLOOR = "score_floor"
     DEDUP = "dedup"
     CROSS_CLASS = "cross_class"
     PER_CLASS_CAP = "per_class_cap"
     REJECTED_UPSTREAM = "rejected_upstream"
+    HEAD_WITHOUT_PERSON = "head_without_person"
+    CLASS_AGNOSTIC_NMS = "class_agnostic_nms"
+    # ---- Evaluate-stage rejects ----
+    VLM_LOW_CONFIDENCE = "vlm_low_confidence"
+    """class_confidence below ``evaluate.reject_below``."""
+    VLM_OTHER_CLASS = "vlm_other_class"
+    """VLM returned "other"/"unknown"/"none" as detected_class."""
+    VLM_UNKNOWN_CLASS = "vlm_unknown_class"
+    """VLM named a class that doesn't resolve through the alias map."""
+    VLM_BBOX_UNUSABLE = "vlm_bbox_unusable"
+    """Class trusted (≥accept_above) but bbox_score below
+    ``evaluate.bbox_reject_below`` — bbox on wrong region or object missing."""
+    VLM_MALFORMED = "vlm_malformed"
+    """Could not parse VLM JSON into a VLMVerdict (telemetry for prompt /
+    model drift)."""
 
 
 # ---------------------------------------------------------------------------
