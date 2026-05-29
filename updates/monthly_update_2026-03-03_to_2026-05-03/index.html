@@ -12,10 +12,8 @@
         <meta name="author" content="MVPavan">
       
       
-        <link rel="canonical" href="https://mvpavan.github.io/data-miner/reference/legacy/">
+        <link rel="canonical" href="https://mvpavan.github.io/data-miner/updates/monthly_update_2026-03-03_to_2026-05-03/">
       
-      
-        <link rel="prev" href="../../development/contributing/">
       
       
       
@@ -27,7 +25,7 @@
     
     
       
-        <title>Legacy Docs - Data Miner</title>
+        <title>Two-Month Work Update — data_miner repo - Data Miner</title>
       
     
     
@@ -78,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#legacy-documentation" class="md-skip">
+        <a href="#two-month-work-update-data_miner-repo" class="md-skip">
           Skip to content
         </a>
       
@@ -114,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Legacy Docs
+              Two-Month Work Update — data_miner repo
             
           </span>
         </div>
@@ -721,8 +719,6 @@
       
   
   
-    
-  
   
   
     
@@ -735,11 +731,13 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
           <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
@@ -760,7 +758,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -775,37 +773,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Legacy Docs
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../reference/legacy/" class="md-nav__link">
         
   
   
@@ -821,37 +792,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#documents" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documents
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -891,10 +831,137 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#documents" class="md-nav__link">
+  <a href="#1-tldr" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Documents
+        1. TL;DR
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. At-a-glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-topic-deep-dives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Topic deep-dives
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Topic deep-dives">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#auto_annotation-v4-aav4-clean-rewrite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        auto_annotation v4 (aav4) — clean rewrite
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#open-vocab-detector-vlm-expansion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open-vocab detector + VLM expansion
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manual-review-system-label-studio-ml-backend-smart-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Manual review system (Label Studio + ML backend + smart tools)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dataset-curation-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dataset curation pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#detection-metrics-vlm-validators-march" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detection metrics + VLM validators (March)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#infra-serving-viewer-bench" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Infra / serving / viewer / bench
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-cross-cutting-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Cross-cutting metrics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-risks-asks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Risks / asks
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#numbers-i-couldnt-find-in-source-data-would-strengthen-the-report-if-filled-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Numbers I couldn't find in source data (would strengthen the report if filled in)
       
     </span>
   </a>
@@ -921,19 +988,236 @@
   
 
 
-<h1 id="legacy-documentation">Legacy Documentation<a class="headerlink" href="#legacy-documentation" title="Permanent link">&para;</a></h1>
-<p>Archived documentation from earlier versions of Data Miner.</p>
+<h1 id="two-month-work-update-data_miner-repo">Two-Month Work Update — <code>data_miner</code> repo<a class="headerlink" href="#two-month-work-update-data_miner-repo" title="Permanent link">&para;</a></h1>
+<p><strong>Window:</strong> 2026-03-03 → 2026-05-03 (IST)
+<strong>Audience:</strong> Engineering manager (cross-functional, not CV-specialist)
+<strong>Author:</strong> venkatapavan.muppala@jci.com</p>
 <hr />
-<h2 id="documents">Documents<a class="headerlink" href="#documents" title="Permanent link">&para;</a></h2>
+<h2 id="1-tldr">1. TL;DR<a class="headerlink" href="#1-tldr" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="async_pipeline_implementation_plan/">Async Pipeline Implementation Plan</a> - Original async/queue-based design proposal</li>
-<li><a href="video_miner_v3_async/">Video Miner V3 Async</a> - V3 async implementation notes</li>
-<li><a href="video_miner_v3_code_walkthrough/">Video Miner V3 Code Walkthrough</a> - V3 file-based registry walkthrough</li>
+<li>Shipped <strong>auto_annotation v4</strong> — a clean-room rewrite (~25k LOC, 19 test files) replacing aav3's Redis Streams + file-checkpoint stack with a single SQLite checkpoint DB, per-model detection queueing, and CancelledError-safe async semaphores. <em>aa = pipeline that auto-labels images using detectors + VLM verifiers.</em></li>
+<li>Built a <strong>human review system</strong> end-to-end on Label Studio (~15.6k LOC, <strong>414 tests passing</strong>): dedup, cross-frame static-object propagation, and four interactive smart tools (<code>smart_visual</code> / <code>smart_search</code> / <code>smart_click</code> / <code>smart_track</code>) wired to a SAM 3.1 server.</li>
+<li>Added <strong>5 new detector / VLM model servers</strong> to aav4: SAM 3.1, Rex-Omni, OmDet-Turbo, OWLv2, DART (open-vocab variant of SAM3). <em>OVD = open-vocabulary detector — finds arbitrary classes from a text prompt.</em></li>
+<li>Built a <strong>dataset selection pipeline</strong> that compressed 11,087 DataTang frames → 1,000 diverse picks (DINOv3 cosine dedup at τ=0.97 → 3,009 survivors → FPS to 1,000), then a 250-image balanced subset across 31 clips.</li>
+<li><strong>71 commits, 810 files changed, +104,548 / −10,537 LOC, net +94k.</strong> All on <code>main</code>.</li>
+</ul>
+<h2 id="2-at-a-glance">2. At-a-glance<a class="headerlink" href="#2-at-a-glance" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Topic</th>
+<th>Status</th>
+<th>Window activity</th>
+<th>Top accomplishment</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>aav4 clean rewrite</td>
+<td>shipped, in production</td>
+<td>1 deep session • 14 commits • ~25k LOC pkg</td>
+<td>Phases 1+2+3 complete (SQLite + per-model detect + async)</td>
+</tr>
+<tr>
+<td>OVD/VLM expansion</td>
+<td>shipped (servers up)</td>
+<td>8 commits • 5 new model servers</td>
+<td>DART batched predictor + Rex-Omni autoregressive server</td>
+</tr>
+<tr>
+<td>Manual review system</td>
+<td>shipped, live-validated</td>
+<td>2 deep sessions • 18 commits • ~15.6k LOC pkg</td>
+<td>Phases 1–8 + 5 smart-tool extensions live; 414 tests pass</td>
+</tr>
+<tr>
+<td>Dataset curation</td>
+<td>shipped (used to produce subsets)</td>
+<td>1 session • 1 commit • 952 LOC</td>
+<td>11,087 → 1,000 → 250 reproducible pipeline w/ viewer</td>
+</tr>
+<tr>
+<td>Detection metrics + validators</td>
+<td>shipped (March)</td>
+<td>8 commits • not measured</td>
+<td>Qwen3.5 VLM-as-validator + PDF eval reports</td>
+</tr>
+<tr>
+<td>Infra / serving / viewer / bench</td>
+<td>mixed (some exploratory)</td>
+<td>scattered • not measured</td>
+<td>3090 vLLM-FP8 compose + 8-GPU sweep characterized</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-topic-deep-dives">3. Topic deep-dives<a class="headerlink" href="#3-topic-deep-dives" title="Permanent link">&para;</a></h2>
+<h3 id="auto_annotation-v4-aav4-clean-rewrite">auto_annotation v4 (aav4) — clean rewrite<a class="headerlink" href="#auto_annotation-v4-aav4-clean-rewrite" title="Permanent link">&para;</a></h3>
+<p><strong>Status:</strong> shipped, supersedes aav3 (which itself was a rewrite of aav2 earlier in this window)
+<strong>Window activity:</strong> 14 commits, ~25k LOC in <code>data_miner/auto_annotation_v4/</code> (85 Python files), 19 test files</p>
+<p><strong>Why it happened (per project memo):</strong> v3 had Redis Streams bugs (stale messages, cross-job contamination, SETID stomping, infinite re-queue). File checkpoints didn't scale (~800k files at 100k images). Config and model code were tangled.</p>
+<p><strong>Progress:</strong>
+- <strong>Phase 1:</strong> 48 files built and importing cleanly. SQLite <code>CheckpointDB</code> (6 tables: <code>job_info</code>, <code>image_meta</code>, <code>proposals</code>, <code>stages</code>, <code>work_queue</code>, <code>failures</code>) replaces both Redis Streams <em>and</em> file checkpoints.
+- <strong>Phase 2:</strong> Per-model detect — each detector claims a <code>detect:{model}</code> queue, writes to <code>proposals</code>, barrier-checks, then queues <code>detect:merge</code>. Force-rerun controls at job <em>and</em> model granularity.
+- <strong>Phase 3:</strong> Async hardening — <code>needs_session</code> flag so non-HTTP workers don't burn aiohttp pools; <code>acquired</code> flag pattern instead of <code>async with</code> so CancelledError during semaphore acquire doesn't trigger a bogus release; two-phase shutdown (cooperative 30s grace → forced cancel).</p>
+<p><strong>Key accomplishments:</strong>
+- Eliminated Redis dependency from the pipeline (one fewer service to operate).
+- Pipeline now resumable from any stage on any subset of models without bespoke cleanup.
+- 3 distinct reviewer-found blockers fixed during Phase 2/3 (compound-stage work_queue mismarking, <code>clear_downstream</code> LIKE-pattern miss, semaphore double-release on cancel).</p>
+<p><strong>Next:</strong>
+- Pre-existing 13 GPU-bound test failures (sam3_dart / gdino batching) and 4 unrelated test failures still on the books — none introduced by this rewrite, but they should be triaged.</p>
+<hr />
+<h3 id="open-vocab-detector-vlm-expansion">Open-vocab detector + VLM expansion<a class="headerlink" href="#open-vocab-detector-vlm-expansion" title="Permanent link">&para;</a></h3>
+<p><strong>Status:</strong> shipped (model servers running)
+<strong>Window activity:</strong> 8 commits across Apr 13–28; 5 new files in <code>models/</code> + 5 in <code>model_servers/</code></p>
+<p><strong>Progress:</strong>
+- <strong>DART</strong> (training-free SAM3 → real-time multi-class OVD): explored all modes, root-caused an NMS-induced class-flip between mask vs box NMS, designed and shipped a multi-image batching subclass for DART's SAM3 predictor (commit <code>0bc998d</code>, 1,506 LOC).
+- <strong>OmDet-Turbo + OWLv2</strong>: added with batch predictors (<code>omdet_turbo_batch.py</code> etc.) — broadened the detector candidate pool for the cascade.
+- <strong>SAM 3.1</strong>: new model + LitAPI server at port 3014, <code>max_batch_size=1</code>, four modes (<code>refine</code>, <code>text_detect</code>, <code>click_mask</code>, <code>track</code>). The video predictor handles single images natively, so we serve all three modes from one engine.
+- <strong>Rex-Omni</strong>: autoregressive VLM detector wired to aav4 (<code>DetectorName.REX_OMNI</code>, port 3015, <code>max_batch_size=1</code>). Wraps <code>rex_omni.RexOmniWrapper</code> (HF <code>IDEA-Research/Rex-Omni</code>, base Qwen2.5-VL-3B). 25 dedicated tests pass.</p>
+<p><strong>Key accomplishments:</strong>
+- aav4 detector roster expanded from {GroundingDINO, SAM3-DART} to a 7-model menu, swappable per-job via config.
+- All servers run under one unified <code>serve.py</code> LitAPI entry point.</p>
+<p><strong>Next:</strong>
+- aav4 keeps grounding_dino + sam3_dart by default; manual_reviewer standardizes on SAM 3.1 only. Documented in <code>manual_reviewer/docs/detectors.md</code>. No further integration work pending.</p>
+<hr />
+<h3 id="manual-review-system-label-studio-ml-backend-smart-tools">Manual review system (Label Studio + ML backend + smart tools)<a class="headerlink" href="#manual-review-system-label-studio-ml-backend-smart-tools" title="Permanent link">&para;</a></h3>
+<p><strong>Status:</strong> shipped, live-validated on Caifu_Center_Fewer_2 clip
+<strong>Window activity:</strong> 2 deep sessions (~22k JSONL lines combined), 18 commits, ~15.6k LOC in <code>manual_reviewer/</code>, 15 test files, <strong>414 tests passing</strong></p>
+<p><strong>Progress (8 phases + smart-tool extensions):</strong>
+- <strong>Phase 1–4</strong> (foundations): aav4 contracts (<code>Stage.HUMAN_REVIEW</code>, <code>HumanReviewResult</code>), pipeline_io readers/writers, <code>image_meta</code> dedup-column migration, LS docker-compose + labeling XML, image-mode cross-frame reconciler.
+- <strong>Phase 5/7 (merged):</strong> SAM 3.1 server (above) — same backend feeds both aav4 and manual_reviewer.
+- <strong>Phase 6:</strong> Rex-Omni detector exposed for aav4.
+- <strong>Phase 8:</strong> Detector-policy doc separating aav4 ↔ manual_reviewer detector choice.
+- <strong>Smart-tool extensions</strong> (collapsed to 4 user-facing tools after consolidation, commit <code>7e203d4</code>):
+  - <code>smart_visual</code> (within-image visual prompting, hotkey <code>v</code>): SAM 3.1 <code>add_geometric_prompt</code> end-to-end with class-aware NMS dedup.
+  - <code>smart_search</code> / <code>smart_click</code> / <code>smart_track</code>: text → boxes, point → mask, exemplar → cross-frame propagation via SAM 3.1 video tracker.
+  - <strong><code>track_similar</code> + <code>propagate_now</code></strong> (Apr 30, two-phase): reviewer draws one exemplar, gets all in-image similars as drafts; on accept, fires multi-seed <code>/track</code> to all sibling tasks in one call. <strong>Live result: 6 propagations from 2 seeds × 6 siblings on Caifu_Center_Fewer_2.</strong></p>
+<p><strong>Key accomplishments:</strong>
+- Tests grew 281 → 414 over the window across smart_track (+26), track_similar/propagate_now (+11), and earlier additions.
+- Single-source-of-truth dedup module (<code>ml_backend/dedup.py</code>) — IoU/NMS/dedup_against funcs reused by 4 routes; class-aware so person-on-forklift is preserved.
+- ML backend kept as a <em>pure protocol adapter</em> (no torch/sam3/transformers import) — all inference flows through SAM 3.1 HTTP. Easier to operate; Dockerfile is light.
+- LS XML rendered from <code>classes.txt</code> via <code>build_labeling_config.py</code> (no hand-edits) — keeps labels in lockstep with the dataset definition.</p>
+<p><strong>Next:</strong>
+- DINOv3 <code>propagate_static</code> lib still exists at <code>reconcile/propagate_static.py</code> but is <em>not</em> wired to a UI button (smart_track now covers the static-object case). Safe to keep dormant.
+- Optional: tracker-based reconcile in headless <code>run_reconcile.py</code> (~200 LoC + ~100 LoC tests). Lower priority.</p>
+<hr />
+<h3 id="dataset-curation-pipeline">Dataset curation pipeline<a class="headerlink" href="#dataset-curation-pipeline" title="Permanent link">&para;</a></h3>
+<p><strong>Status:</strong> shipped; produced two reproducible artifacts
+<strong>Window activity:</strong> 1 session (<code>1c4cc0b1</code>), 1 commit (<code>d0a59a1</code>, 952 LOC, Apr 30), 5 scripts under <code>scripts/dataset_selection/</code></p>
+<p><strong>Progress:</strong>
+- <code>select_diverse_subset.py</code>: DINOv3 (<code>facebook/dinov3-vit7b16-pretrain-lvd1689m</code>, dim=4096) embedding + FAISS cosine dedup at τ=0.97, k_neighbors=1000, then farthest-point-sampling.
+- <code>viewer_subset.py</code>: lightweight inspection viewer for a manifest.
+- <code>build_balanced_subset.py</code>, <code>build_yolo_subset.py</code>: downstream subset builders that flow into YOLO training.</p>
+<p><strong>Key accomplishments:</strong>
+- <strong>DataTang curation run:</strong> 11,087 frames → 3,009 dedup survivors (drops=8,078, 72.9%) → <strong>1,000 selected by FPS</strong> (<code>output/dataset_selection/datatang_diverse_1000/</code>).
+- <strong>Balanced subset:</strong> 250 frames drawn proportionally across 31 source clips (<code>output/dataset_selection/datatang_balanced_250/</code>), exported as YOLO with <code>dataset.yaml</code> + <code>classes.txt</code>.
+- Embeddings cached to disk (<code>dinov3-vit7b16-pretrain-lvd1689m_hidden_cls_embeddings/</code>) so reruns at different thresholds are fast.</p>
+<p><strong>Next:</strong>
+- Pipeline currently single-input-dir; fanning across multiple raw sources is manual. Could parameterize.</p>
+<hr />
+<h3 id="detection-metrics-vlm-validators-march">Detection metrics + VLM validators (March)<a class="headerlink" href="#detection-metrics-vlm-validators-march" title="Permanent link">&para;</a></h3>
+<p><strong>Status:</strong> shipped
+<strong>Window activity:</strong> 8 commits Mar 7–31, ~7k+ LOC across <code>detection_metrics/</code> and <code>annotation-validator/</code>. <em>No retained Claude Code session — context here is from commit messages and on-disk code only.</em></p>
+<p><strong>Progress:</strong>
+- <code>a5f984e</code> — detection metrics overhaul (39 files, +4,462 LOC): per-class AP / recall reporting against multiple ground-truth formats (see <code>detection_dataset_formats.md</code>).
+- <code>19fddfb</code> + <code>bfeb097</code> — PDF summary reports for evaluation runs.
+- <code>c061ed6</code> — Qwen3.5 VLM-as-validator (1,134 LOC). <em>VLM-as-validator = vision-language model used as a second-pass yes/no judge on each box.</em>
+- <code>2e28db9</code> — embedding cache (vlm-embedding-driven dedup) reducing repeat-inference cost.
+- <code>732e6ae</code>, <code>c8a37b5</code>, <code>75b9133</code> — operational cleanups for <code>doors_v2</code>, YouTube-source detection, fl_pj merge utility.</p>
+<p><strong>Key accomplishments:</strong>
+- Validator now a reusable component (<code>annotation-validator/validator.py</code>) callable from any pipeline.
+- Metrics module standalone (own <code>pyproject.toml</code>), so it's reusable outside <code>data_miner</code>.</p>
+<p><strong>Next:</strong>
+- Numbers (AP/recall/ECE/hallucination rate) <strong>not measured</strong> in retained context — would benefit from a quick recap run before next monthly.</p>
+<hr />
+<h3 id="infra-serving-viewer-bench">Infra / serving / viewer / bench<a class="headerlink" href="#infra-serving-viewer-bench" title="Permanent link">&para;</a></h3>
+<p><strong>Status:</strong> mixed — production infra (3090 compose) shipped, bench was characterization
+<strong>Window activity:</strong> scattered commits, included in totals above</p>
+<p><strong>Progress:</strong>
+- <strong>3090 vLLM FP8 compose</strong> (<code>3dd2bab</code>, 1,160 LOC) — single-node and multi-shard FP8 serving for Qwen.
+- <strong>8-GPU benchmark sweep</strong> (session <code>d264ffbd</code>): characterized batch-size × num-workers grid on 4,800-image shards. Sample row: <code>bs=8, nw=6 → 249.8s @ 19.2 imgs/s</code>; <code>bs=16, nw=8 → 237.1s @ 20.2 imgs/s</code>; <code>bs=32, nw=12 → 226.7s @ 21.2 imgs/s</code>. Plateau at ~20–21 imgs/s sustained across 8 GPUs.
+- <strong>Viewer</strong>: dynamic, fast, then stage-aware class search + job name in sidebar (<code>f0bec99</code>, 585 LOC).
+- <strong>Stack lifecycle:</strong> <code>manage_stack.sh</code> is the single entry point for sam3_1/LS/ml_backend (start/stop/restart/status/logs) — avoids env-var drift across ad-hoc launches.
+- <strong>Workflow A integration bugs found in live test</strong> documented (<code>50dae26</code>) — one piece of evidence that live-test gating worked.</p>
+<h2 id="4-cross-cutting-metrics">4. Cross-cutting metrics<a class="headerlink" href="#4-cross-cutting-metrics" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th style="text-align: right;">Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Distinct projects (Claude Code)</td>
+<td style="text-align: right;">1</td>
+</tr>
+<tr>
+<td>Sessions logged</td>
+<td style="text-align: right;">9 (5 high-signal)</td>
+</tr>
+<tr>
+<td>Commits in window</td>
+<td style="text-align: right;">71</td>
+</tr>
+<tr>
+<td>Files changed (sum)</td>
+<td style="text-align: right;">810</td>
+</tr>
+<tr>
+<td>LOC inserted</td>
+<td style="text-align: right;">+104,548</td>
+</tr>
+<tr>
+<td>LOC deleted</td>
+<td style="text-align: right;">−10,537</td>
+</tr>
+<tr>
+<td>Net LOC</td>
+<td style="text-align: right;"><strong>+94,011</strong></td>
+</tr>
+<tr>
+<td>Tests passing in <code>manual_reviewer/</code></td>
+<td style="text-align: right;">414</td>
+</tr>
+<tr>
+<td>Tests in <code>auto_annotation_v4/</code> (files)</td>
+<td style="text-align: right;">19</td>
+</tr>
+<tr>
+<td>Models / frameworks touched</td>
+<td style="text-align: right;"><strong>9</strong> — GroundingDINO, SAM3-DART, SAM 3.1, Rex-Omni (Qwen2.5-VL-3B base), OmDet-Turbo, OWLv2, Falcon, DART, DINOv3 (vit7b16)</td>
+</tr>
+<tr>
+<td>VLM validators</td>
+<td style="text-align: right;">Qwen3.5</td>
+</tr>
+<tr>
+<td>Datasets touched</td>
+<td style="text-align: right;">DataTang_val (11,087 → 1,000 → 250), DaTang/Caifu/Xierqi/Xizhimen clip families, doors_v2, fl_pj</td>
+</tr>
+<tr>
+<td>Major artifacts</td>
+<td style="text-align: right;"><code>auto_annotation_v4/</code> (~25k LOC), <code>manual_reviewer/</code> (~15.6k LOC), <code>scripts/dataset_selection/</code> (5 scripts), <code>detection_metrics/</code> (rebuilt), <code>manual_reviewer/docs/</code> (live_test_plan, codebase_review, detectors, next_phases, auto_label_extensions)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-risks-asks">5. Risks / asks<a class="headerlink" href="#5-risks-asks" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Pre-existing GPU-bound test failures in aav4 (~13 sam3_dart/gdino batching tests + 4 unrelated)</strong> — not introduced by the rewrite, but they erode the safety net for future changes. Worth a half-day triage before the next big aav4 change.</li>
+<li><strong>March work has no quantified evaluation in retained context.</strong> The qwen3.5 validator and detection-metrics overhaul shipped, but I don't have AP / recall / hallucination numbers cached. If leadership wants the validator's headline accuracy for planning, I should run the eval once and pin it.</li>
+<li><strong>Solo-on-<code>main</code> cadence.</strong> All 71 commits land directly on <code>main</code> — fast for me, but no review trail. If the team grows on this codebase, we'll need a branch/PR convention; calling it out so it's a deliberate choice rather than drift.</li>
 </ul>
 <hr />
-<blockquote>
-<p><strong>Note</strong>: These documents describe earlier versions of the pipeline. The current architecture uses PostgreSQL-backed state management and supervisor-managed workers. See <a href="../../architecture/overview/">Architecture Overview</a> for current documentation.</p>
-</blockquote>
+<h2 id="numbers-i-couldnt-find-in-source-data-would-strengthen-the-report-if-filled-in">Numbers I couldn't find in source data (would strengthen the report if filled in)<a class="headerlink" href="#numbers-i-couldnt-find-in-source-data-would-strengthen-the-report-if-filled-in" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>aav4 throughput on a real job</strong> (images/sec end-to-end across detect→evaluate→refine→finalize). Have model-server bench (~20 imgs/s on 8 GPUs) but not pipeline-wall numbers.</li>
+<li><strong>Hallucination rate / false-positive drop</strong> from the qwen3.5 VLM-as-validator vs. baseline.</li>
+<li><strong>Reviewer time-per-task</strong> before vs. after the smart-tool extensions (smart_track / track_similar). System is live but reviewer-velocity numbers not captured.</li>
+<li><strong>Detection metrics module pass rates</strong> on standardized eval sets (would quantify the March work).</li>
+<li><strong>Storage cost / memory delta</strong> from the SQLite-replaces-Redis-and-file-checkpoints change (claimed reduction, not measured).</li>
+<li><strong>GPU-hours consumed</strong> in the window across bench + production runs (useful for capacity planning).</li>
+</ul>
 
 
 
