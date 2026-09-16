@@ -108,9 +108,9 @@ class DetectMergeWorker(StageWorker):
         for candidates in model_results.values():
             all_candidates.extend(candidates)
 
-        # Primary application of the source_model allowlist. Downstream
-        # stages inherit clean input; FilterPipeline also re-applies it as
-        # a defensive belt-and-braces for re-runs after the allowlist flips.
+        # Primary application of the source_model allowlist. Downstream stages
+        # inherit clean input; the filter stage also re-applies it defensively
+        # for re-runs after the allowlist flips.
         allowed = list(
             getattr(self.config.filtering, "allowed_source_models", []) or []
         )

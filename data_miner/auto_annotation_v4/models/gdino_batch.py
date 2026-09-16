@@ -9,7 +9,7 @@ all N prompts into a single GPU call by expanding the image tensor from
 Throughput improvement: ~Nx per image (one forward pass instead of N).
 
 Usage:
-    from data_miner.auto_annotation_v3.gdino_batch import GDINOBatchPredictor
+    from data_miner.auto_annotation_v4.models.gdino_batch import GDINOBatchPredictor
 
     predictor = GDINOBatchPredictor(device="cuda:0")
 

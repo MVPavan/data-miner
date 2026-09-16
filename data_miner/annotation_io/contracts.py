@@ -123,6 +123,9 @@ class ReviewExchangeResult(BaseModel):
     reviewed_at: float
     duration_seconds: float = 0.0
     frame_state: FrameState = "clean"
+    media_uri: str | None = None
+    image_width: int | None = Field(default=None, gt=0)
+    image_height: int | None = Field(default=None, gt=0)
     clip_id: str | None = None
     frame_index: int | None = Field(default=None, ge=0)
     class_list_version: str | None = None
@@ -166,7 +169,9 @@ class ReviewExchangeResult(BaseModel):
         """Build an exchange result from an existing v4 human-review result."""
         completion_id = source_completion_id
         if completion_id is None and source_frontend is FrontendName.LABEL_STUDIO:
-            completion_id = str(result.ls_completion_id) if result.ls_completion_id else None
+            completion_id = (
+                str(result.ls_completion_id) if result.ls_completion_id else None
+            )
 
         return cls(
             image_id=result.image_id,

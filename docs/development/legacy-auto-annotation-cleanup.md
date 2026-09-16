@@ -1,11 +1,11 @@
 # Legacy Auto-Annotation Cleanup Audit
 
-Status: in progress 2026-05-13.
+Status: completed 2026-05-14.
 
-This audit gates removal of older auto-annotation implementations. It covers
+This audit records removal of older auto-annotation implementations. It covers
 tracked source and docs only. Gitignored runtime data, outputs, logs, exports,
-scratchpad work, run configs, and local datasets are protected and must not be
-cleaned, moved, archived, or deleted without explicit user review.
+scratchpad work, run configs, and local datasets were protected and were not
+cleaned, moved, archived, or deleted.
 
 ## Source Of Truth
 
@@ -14,8 +14,7 @@ pipeline code, checkpoint DB contracts, model-server integration, and active
 prompts.
 
 Reusable prompt text from older systems is preserved under
-`data_miner/auto_annotation_v4/prompts/archive/legacy/` before implementation
-cleanup proceeds.
+`data_miner/auto_annotation_v4/prompts/archive/legacy/`.
 
 ## Audit Commands
 
@@ -55,9 +54,9 @@ logs, exports, scratchpad files, run directories, or datasets were touched.
 
 ### `data_miner/auto_annotation_v2/`
 
-Decision: blocked for now.
+Decision: removed after explicit user approval to delete v1/v2/v3 source code.
 
-External tracked references:
+Former external tracked references, removed with this cleanup:
 
 - `scripts/compare_proposals.py` imports v2 config and proposal helpers for
   model-output comparison.
@@ -67,28 +66,27 @@ External tracked references:
 Prompt preservation: v2 reasoning prompts and forklift/pallet-jack prompt
 variants are already copied into the v4 legacy prompt archive.
 
-Removal rule: migrate or retire the comparison scripts before deleting v2.
+Removal result: the tracked package directory was deleted. `scripts/compare_proposals.py`
+was deleted because it compared standalone model helpers against v2 proposal
+internals.
 
 ### `data_miner/auto_annotation_v3/`
 
-Decision: blocked for now.
+Decision: removed after explicit user approval to delete v1/v2/v3 source code.
 
-External tracked references show v3 is still documented as the legacy parity
-engine and still appears in verification guidance, migration plans, v4
-replacement comments, and v4 model provenance comments.
+Former tracked references included parity tests, benchmark scripts, migration
+plans, and stale verification guidance. Those tracked source paths and stale
+docs were deleted or rewritten to point at v4.
 
 Prompt preservation: v3 prompt YAML files under `prompts/v1/` were compared
 against v4 `prompts/v1/` and were byte-for-byte identical at audit time, so
 the active v4 prompt set already preserves them.
 
-Removal rule: remove or rewrite v3 parity tests, docs, and verification entries
-only after the project no longer needs v3 as a benchmark/reference.
+Removal result: the tracked package directory was deleted. Stale v3 migration
+plans and v3 tuning docs were also removed.
 
-## Next Safe Step
+## Remaining Policy
 
-Do not remove v2 or v3 yet. The next cleanup phase should either:
-
-1. Migrate or retire `scripts/compare_proposals.py` and the v3
-  `compare_litserve.py` dependencies on v2, then re-audit v2; or
-2. Leave v2/v3 in place and move to non-destructive consolidation work such as
-  shared annotation exchange models for LS/CVAT.
+`data_miner/auto_annotation_v4/` is now the only retained auto-annotation
+engine source package. Prompt provenance references under the v4 legacy prompt
+archive are intentionally retained.

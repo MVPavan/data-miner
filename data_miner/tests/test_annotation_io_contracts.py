@@ -8,10 +8,10 @@ from pydantic import ValidationError
 from data_miner.annotation_io import (
     FrontendName,
     ReviewBox,
-    ReviewRegionOrigin,
     ReviewBoxSource,
     ReviewExchangeResult,
     ReviewExchangeTask,
+    ReviewRegionOrigin,
 )
 from data_miner.auto_annotation_v4.configs.contracts import (
     BoundingBox,

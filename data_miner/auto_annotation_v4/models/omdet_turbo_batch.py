@@ -18,9 +18,7 @@ This wrapper exposes them as reusable stages:
 Zero modifications to the transformers source -- all access is via public
 attributes of the model.
 
-Note: This is the v4 copy of the batch predictor, moved from
-``data_miner.auto_annotation_v3.omdet_batch`` into the v4 models package
-for self-contained deployment. No LitServe dependency.
+Note: This is the v4 self-contained batch predictor. No LitServe dependency.
 
 Usage:
     from data_miner.auto_annotation_v4.models.omdet_turbo_batch import (
