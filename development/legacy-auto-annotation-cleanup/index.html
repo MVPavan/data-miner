@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -903,10 +903,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#next-safe-step" class="md-nav__link">
+  <a href="#remaining-policy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Next Safe Step
+        Remaining Policy
       
     </span>
   </a>
@@ -934,34 +934,33 @@
 
 
 <h1 id="legacy-auto-annotation-cleanup-audit">Legacy Auto-Annotation Cleanup Audit<a class="headerlink" href="#legacy-auto-annotation-cleanup-audit" title="Permanent link">&para;</a></h1>
-<p>Status: in progress 2026-05-13.</p>
-<p>This audit gates removal of older auto-annotation implementations. It covers
+<p>Status: completed 2026-05-14.</p>
+<p>This audit records removal of older auto-annotation implementations. It covers
 tracked source and docs only. Gitignored runtime data, outputs, logs, exports,
-scratchpad work, run configs, and local datasets are protected and must not be
-cleaned, moved, archived, or deleted without explicit user review.</p>
+scratchpad work, run configs, and local datasets were protected and were not
+cleaned, moved, archived, or deleted.</p>
 <h2 id="source-of-truth">Source Of Truth<a class="headerlink" href="#source-of-truth" title="Permanent link">&para;</a></h2>
 <p><code>data_miner/auto_annotation_v4/</code> is the active authority for auto-annotation
 pipeline code, checkpoint DB contracts, model-server integration, and active
 prompts.</p>
 <p>Reusable prompt text from older systems is preserved under
-<code>data_miner/auto_annotation_v4/prompts/archive/legacy/</code> before implementation
-cleanup proceeds.</p>
+<code>data_miner/auto_annotation_v4/prompts/archive/legacy/</code>.</p>
 <h2 id="audit-commands">Audit Commands<a class="headerlink" href="#audit-commands" title="Permanent link">&para;</a></h2>
 <p>The current audit used tracked-file searches only:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>grep<span class="w"> </span>-n<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;data_miner\.auto_annotation($|[^_])|data_miner/auto_annotation(/|\b)&#39;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--<span class="w"> </span><span class="s1">&#39;:!data_miner/auto_annotation/**&#39;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">     </span><span class="s1">&#39;:!data_miner/auto_annotation_v4/prompts/archive/legacy/**&#39;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">     </span><span class="s1">&#39;*.py&#39;</span><span class="w"> </span><span class="s1">&#39;*.md&#39;</span><span class="w"> </span><span class="s1">&#39;*.yaml&#39;</span><span class="w"> </span><span class="s1">&#39;*.yml&#39;</span><span class="w"> </span><span class="s1">&#39;*.toml&#39;</span><span class="w"> </span><span class="s1">&#39;*.sh&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>grep<span class="w"> </span>-n<span class="w"> </span>-E<span class="w"> </span><span class="s1">'data_miner\.auto_annotation($|[^_])|data_miner/auto_annotation(/|\b)'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--<span class="w"> </span><span class="s1">':!data_miner/auto_annotation/**'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">     </span><span class="s1">':!data_miner/auto_annotation_v4/prompts/archive/legacy/**'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">     </span><span class="s1">'*.py'</span><span class="w"> </span><span class="s1">'*.md'</span><span class="w"> </span><span class="s1">'*.yaml'</span><span class="w"> </span><span class="s1">'*.yml'</span><span class="w"> </span><span class="s1">'*.toml'</span><span class="w"> </span><span class="s1">'*.sh'</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>git<span class="w"> </span>grep<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;auto_annotation_v2&#39;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>--<span class="w"> </span><span class="s1">&#39;:!data_miner/auto_annotation_v2/**&#39;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">     </span><span class="s1">&#39;:!data_miner/auto_annotation_v4/prompts/archive/legacy/**&#39;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">     </span><span class="s1">&#39;*.py&#39;</span><span class="w"> </span><span class="s1">&#39;*.md&#39;</span><span class="w"> </span><span class="s1">&#39;*.yaml&#39;</span><span class="w"> </span><span class="s1">&#39;*.yml&#39;</span><span class="w"> </span><span class="s1">&#39;*.toml&#39;</span><span class="w"> </span><span class="s1">&#39;*.sh&#39;</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>git<span class="w"> </span>grep<span class="w"> </span>-n<span class="w"> </span><span class="s1">'auto_annotation_v2'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span>--<span class="w"> </span><span class="s1">':!data_miner/auto_annotation_v2/**'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">     </span><span class="s1">':!data_miner/auto_annotation_v4/prompts/archive/legacy/**'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">     </span><span class="s1">'*.py'</span><span class="w"> </span><span class="s1">'*.md'</span><span class="w"> </span><span class="s1">'*.yaml'</span><span class="w"> </span><span class="s1">'*.yml'</span><span class="w"> </span><span class="s1">'*.toml'</span><span class="w"> </span><span class="s1">'*.sh'</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>git<span class="w"> </span>grep<span class="w"> </span>-n<span class="w"> </span><span class="s1">&#39;auto_annotation_v3&#39;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span>--<span class="w"> </span><span class="s1">&#39;:!data_miner/auto_annotation_v3/**&#39;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">     </span><span class="s1">&#39;:!data_miner/auto_annotation_v4/prompts/archive/legacy/**&#39;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">     </span><span class="s1">&#39;*.py&#39;</span><span class="w"> </span><span class="s1">&#39;*.md&#39;</span><span class="w"> </span><span class="s1">&#39;*.yaml&#39;</span><span class="w"> </span><span class="s1">&#39;*.yml&#39;</span><span class="w"> </span><span class="s1">&#39;*.toml&#39;</span><span class="w"> </span><span class="s1">&#39;*.sh&#39;</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>git<span class="w"> </span>grep<span class="w"> </span>-n<span class="w"> </span><span class="s1">'auto_annotation_v3'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span>--<span class="w"> </span><span class="s1">':!data_miner/auto_annotation_v3/**'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">     </span><span class="s1">':!data_miner/auto_annotation_v4/prompts/archive/legacy/**'</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">     </span><span class="s1">'*.py'</span><span class="w"> </span><span class="s1">'*.md'</span><span class="w"> </span><span class="s1">'*.yaml'</span><span class="w"> </span><span class="s1">'*.yml'</span><span class="w"> </span><span class="s1">'*.toml'</span><span class="w"> </span><span class="s1">'*.sh'</span>
 </code></pre></div>
 <h2 id="package-decisions">Package Decisions<a class="headerlink" href="#package-decisions" title="Permanent link">&para;</a></h2>
 <h3 id="data_minerauto_annotation"><code>data_miner/auto_annotation/</code><a class="headerlink" href="#data_minerauto_annotation" title="Permanent link">&para;</a></h3>
@@ -973,8 +972,8 @@ the prompt archive provenance notes.</p>
 <p>Removal result: the tracked package directory was deleted. No ignored outputs,
 logs, exports, scratchpad files, run directories, or datasets were touched.</p>
 <h3 id="data_minerauto_annotation_v2"><code>data_miner/auto_annotation_v2/</code><a class="headerlink" href="#data_minerauto_annotation_v2" title="Permanent link">&para;</a></h3>
-<p>Decision: blocked for now.</p>
-<p>External tracked references:</p>
+<p>Decision: removed after explicit user approval to delete v1/v2/v3 source code.</p>
+<p>Former external tracked references, removed with this cleanup:</p>
 <ul>
 <li><code>scripts/compare_proposals.py</code> imports v2 config and proposal helpers for
   model-output comparison.</li>
@@ -983,25 +982,23 @@ logs, exports, scratchpad files, run directories, or datasets were touched.</p>
 </ul>
 <p>Prompt preservation: v2 reasoning prompts and forklift/pallet-jack prompt
 variants are already copied into the v4 legacy prompt archive.</p>
-<p>Removal rule: migrate or retire the comparison scripts before deleting v2.</p>
+<p>Removal result: the tracked package directory was deleted. <code>scripts/compare_proposals.py</code>
+was deleted because it compared standalone model helpers against v2 proposal
+internals.</p>
 <h3 id="data_minerauto_annotation_v3"><code>data_miner/auto_annotation_v3/</code><a class="headerlink" href="#data_minerauto_annotation_v3" title="Permanent link">&para;</a></h3>
-<p>Decision: blocked for now.</p>
-<p>External tracked references show v3 is still documented as the legacy parity
-engine and still appears in verification guidance, migration plans, v4
-replacement comments, and v4 model provenance comments.</p>
+<p>Decision: removed after explicit user approval to delete v1/v2/v3 source code.</p>
+<p>Former tracked references included parity tests, benchmark scripts, migration
+plans, and stale verification guidance. Those tracked source paths and stale
+docs were deleted or rewritten to point at v4.</p>
 <p>Prompt preservation: v3 prompt YAML files under <code>prompts/v1/</code> were compared
 against v4 <code>prompts/v1/</code> and were byte-for-byte identical at audit time, so
 the active v4 prompt set already preserves them.</p>
-<p>Removal rule: remove or rewrite v3 parity tests, docs, and verification entries
-only after the project no longer needs v3 as a benchmark/reference.</p>
-<h2 id="next-safe-step">Next Safe Step<a class="headerlink" href="#next-safe-step" title="Permanent link">&para;</a></h2>
-<p>Do not remove v2 or v3 yet. The next cleanup phase should either:</p>
-<ol>
-<li>Migrate or retire <code>scripts/compare_proposals.py</code> and the v3
-  <code>compare_litserve.py</code> dependencies on v2, then re-audit v2; or</li>
-<li>Leave v2/v3 in place and move to non-destructive consolidation work such as
-  shared annotation exchange models for LS/CVAT.</li>
-</ol>
+<p>Removal result: the tracked package directory was deleted. Stale v3 migration
+plans and v3 tuning docs were also removed.</p>
+<h2 id="remaining-policy">Remaining Policy<a class="headerlink" href="#remaining-policy" title="Permanent link">&para;</a></h2>
+<p><code>data_miner/auto_annotation_v4/</code> is now the only retained auto-annotation
+engine source package. Prompt provenance references under the v4 legacy prompt
+archive are intentionally retained.</p>
 
 
 
@@ -1076,7 +1073,7 @@ only after the project no longer needs v3 as a benchmark/reference.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

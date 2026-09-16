@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -1214,7 +1214,7 @@
 <a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>kubectl<span class="w"> </span>create<span class="w"> </span>secret<span class="w"> </span>generic<span class="w"> </span>&lt;name&gt;<span class="w"> </span>--from-literal<span class="o">=</span><span class="nv">password</span><span class="o">=</span>secret<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
 <a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>
 <a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="c1"># View secret (base64 decoded)</span>
-<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>kubectl<span class="w"> </span>get<span class="w"> </span>secret<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">&#39;{.data.password}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>base64<span class="w"> </span>-d
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>kubectl<span class="w"> </span>get<span class="w"> </span>secret<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">'{.data.password}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>base64<span class="w"> </span>-d
 <a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>
 <a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="c1"># Delete</span>
 <a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>kubectl<span class="w"> </span>delete<span class="w"> </span>configmap<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
@@ -1250,15 +1250,15 @@
 <a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>kubectl<span class="w"> </span>get<span class="w"> </span>&lt;type&gt;<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>-o<span class="w"> </span>json
 <a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
 <a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="c1"># Get specific field</span>
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pod<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">&#39;{.status.podIP}&#39;</span>
-<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">&#39;{.items[*].metadata.name}&#39;</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pod<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">'{.status.podIP}'</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">'{.items[*].metadata.name}'</span>
 <a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>
 <a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="c1"># Get all resources</span>
 <a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>kubectl<span class="w"> </span>get<span class="w"> </span>all<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
 <a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>
 <a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="c1"># Get events</span>
 <a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>kubectl<span class="w"> </span>get<span class="w"> </span>events<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
-<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>kubectl<span class="w"> </span>get<span class="w"> </span>events<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>--sort-by<span class="o">=</span><span class="s1">&#39;.lastTimestamp&#39;</span>
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>kubectl<span class="w"> </span>get<span class="w"> </span>events<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>--sort-by<span class="o">=</span><span class="s1">'.lastTimestamp'</span>
 </code></pre></div>
 <hr />
 <h2 id="labels-selectors">Labels &amp; Selectors<a class="headerlink" href="#labels-selectors" title="Permanent link">&para;</a></h2>
@@ -1270,7 +1270,7 @@
 <a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
 <a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># Filter by label</span>
 <a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-l<span class="w"> </span><span class="nv">app</span><span class="o">=</span>seaweedfs<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
-<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-l<span class="w"> </span><span class="s1">&#39;app in (nginx, redis)&#39;</span><span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-l<span class="w"> </span><span class="s1">'app in (nginx, redis)'</span><span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
 <a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-l<span class="w"> </span>app!<span class="o">=</span>nginx<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
 <a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>
 <a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="c1"># Show labels</span>
@@ -1283,14 +1283,14 @@
 <a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>kubectl<span class="w"> </span>top<span class="w"> </span>pods<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
 <a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
 <a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># Resource usage</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>kubectl<span class="w"> </span>describe<span class="w"> </span>node<span class="w"> </span>&lt;name&gt;<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-A5<span class="w"> </span><span class="s2">&quot;Allocated resources&quot;</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>kubectl<span class="w"> </span>describe<span class="w"> </span>node<span class="w"> </span>&lt;name&gt;<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-A5<span class="w"> </span><span class="s2">"Allocated resources"</span>
 <a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>
 <a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="c1"># Edit resource directly</span>
 <a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>kubectl<span class="w"> </span>edit<span class="w"> </span>deployment<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
 <a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>kubectl<span class="w"> </span>edit<span class="w"> </span>svc<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;
 <a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>
 <a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="c1"># Patch resource</span>
-<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>kubectl<span class="w"> </span>patch<span class="w"> </span>svc<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>-p<span class="w"> </span><span class="s1">&#39;{&quot;spec&quot;: {&quot;type&quot;: &quot;NodePort&quot;}}&#39;</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>kubectl<span class="w"> </span>patch<span class="w"> </span>svc<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-n<span class="w"> </span>&lt;namespace&gt;<span class="w"> </span>-p<span class="w"> </span><span class="s1">'{"spec": {"type": "NodePort"}}'</span>
 </code></pre></div>
 <hr />
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
@@ -1410,18 +1410,18 @@
 </code></pre></div>
 <hr />
 <h2 id="useful-aliases-add-to-bashrc-or-zshrc">Useful Aliases (add to ~/.bashrc or ~/.zshrc)<a class="headerlink" href="#useful-aliases-add-to-bashrc-or-zshrc" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">k</span><span class="o">=</span><span class="s1">&#39;kubectl&#39;</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgp</span><span class="o">=</span><span class="s1">&#39;kubectl get pods&#39;</span>
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgpa</span><span class="o">=</span><span class="s1">&#39;kubectl get pods -A&#39;</span>
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgs</span><span class="o">=</span><span class="s1">&#39;kubectl get svc&#39;</span>
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgn</span><span class="o">=</span><span class="s1">&#39;kubectl get nodes&#39;</span>
-<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kd</span><span class="o">=</span><span class="s1">&#39;kubectl describe&#39;</span>
-<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kl</span><span class="o">=</span><span class="s1">&#39;kubectl logs&#39;</span>
-<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">klf</span><span class="o">=</span><span class="s1">&#39;kubectl logs -f&#39;</span>
-<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kex</span><span class="o">=</span><span class="s1">&#39;kubectl exec -it&#39;</span>
-<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kaf</span><span class="o">=</span><span class="s1">&#39;kubectl apply -f&#39;</span>
-<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kdf</span><span class="o">=</span><span class="s1">&#39;kubectl delete -f&#39;</span>
-<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kns</span><span class="o">=</span><span class="s1">&#39;kubectl config set-context --current --namespace&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">k</span><span class="o">=</span><span class="s1">'kubectl'</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgp</span><span class="o">=</span><span class="s1">'kubectl get pods'</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgpa</span><span class="o">=</span><span class="s1">'kubectl get pods -A'</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgs</span><span class="o">=</span><span class="s1">'kubectl get svc'</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgn</span><span class="o">=</span><span class="s1">'kubectl get nodes'</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kd</span><span class="o">=</span><span class="s1">'kubectl describe'</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kl</span><span class="o">=</span><span class="s1">'kubectl logs'</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">klf</span><span class="o">=</span><span class="s1">'kubectl logs -f'</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kex</span><span class="o">=</span><span class="s1">'kubectl exec -it'</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kaf</span><span class="o">=</span><span class="s1">'kubectl apply -f'</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kdf</span><span class="o">=</span><span class="s1">'kubectl delete -f'</span>
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kns</span><span class="o">=</span><span class="s1">'kubectl config set-context --current --namespace'</span>
 </code></pre></div>
 <hr />
 <h2 id="tags">Tags<a class="headerlink" href="#tags" title="Permanent link">&para;</a></h2>
@@ -1500,7 +1500,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

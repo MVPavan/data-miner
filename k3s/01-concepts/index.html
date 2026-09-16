@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -882,7 +882,7 @@
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>With Kubernetes:
 <a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>┌─────────────────────────────────────────────────────────┐
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│ You declare: &quot;I want 4 copies of this container&quot;        │
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│ You declare: "I want 4 copies of this container"        │
 <a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│ Kubernetes:                                             │
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│ - Schedules them across nodes                           │
 <a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│ - Restarts crashed ones                                 │
@@ -1073,8 +1073,8 @@
 <a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="nt">metadata</span><span class="p">:</span>
 <a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-config</span>
 <a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="nt">data</span><span class="p">:</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span><span class="nt">DATABASE_HOST</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;db.example.com&quot;</span>
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">  </span><span class="nt">LOG_LEVEL</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;debug&quot;</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span><span class="nt">DATABASE_HOST</span><span class="p">:</span><span class="w"> </span><span class="s">"db.example.com"</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">  </span><span class="nt">LOG_LEVEL</span><span class="p">:</span><span class="w"> </span><span class="s">"debug"</span>
 <a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>
 <a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="nn">---</span>
 <a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="c1"># Secret - sensitive data (base64 encoded)</span>
@@ -1084,7 +1084,7 @@
 <a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-secret</span>
 <a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Opaque</span>
 <a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="nt">data</span><span class="p">:</span>
-<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cGFzc3dvcmQxMjM=</span><span class="w">  </span><span class="c1"># base64 of &quot;password123&quot;</span>
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a><span class="w">  </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cGFzc3dvcmQxMjM=</span><span class="w">  </span><span class="c1"># base64 of "password123"</span>
 </code></pre></div>
 <h3 id="volumes-persistentvolumes">Volumes &amp; PersistentVolumes<a class="headerlink" href="#volumes-persistentvolumes" title="Permanent link">&para;</a></h3>
 <p>How containers access storage.</p>
@@ -1123,13 +1123,13 @@
 </code></pre></div>
 <h2 id="17-the-declarative-model">1.7 The Declarative Model<a class="headerlink" href="#17-the-declarative-model" title="Permanent link">&para;</a></h2>
 <p>Kubernetes is <strong>declarative</strong>, not imperative:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Imperative (what you&#39;re used to):
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>&quot;Start 3 nginx containers&quot;
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>&quot;Stop container #2&quot;
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>&quot;Start a new container&quot;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Imperative (what you're used to):
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>"Start 3 nginx containers"
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>"Stop container #2"
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>"Start a new container"
 <a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>
 <a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>Declarative (Kubernetes way):
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>&quot;I want 3 nginx containers running&quot;
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>"I want 3 nginx containers running"
 <a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>(Kubernetes figures out how to make it happen)
 </code></pre></div>
 <p>You write YAML describing DESIRED STATE, Kubernetes makes CURRENT STATE match it.</p>
@@ -1262,7 +1262,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

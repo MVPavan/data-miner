@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -1307,7 +1307,7 @@
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># 1. Check hostname is unique per machine</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>hostname
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># 2. Ensure hostnames are set properly (not &quot;localhost&quot;)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># 2. Ensure hostnames are set properly (not "localhost")</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>sudo<span class="w"> </span>hostnamectl<span class="w"> </span>set-hostname<span class="w"> </span>master-1<span class="w">   </span><span class="c1"># On master</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>sudo<span class="w"> </span>hostnamectl<span class="w"> </span>set-hostname<span class="w"> </span>worker-1<span class="w">   </span><span class="c1"># On worker 1</span>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>sudo<span class="w"> </span>hostnamectl<span class="w"> </span>set-hostname<span class="w"> </span>worker-2<span class="w">   </span><span class="c1"># On worker 2</span>
@@ -1322,10 +1322,10 @@
 <a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>sudo<span class="w"> </span>ufw<span class="w"> </span>allow<span class="w"> </span><span class="m">8472</span>/udp
 <a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>sudo<span class="w"> </span>ufw<span class="w"> </span>allow<span class="w"> </span><span class="m">10250</span>/tcp
 <a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
-<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="c1"># 5. Disable swap (Kubernetes doesn&#39;t like swap)</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="c1"># 5. Disable swap (Kubernetes doesn't like swap)</span>
 <a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>sudo<span class="w"> </span>swapoff<span class="w"> </span>-a
 <a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a><span class="c1"># Make permanent: comment out swap line in /etc/fstab</span>
-<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>sudo<span class="w"> </span>sed<span class="w"> </span>-i<span class="w"> </span><span class="s1">&#39;/ swap / s/^/#/&#39;</span><span class="w"> </span>/etc/fstab
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>sudo<span class="w"> </span>sed<span class="w"> </span>-i<span class="w"> </span><span class="s1">'/ swap / s/^/#/'</span><span class="w"> </span>/etc/fstab
 </code></pre></div>
 <hr />
 <h2 id="22-cluster-architecture">2.2 Cluster Architecture<a class="headerlink" href="#22-cluster-architecture" title="Permanent link">&para;</a></h2>
@@ -1365,7 +1365,7 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># One-liner installation!</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>curl<span class="w"> </span>-sfL<span class="w"> </span>https://get.k3s.io<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh<span class="w"> </span>-
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># That&#39;s it. Seriously.</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># That's it. Seriously.</span>
 </code></pre></div>
 <h3 id="what-just-happened">What Just Happened?<a class="headerlink" href="#what-just-happened" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Downloaded:   /usr/local/bin/k3s (single binary, ~60MB)
@@ -1400,7 +1400,7 @@
 <p><strong>Save this token!</strong> You'll need it for each worker node.</p>
 <h3 id="get-master-ip">Get Master IP<a class="headerlink" href="#get-master-ip" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Get the IP address workers will connect to</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>hostname<span class="w"> </span>-I<span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">&#39;{print $1}&#39;</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>hostname<span class="w"> </span>-I<span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">'{print $1}'</span>
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Or check manually</span>
 <a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>ip<span class="w"> </span>addr<span class="w"> </span>show
@@ -1454,7 +1454,7 @@
 </code></pre></div>
 <h3 id="option-b-set-kubeconfig-environment-variable">Option B: Set KUBECONFIG environment variable<a class="headerlink" href="#option-b-set-kubeconfig-environment-variable" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Add to ~/.bashrc</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;export KUBECONFIG=/etc/rancher/k3s/k3s.yaml&#39;</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>~/.bashrc
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nb">echo</span><span class="w"> </span><span class="s1">'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml'</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>~/.bashrc
 <a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="nb">source</span><span class="w"> </span>~/.bashrc
 <a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
 <a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># Still needs sudo for this file, or fix permissions:</span>
@@ -1537,7 +1537,7 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Create a simple nginx deployment</span>
 <a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>kubectl<span class="w"> </span>create<span class="w"> </span>deployment<span class="w"> </span>nginx<span class="w"> </span>--image<span class="o">=</span>nginx
 <a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>
-<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1"># Check it&#39;s running</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="c1"># Check it's running</span>
 <a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>kubectl<span class="w"> </span>get<span class="w"> </span>pods
 <a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
 <a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="c1"># Output:</span>
@@ -1556,7 +1556,7 @@
 <a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a><span class="c1">#                                                    ↑</span>
 <a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a><span class="c1">#                                            This port (31234)</span>
 <a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a>
-<a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a><span class="c1"># Access it from any node&#39;s IP!</span>
+<a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a><span class="c1"># Access it from any node's IP!</span>
 <a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a>curl<span class="w"> </span>http://192.168.1.10:31234
 <a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a>curl<span class="w"> </span>http://192.168.1.11:31234
 <a id="__codelineno-17-26" name="__codelineno-17-26" href="#__codelineno-17-26"></a>curl<span class="w"> </span>http://192.168.1.12:31234
@@ -1618,7 +1618,7 @@
 <a id="__codelineno-20-37" name="__codelineno-20-37" href="#__codelineno-20-37"></a><span class="c1"># DELETING RESOURCES</span>
 <a id="__codelineno-20-38" name="__codelineno-20-38" href="#__codelineno-20-38"></a><span class="c1"># ─────────────────────────────────────────────────────────</span>
 <a id="__codelineno-20-39" name="__codelineno-20-39" href="#__codelineno-20-39"></a>
-<a id="__codelineno-20-40" name="__codelineno-20-40" href="#__codelineno-20-40"></a>kubectl<span class="w"> </span>delete<span class="w"> </span>-f<span class="w"> </span>file.yaml<span class="w">         </span><span class="c1"># Delete what&#39;s in file</span>
+<a id="__codelineno-20-40" name="__codelineno-20-40" href="#__codelineno-20-40"></a>kubectl<span class="w"> </span>delete<span class="w"> </span>-f<span class="w"> </span>file.yaml<span class="w">         </span><span class="c1"># Delete what's in file</span>
 <a id="__codelineno-20-41" name="__codelineno-20-41" href="#__codelineno-20-41"></a>kubectl<span class="w"> </span>delete<span class="w"> </span>pod<span class="w"> </span>nginx-xxxxx<span class="w">      </span><span class="c1"># Delete specific pod</span>
 <a id="__codelineno-20-42" name="__codelineno-20-42" href="#__codelineno-20-42"></a>kubectl<span class="w"> </span>delete<span class="w"> </span>deployment<span class="w"> </span>nginx<span class="w">     </span><span class="c1"># Delete deployment (and pods)</span>
 <a id="__codelineno-20-43" name="__codelineno-20-43" href="#__codelineno-20-43"></a>
@@ -1650,15 +1650,15 @@
 </code></pre></div>
 <h3 id="shortcuts-aliases">Shortcuts (Aliases)<a class="headerlink" href="#shortcuts-aliases" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># Add to ~/.bashrc for convenience</span>
-<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">k</span><span class="o">=</span><span class="s1">&#39;kubectl&#39;</span>
-<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgp</span><span class="o">=</span><span class="s1">&#39;kubectl get pods&#39;</span>
-<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgs</span><span class="o">=</span><span class="s1">&#39;kubectl get svc&#39;</span>
-<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgd</span><span class="o">=</span><span class="s1">&#39;kubectl get deployments&#39;</span>
-<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kga</span><span class="o">=</span><span class="s1">&#39;kubectl get all&#39;</span>
-<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kaf</span><span class="o">=</span><span class="s1">&#39;kubectl apply -f&#39;</span>
-<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kdel</span><span class="o">=</span><span class="s1">&#39;kubectl delete&#39;</span>
-<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">klog</span><span class="o">=</span><span class="s1">&#39;kubectl logs -f&#39;</span>
-<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kexec</span><span class="o">=</span><span class="s1">&#39;kubectl exec -it&#39;</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">k</span><span class="o">=</span><span class="s1">'kubectl'</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgp</span><span class="o">=</span><span class="s1">'kubectl get pods'</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgs</span><span class="o">=</span><span class="s1">'kubectl get svc'</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kgd</span><span class="o">=</span><span class="s1">'kubectl get deployments'</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kga</span><span class="o">=</span><span class="s1">'kubectl get all'</span>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kaf</span><span class="o">=</span><span class="s1">'kubectl apply -f'</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kdel</span><span class="o">=</span><span class="s1">'kubectl delete'</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">klog</span><span class="o">=</span><span class="s1">'kubectl logs -f'</span>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="nb">alias</span><span class="w"> </span><span class="nv">kexec</span><span class="o">=</span><span class="s1">'kubectl exec -it'</span>
 <a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>
 <a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="c1"># Now you can type:</span>
 <a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a>k<span class="w"> </span>get<span class="w"> </span>pods
@@ -1815,7 +1815,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
